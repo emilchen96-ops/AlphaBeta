@@ -17,6 +17,23 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  postgres_test:
+    profiles: ["test"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: alphadesk_test
+      POSTGRES_USER: alphadesk_test
+      POSTGRES_PASSWORD: local-test-placeholder
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: "no"
+
   redis:
     image: redis:8-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -43,6 +60,7 @@ services:
       ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
       ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
       ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_TEST_DATABASE_URL: postgresql+asyncpg://alphadesk_test:local-test-placeholder@postgres_test:5432/alphadesk_test
       ALPHADESK_REDIS_HOST: redis
       ALPHADESK_REDIS_PORT: 6379
       ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}

@@ -7,6 +7,7 @@ RUN npm ci
 
 COPY index.html vite.config.ts tsconfig.json eslint.config.js ./
 COPY src ./src
+COPY tests ./tests
 
 RUN addgroup -S alphadesk && adduser -S alphadesk -G alphadesk && chown -R alphadesk:alphadesk /app
 USER alphadesk

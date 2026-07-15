@@ -44,6 +44,9 @@ jobs:
       ALPHADESK_POSTGRES_PASSWORD: local-ci-placeholder
       ALPHADESK_REDIS_HOST: localhost
       ALPHADESK_RUN_INTEGRATION: "true"
+      ALPHADESK_RUN_M02_INTEGRATION: "true"
+      ALPHADESK_RUN_M03_INTEGRATION: "true"
+      ALPHADESK_TEST_DATABASE_URL: postgresql+asyncpg://alphadesk_test:local-ci-placeholder@localhost:5432/alphadesk_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -61,6 +64,7 @@ jobs:
       - run: mypy src
       - run: alembic upgrade head
       - run: alembic current
+      - run: alembic check
       - run: pytest
 
   frontend:

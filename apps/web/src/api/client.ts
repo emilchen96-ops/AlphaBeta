@@ -53,6 +53,9 @@ export async function apiRequest<T>(
         envelope?.error.correlation_id ?? correlationId,
       );
     }
+    if (response.status === 204) {
+      return undefined as T;
+    }
     return (await response.json()) as T;
   } catch (error) {
     if (error instanceof ApiError) {

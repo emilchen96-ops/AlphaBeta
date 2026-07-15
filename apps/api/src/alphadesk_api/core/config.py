@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     postgres_password: SecretStr = SecretStr("change-me-local-only")
     postgres_pool_size: int = Field(default=5, ge=1, le=50)
     postgres_max_overflow: int = Field(default=5, ge=0, le=50)
+    test_database_url: SecretStr | None = None
 
     redis_host: str = "redis"
     redis_port: int = Field(default=6379, ge=1, le=65535)
@@ -44,6 +45,15 @@ class Settings(BaseSettings):
     websocket_heartbeat_seconds: int = Field(default=20, ge=5, le=300)
     correlation_id_header: str = "X-Correlation-ID"
     max_websocket_message_bytes: int = Field(default=1024, ge=64, le=65536)
+    instrument_page_size_max: int = Field(default=100, ge=10, le=500)
+    watchlist_item_limit: int = Field(default=200, ge=1, le=2000)
+    market_bar_query_limit: int = Field(default=2000, ge=100, le=10000)
+    market_sync_batch_size: int = Field(default=500, ge=10, le=5000)
+    market_future_tolerance_seconds: int = Field(default=300, ge=0, le=3600)
+    market_minute_stale_seconds: int = Field(default=300, ge=30, le=86400)
+    market_csv_max_bytes: int = Field(default=10_000_000, ge=1024, le=100_000_000)
+    market_csv_max_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    external_market_data_enabled: bool = False
 
     @field_validator("api_prefix")
     @classmethod

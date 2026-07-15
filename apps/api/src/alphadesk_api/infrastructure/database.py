@@ -2,9 +2,9 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from sqlalchemy import text
+from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -16,9 +16,23 @@ from starlette.requests import Request
 
 from alphadesk_api.core.config import Settings
 
+if TYPE_CHECKING:
+    from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
+
+
+NAMING_CONVENTION = {
+    "ix": "ix_%(table_name)s_%(column_0_N_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_N_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
 
 class Base(DeclarativeBase):
-    """Empty M01 metadata base; business models begin in M02."""
+    """Shared declarative base with stable database object naming."""
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
 class DependencyProbe(Protocol):
@@ -64,6 +78,11 @@ class DatabaseService:
     async def session(self) -> AsyncIterator[AsyncSession]:
         async with self.session_factory() as session:
             yield session
+
+    def unit_of_work(self) -> "SqlAlchemyUnitOfWork":
+        from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
+
+        return SqlAlchemyUnitOfWork(self.session_factory)
 
 
 async def get_database_session(request: Request) -> AsyncIterator[AsyncSession]:

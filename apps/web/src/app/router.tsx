@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import type { RouteObject } from "react-router-dom";
 import { createBrowserRouter } from "react-router-dom";
 
@@ -5,7 +6,6 @@ import { AppLayout } from "../components/AppLayout/AppLayout";
 import { AuditPage } from "../pages/AuditPage";
 import { BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
-import { MarketPage } from "../pages/MarketPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OrdersPage } from "../pages/OrdersPage";
 import { PortfolioPage } from "../pages/PortfolioPage";
@@ -13,13 +13,28 @@ import { RiskPage } from "../pages/RiskPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
 
+const MarketPage = lazy(() =>
+  import("../pages/MarketPage").then((module) => ({
+    default: module.MarketPage,
+  })),
+);
+
 export const routes: RouteObject[] = [
   {
     path: "/",
     element: <AppLayout />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: "market", element: <MarketPage /> },
+      {
+        path: "market",
+        element: (
+          <Suspense
+            fallback={<div aria-label="行情页面加载中">加载行情工作台…</div>}
+          >
+            <MarketPage />
+          </Suspense>
+        ),
+      },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "orders", element: <OrdersPage /> },

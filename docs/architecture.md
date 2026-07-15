@@ -1,5 +1,9 @@
 # 架构总览
 
+## M03 行情切片
+
+行情切片遵守 `Web → FastAPI → 应用服务 → 领域端口 → 基础设施` 的单向依赖。PostgreSQL 保存来源、映射、K 线、同步运行、事件和审计；Redis 在 M03 仍不承载行情事实、缓存或消息。详细边界见 [market_data.md](market_data.md) 与 ADR 0008。
+
 AlphaDesk 的 MVP 采用模块化单体：业务规则集中于单一后端代码库，并通过清晰的领域与适配器边界隔离外部依赖。Windows 执行器是独立进程和安全边界，不是 Web 后端的一个远程函数。
 
 ## 总体系统
@@ -104,7 +108,7 @@ flowchart LR
 - `/health/ready` 对两个关键依赖执行有超时的检查，失败返回 503。
 - `/api/v1/system/status` 只返回脱敏后的服务状态、版本、环境和链路 ID。
 - `/ws/system` 仅验证实时展示连接，不发送 Signal、订单或执行器命令。
-- SQLAlchemy metadata 在 M01 为空；Redis Streams、Outbox 和交易领域仍未实现。
+- M01 封板时 SQLAlchemy metadata 为空；Redis Streams、Outbox 发布和交易流程均未实现。
 
 ## M01.1 运行时验收结论
 
@@ -112,4 +116,10 @@ M01 当前的可运行拓扑已通过真实 Docker Compose 验证：浏览器只
 
 `/health/live` 与 `/health/ready` 的分离在故障注入中得到验证：依赖中断不会伪装成 API 进程死亡，但会阻止就绪；前端通过系统状态接口展示降级，并通过有上限退避的 WebSocket 重连恢复展示连接。PostgreSQL 的 `alembic_version` 与 Redis AOF 数据均能跨整组容器重启保留在命名卷中。
 
-这些运行时行为仍只属于基础设施探测。Redis 未启用 Streams，PostgreSQL 除 `alembic_version` 外没有业务表，WebSocket 不承载交易命令，架构依赖方向和 M01 领域边界没有改变。
+这些是 M01.1 封板时的运行时结论。M02 随后增加了 PostgreSQL 领域表，但 Redis 仍未启用 Streams，WebSocket 仍不承载交易命令，既有运行边界没有改变。
+
+## M02 领域与持久化分层
+
+M02 新增独立的 `alphadesk_domain` 纯 Python 包，以及位于 `alphadesk_api.infrastructure` 的 SQLAlchemy Model、Mapper、Repository 和 Unit of Work。依赖只允许从 API/基础设施指向领域协议；领域包不得导入 FastAPI、SQLAlchemy、Redis、XtQuant 或具体 Broker。PostgreSQL 现包含 18 张核心表，结构见 `database_schema.md`。
+
+这一阶段没有增加公开业务 API、网页功能、Redis Streams、Outbox 发布器、订单状态机服务、风控执行或 Broker 调用。Web 与既有健康接口的 M01 行为保持不变。

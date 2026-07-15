@@ -170,3 +170,60 @@ body {
     flex-direction: column;
   }
 }
+.market-page .ant-card {
+  height: 100%;
+}
+
+.market-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  padding: 12px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.18s ease;
+}
+
+.market-list {
+  margin-top: 10px;
+}
+
+.market-list-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.watchlist-list-item {
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.watchlist-list-item > .ant-space {
+  justify-content: flex-end;
+}
+
+.market-list-item:hover,
+.market-list-item.selected {
+  background: #f0f6ff;
+}
+
+.market-statistics {
+  margin-bottom: 18px;
+}
+
+.candle-chart {
+  width: 100%;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fff 0%, #fafcff 100%);
+}
+
+.candle-chart svg {
+  display: block;
+  width: 100%;
+  height: 360px;
+}

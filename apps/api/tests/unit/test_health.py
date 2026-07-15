@@ -1,7 +1,7 @@
-from conftest import FakeProbe, build_client
 from fastapi.testclient import TestClient
 
 from alphadesk_api.core.config import Settings
+from tests.conftest import FakeProbe, build_client
 
 
 def test_live_returns_process_status(client: TestClient) -> None:

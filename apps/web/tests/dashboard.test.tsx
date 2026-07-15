@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 
 import { healthyStatus, mockStatusSuccess, renderRoute } from "./test-utils";
 
@@ -10,12 +10,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("Dashboard显示加载状态", () => {
+test("Dashboard显示加载状态", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(() => new Promise(() => undefined)),
   );
-  const { container } = renderRoute("/");
+  let container!: HTMLElement;
+  await act(async () => {
+    ({ container } = renderRoute("/"));
+    await Promise.resolve();
+  });
   expect(container.querySelector(".ant-skeleton")).toBeInTheDocument();
 });
 

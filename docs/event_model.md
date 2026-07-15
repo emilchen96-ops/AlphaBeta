@@ -1,5 +1,9 @@
 # 事件模型
 
+## M03 行情与自选股事件
+
+M03 写入 `INSTRUMENT_IMPORTED`、`INSTRUMENT_MAPPING_CREATED`、`MARKET_SYNC_STARTED`、`MARKET_BARS_INGESTED`、`MARKET_SYNC_SUCCEEDED`、`MARKET_SYNC_PARTIALLY_SUCCEEDED`、`MARKET_SYNC_FAILED`，以及自选列表创建/修改/删除、条目添加/修改/移除/重排事件。每个写操作同步追加审计日志并共享 Correlation ID。为避免越界，M03 只落 `domain_events` 与 `audit_logs`，不创建 Outbox 消息、不发布 Redis Streams。
+
 所有领域事件使用统一事件信封，作为审计、内部发布和可靠消息的共同语义。事件本身不可原地修改；需要更正时，发布新的更正或补偿事件，并保留原始事件。
 
 ## 事件信封
@@ -29,3 +33,7 @@
 6. 事件落库、发布、消费及失败处理均应可由 `event_id`、`correlation_id` 和 `causation_id` 追溯。
 
 事件日志是事实记录而非可变状态缓存。最新状态应由受控投影或领域聚合得出，但历史事件必须保留以支持审计与重放。
+
+## M02 持久化状态
+
+M02 已实现 `domain_events`、`audit_logs` 和 `outbox_messages` 表及追加型仓储接口。`event_id`、实体序列、correlation/causation、schema 版本、UTC 时间和 JSONB 载荷均可持久化；事件与 Outbox 的唯一键由数据库强制执行。M02 未实现事件发布、重放、消费、投影更新或 Redis Streams，这些能力从 M03 开始建设。

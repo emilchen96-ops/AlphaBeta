@@ -1,5 +1,15 @@
 # 测试策略
 
+## M03 行情验收基线
+
+- 单元测试覆盖行情实体数值/UTC/周期校验、确定性 DEMO、禁用外部入口和 CSV 文件边界。
+- PostgreSQL 集成测试覆盖 0003 upgrade、downgrade 到 0002、re-upgrade、批量 Upsert 幂等计数、同步事件/审计且无 Outbox 发布。
+- API 测试覆盖标的、自选股、K 线、来源、同步记录与统一错误信封；前端测试覆盖 API 契约、空/加载/K 线状态和行情路由交互。
+- 前端测试环境兼容 Ant Design 的伪元素探测并显式等待异步 React 更新；完整 Vitest 输出不包含 `act(...)` 或 jsdom 伪元素警告。
+- 生产构建通过 Rolldown 将 React、Ant Design 和其他依赖分组切包；当前最大压缩前 JavaScript 分包约 225 kB，低于 500 kB 告警阈值。
+- `seed-demo` 必须连续运行两次：首次新增，第二次新增和更新均为零。
+- 本地入口为 `scripts/check_m03.ps1` 或 `scripts/check_m03.sh`；集成测试只允许连接数据库名包含 `test` 的显式测试 URL。
+
 测试是未来每项功能变更的必需交付物。不得以删除功能、跳过关键场景或伪造通过结果来替代测试。
 
 | 类型 | 目标 | 重点场景 |
@@ -29,8 +39,16 @@
 
 - Docker Compose 四服务构建和健康检查通过，PostgreSQL 与 Redis 使用真实容器而非 Mock。
 - API 容器内 `ruff check .`、`ruff format --check .`、`mypy src` 通过；Pytest 共 16 项通过，其中 1 项真实依赖集成测试已执行且没有跳过。
-- Web 的 ESLint、TypeScript、Vitest 和生产构建通过；Vitest 共 12 项通过。构建存在主包大于 500 kB 的非阻塞警告，留待后续出现真实页面拆分需求时处理。
+- Web 的 ESLint、TypeScript、Vitest 和生产构建通过；M01 时的主包大于 500 kB 警告已在 M03 通过页面懒加载与供应商分组切包解决。
 - 浏览器验证覆盖首页状态、手动刷新、路由切换、深链接刷新、WebSocket 与控制台；最终控制台错误数为 0。
 - PostgreSQL 或 Redis 离线时，存活检查保持 200、就绪检查返回 503，页面显示对应依赖离线；恢复服务后重新就绪。
 - API 离线时 Web 仍可访问并显示 API 离线、WebSocket 断开；API 恢复后连接自动恢复，未出现控制台错误洪泛。
 - 整组 `docker compose restart` 后，Alembic 版本与 Redis 持久性探针均保留，且两个命名卷未被删除。
+
+## M02 数据库验收基线
+
+- 纯领域单元测试覆盖 Decimal/UTC 校验、非法值拒绝、框架依赖隔离、append-only 协议和 UoW commit/rollback/close 行为。
+- PostgreSQL 集成测试只使用独立 `alphadesk_test` 数据库；先执行 upgrade，再 downgrade 到 M01、重新 upgrade 到 head，并执行 `alembic check`。
+- 数据库测试直接验证业务唯一键、复合唯一键、部分唯一索引、数量/价格/有效期检查和事件/命令/成交/Outbox 幂等约束。
+- 仓储测试验证实体映射、业务键查询、Decimal 与 UTC 往返；事务测试验证 Order、Transition、Event、Audit、Outbox 同时提交、强制失败整体回滚，以及回滚后新事务可恢复。
+- 本地入口为 `scripts/check_m02.ps1` 或 `scripts/check_m02.sh`；CI 使用同名隔离数据库并显式开启 M02 集成测试。

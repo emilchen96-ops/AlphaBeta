@@ -1,19 +1,23 @@
 # AlphaDesk
 
+当前封板里程碑为 M03：项目提供离线确定性的 DEMO 行情、受限本地 CSV 导入、标的目录、自选股与网页行情工作台。真实外部行情入口默认禁用；系统没有策略、Signal、订单、Broker 或实盘能力。详见 [M03 行情文档](docs/market_data.md) 与 [自选股规则](docs/watchlists.md)。
+
 AlphaDesk 是一个面向个人使用的本地量化交易系统。项目以可审计、可恢复和安全边界清晰为首要目标，当前采用 React + TypeScript 前端、FastAPI 模块化单体后端、PostgreSQL 与 Redis 基础设施。
 
-## 当前阶段：M01
+## 当前阶段：M02
 
-M00 架构规则与 M01 项目骨架已经完成。当前具备：
+M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成。当前具备：
 
 - 中文 React 管理后台、响应式侧栏、路由和明确的空页面；
 - FastAPI 应用工厂、统一配置、结构化日志和 Correlation ID；
 - 存活、就绪、系统状态接口及仅用于展示连接的 WebSocket；
-- SQLAlchemy 异步连接基础、Redis 异步客户端和空 Alembic bootstrap 迁移；
+- 纯 Python 领域实体/协议，以及独立的 SQLAlchemy 模型、仓储和 Unit of Work；
+- 18 张 PostgreSQL 核心领域、审计与 Outbox 表和可逆 Alembic Migration；
+- Redis 异步客户端（仍仅用于依赖探测，尚无 Streams）；
 - PostgreSQL、Redis、API、Web 的本地 Docker Compose 编排；
 - 后端与前端自动化测试、静态检查、依赖锁文件和基础 CI。
 
-当前**不具备**行情、账户、持仓、策略、信号、风控、订单、成交、模拟 Broker、MiniQMT/XtQuant、AI 或真实交易能力。M01 也没有用户认证、登录或权限系统。
+当前只有上述对象的领域/持久化模型，**不具备**行情接入、账户同步、持仓投影、策略运行、信号处理、风控执行、订单状态机服务、成交接入、模拟 Broker、MiniQMT/XtQuant、AI 或真实交易能力。系统也没有用户认证、登录或权限功能。
 
 > 该系统目前只能用于本地开发，禁止部署到公网。
 
@@ -106,10 +110,28 @@ docker compose exec api alembic current
 - 当前没有认证能力，不得暴露在不可信网络；
 - 当前没有账户、券商接入或实盘交易能力。
 
-完整文档从 [docs/index.md](docs/index.md) 开始；开发任务必须遵守 [AGENTS.md](AGENTS.md)。下一阶段 M02 的范围仅是领域模型与 PostgreSQL 持久化，尚未实施。
+完整文档从 [docs/index.md](docs/index.md) 开始；开发任务必须遵守 [AGENTS.md](AGENTS.md)。
 
 ## M01.1 端到端补充验收
 
 M01 基础设施已于 2026-07-15 在 Docker Desktop 29.6.1、Docker Compose 5.3.0 上完成真实四服务验收：PostgreSQL、Redis、API、Web 均通过健康检查；在线 Alembic 版本为 `0001_m01_bootstrap`；后端 16 项测试（含真实 PostgreSQL/Redis 集成测试）和前端 12 项测试全部通过。
 
 验收还覆盖了 PostgreSQL、Redis、API 分别中断后的降级与恢复，以及整组 Compose 重启后的命名卷持久性。全部服务在线的浏览器截图保存在 [`outputs/m01-1-all-services-online.png`](outputs/m01-1-all-services-online.png)。该结论只确认 M01 工程基础设施，不代表任何交易业务或实盘能力已实现。
+
+## 当前阶段：M02
+
+M02 已完成纯 Python 领域模型、18 张 PostgreSQL 核心表、SQLAlchemy 映射、异步仓储和 Unit of Work。完整结构见 [数据库模型](docs/database_schema.md)，架构决定见 [ADR 0007](docs/adr/0007-domain-persistence-separation.md)。现有网页和公开 API 未增加交易功能。
+
+M02 一键验收会启动独立的临时测试数据库并执行迁移往返、约束、事务和前后端回归：
+
+```text
+./scripts/check_m02.ps1
+```
+
+若 Windows 的本机执行策略禁止直接运行脚本，可仅为本次进程使用：
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check_m02.ps1
+```
+
+测试数据库必须通过 `ALPHADESK_TEST_DATABASE_URL` 明确配置且库名包含 `test`。M02 尚未实现 Outbox 发布器、Redis Streams、业务 API、订单状态机执行、风控、Broker、MiniQMT/XtQuant 或实盘能力；下一阶段 M03 仅负责事件与 Transactional Outbox 发布链路。

@@ -28,3 +28,12 @@ Object.defineProperty(globalThis, "ResizeObserver", {
   writable: true,
   value: ResizeObserverStub,
 });
+
+// jsdom does not implement pseudo-element styles. Ant Design probes them for
+// component capability detection, so keep the real implementation while
+// deliberately ignoring the optional pseudo-element argument in tests.
+const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+Object.defineProperty(window, "getComputedStyle", {
+  writable: true,
+  value: (element: Element) => nativeGetComputedStyle(element),
+});

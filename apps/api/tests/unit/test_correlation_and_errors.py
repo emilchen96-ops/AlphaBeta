@@ -1,9 +1,9 @@
-from conftest import FakeProbe
 from fastapi import Request
 from fastapi.testclient import TestClient
 
 from alphadesk_api.app_factory import create_app
 from alphadesk_api.core.config import Settings
+from tests.conftest import FakeProbe
 
 
 def test_correlation_id_is_generated(client: TestClient) -> None:

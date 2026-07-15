@@ -1,5 +1,9 @@
 # 领域模型
 
+## M03 行情领域
+
+`MarketDataSource` 表示来源能力和优先级，`InstrumentMapping` 显式连接内部标的与外部代码，`MarketBar` 保存规范化 K 线事实，`MarketSyncRun` 记录一次摄取的生命周期与计数，`MarketDataFreshness` 是查询时计算的只读值。策略、Signal、订单和 Broker 不得依赖或绕过该边界；详细不变量见 [market_data.md](market_data.md)。
+
 本文件定义业务概念与关系，不规定 ORM、表结构或 API 实现。所有实体的持久化事实、历史状态和审计记录以 PostgreSQL 为准。
 
 | 对象 | 职责 | 主要关系 |
@@ -39,3 +43,7 @@ erDiagram
 ```
 
 策略和 AI 均不得直接创建 Broker 请求。只有经过 RiskDecision、订单状态机与审计后的 OrderCommand 才可进入执行器命令链路。Position 是成交和对账事实的投影，不能以手工修改替代对账。
+
+## M02 实现边界
+
+M02 将本文件的核心概念实现为 `alphadesk_domain` 中的纯 Python dataclass、枚举、仓储协议和 Unit of Work 协议。交易数值只接受 `Decimal`，时间只接受带时区值并规范为 UTC。SQLAlchemy 模型和映射位于基础设施层，不能反向渗透到领域层。当前实现只提供模型和持久化能力，不代表策略、风控、订单状态机或执行器业务流程已经启用。

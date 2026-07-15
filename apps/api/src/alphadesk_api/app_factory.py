@@ -49,9 +49,9 @@ def create_app(
 
     app = FastAPI(
         title="AlphaDesk API",
-        summary="M01 local infrastructure API; no trading capability",
+        summary="AlphaDesk local market-data API; no trading capability",
         description=(
-            "Local-development infrastructure endpoints only. No market data, strategy, "
+            "Local-development market-data and watchlist endpoints. No strategy, signal, "
             "order, broker, or real-trading capability is implemented."
         ),
         version=resolved_settings.app_version,
@@ -66,7 +66,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Accept", "Content-Type", resolved_settings.correlation_id_header],
         expose_headers=[resolved_settings.correlation_id_header],
     )

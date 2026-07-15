@@ -43,3 +43,7 @@ stateDiagram-v2
 终态为 `RISK_REJECTED`、`EXECUTOR_REJECTED`、`FILLED`、`CANCELLED`、`EXPIRED` 与 `FAILED`。`RECONCILIATION_REQUIRED` 是受控暂停态，不是成功终态：必须通过对账获得确定结果，随后迁移到实际状态或由人工处置。
 
 除图中箭头外的迁移均为非法，尤其禁止从任一终态回到可执行状态、从 `CREATED` 直接派发、从风险拒绝状态重试为 `QUEUED`，以及由策略/AI 直接写入 `BROKER_SUBMITTED`。取消只可从已进入 Broker 生命周期的可取消状态发起，且取消回报必须按实际成交事实处理。
+
+## M02 持久化边界
+
+M02 仅固化 `OrderStatus` 枚举、`orders` 当前状态和 append-only 的 `order_state_transitions` 历史结构，并验证它们可与事件、审计和 Outbox 在同一事务提交。合法迁移判定、并发状态推进、取消竞态和对账服务尚未实现；仅有数据库状态枚举约束不能替代后续状态机应用服务。

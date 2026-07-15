@@ -1,5 +1,7 @@
 # 可靠消息与命令
 
+> M03 边界说明：行情摄取和自选股写入领域事件与审计，但不创建 Outbox 消息、不启动发布器或 Redis Streams。现有 Outbox 仅保留 M02 数据模型能力；可靠消息的发布/消费仍未启用。
+
 ## 基本模型
 
 `Transactional Outbox` 指在与订单、事件或状态迁移相同的 PostgreSQL 事务内写入待发布消息。事务提交后，发布器负责将未发布的 OutboxMessage 投递到 Redis Streams；投递失败不会使已提交业务事实消失。
@@ -24,3 +26,7 @@ Redis Streams 用于后端和执行器之间的可靠命令、回执和恢复协
 - 对命令是否已送达、Broker 是否已受理存在不确定性时，订单转为 `RECONCILIATION_REQUIRED`，不得盲目重发下单。
 
 WebSocket 只用于网页的实时展示与状态订阅，不能承担可靠交易指令投递、命令确认或故障恢复职责。
+
+## M02 已实现与未实现
+
+M02 已实现 `order_commands` 和 `outbox_messages` 的持久化结构、幂等唯一键、待处理索引，以及同一 Unit of Work 内与订单/事件事实原子写入的能力。Redis Streams、Outbox 轮询/发布、ACK、Pending 认领、消费者去重和执行器回执均未实现，属于 M03 及后续里程碑。任何代码不得因为表已经存在就声称可靠消息链路已经可用。

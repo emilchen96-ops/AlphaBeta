@@ -1,5 +1,6 @@
-from conftest import FakeProbe
 from fastapi.testclient import TestClient
+
+from tests.conftest import FakeProbe
 
 
 def test_database_and_redis_clients_are_replaceable(

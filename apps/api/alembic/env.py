@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from alphadesk_api.core.config import get_settings
+from alphadesk_api.infrastructure import models as persistence_models  # noqa: F401
 from alphadesk_api.infrastructure.database import Base
 
 config = context.config
