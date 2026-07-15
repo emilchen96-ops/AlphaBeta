@@ -1,5 +1,7 @@
 # 事件模型
 
+> M04 在业务事务内记录账户创建/更新、资金入出、成交记账、估值和核对领域事件及审计日志；尚不发布 Outbox，也不创建 Redis 消费者。
+
 ## M03 行情与自选股事件
 
 M03 写入 `INSTRUMENT_IMPORTED`、`INSTRUMENT_MAPPING_CREATED`、`MARKET_SYNC_STARTED`、`MARKET_BARS_INGESTED`、`MARKET_SYNC_SUCCEEDED`、`MARKET_SYNC_PARTIALLY_SUCCEEDED`、`MARKET_SYNC_FAILED`，以及自选列表创建/修改/删除、条目添加/修改/移除/重排事件。每个写操作同步追加审计日志并共享 Correlation ID。为避免越界，M03 只落 `domain_events` 与 `audit_logs`，不创建 Outbox 消息、不发布 Redis Streams。

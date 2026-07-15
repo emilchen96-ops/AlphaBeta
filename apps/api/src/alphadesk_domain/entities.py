@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from alphadesk_domain.enums import (
     AccountStatus,
     AccountType,
+    AccountValuationStatus,
     CommandStatus,
     CommandType,
     ExecutorDeviceStatus,
@@ -19,6 +20,7 @@ from alphadesk_domain.enums import (
     OutboxStatus,
     RiskDecisionType,
     RiskLayer,
+    SettlementPolicy,
     SignalStatus,
     SignalType,
     StrategyStatus,
@@ -96,6 +98,8 @@ class TradingAccount:
     broker_type: str
     base_currency: str
     id: UUID = field(default_factory=uuid4)
+    settlement_policy: SettlementPolicy = SettlementPolicy.IMMEDIATE
+    creation_idempotency_key: str | None = None
     external_account_reference: str | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
@@ -103,6 +107,12 @@ class TradingAccount:
 
     def __post_init__(self) -> None:
         self.account_code = non_empty(self.account_code, "account_code")
+        self.name = non_empty(self.name, "name")
+        self.base_currency = non_empty(self.base_currency, "base_currency").upper()
+        if self.creation_idempotency_key is not None:
+            self.creation_idempotency_key = non_empty(
+                self.creation_idempotency_key, "creation_idempotency_key"
+            )
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 
@@ -114,10 +124,15 @@ class Position:
     total_quantity: Decimal
     available_quantity: Decimal
     frozen_quantity: Decimal
+    unsettled_quantity: Decimal
+    cost_basis: Decimal
     average_cost: Decimal
-    market_value: Decimal
+    market_value: Decimal | None
     realized_pnl: Decimal
-    unrealized_pnl: Decimal
+    unrealized_pnl: Decimal | None
+    last_price: Decimal | None
+    last_price_at: datetime | None
+    valuation_status: AccountValuationStatus
     as_of: datetime
     id: UUID = field(default_factory=uuid4)
     row_version: int = 1
@@ -125,20 +140,47 @@ class Position:
     updated_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
-        quantities = (self.total_quantity, self.available_quantity, self.frozen_quantity)
+        quantities = (
+            self.total_quantity,
+            self.available_quantity,
+            self.frozen_quantity,
+            self.unsettled_quantity,
+        )
         for name, value in zip(
-            ("total_quantity", "available_quantity", "frozen_quantity"), quantities, strict=True
+            (
+                "total_quantity",
+                "available_quantity",
+                "frozen_quantity",
+                "unsettled_quantity",
+            ),
+            quantities,
+            strict=True,
         ):
             decimal_value(value, name)
             if value < 0:
                 raise ValueError(f"{name} must be non-negative")
-        for name in ("average_cost", "market_value", "realized_pnl", "unrealized_pnl"):
-            decimal_value(getattr(self, name), name)
-        if self.available_quantity + self.frozen_quantity > self.total_quantity:
-            raise ValueError("available plus frozen quantity exceeds total quantity")
+        for name in ("cost_basis", "average_cost", "realized_pnl"):
+            value = decimal_value(getattr(self, name), name)
+            if name != "realized_pnl" and value < 0:
+                raise ValueError(f"{name} must be non-negative")
+        for name in ("market_value", "unrealized_pnl", "last_price"):
+            value = getattr(self, name)
+            if value is not None:
+                decimal_value(value, name)
+        if self.last_price is not None and self.last_price <= 0:
+            raise ValueError("last_price must be positive")
+        if (
+            self.available_quantity + self.frozen_quantity + self.unsettled_quantity
+            != self.total_quantity
+        ):
+            raise ValueError("position quantity components must equal total quantity")
+        if self.total_quantity == 0 and (self.cost_basis != 0 or self.average_cost != 0):
+            raise ValueError("closed position cost basis and average cost must be zero")
         if self.row_version < 1:
             raise ValueError("row_version must be at least one")
         self.as_of = as_utc(self.as_of, "as_of")
+        if self.last_price_at is not None:
+            self.last_price_at = as_utc(self.last_price_at, "last_price_at")
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 
@@ -263,6 +305,7 @@ class Order:
     expires_at: datetime | None = None
     submitted_at: datetime | None = None
     completed_at: datetime | None = None
+    metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 

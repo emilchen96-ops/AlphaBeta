@@ -28,11 +28,15 @@ from alphadesk_api.infrastructure.database import Base
 from alphadesk_domain.enums import (
     AccountStatus,
     AccountType,
+    AccountValuationStatus,
     AdjustmentType,
+    CashLedgerEntryType,
     CommandStatus,
     CommandType,
     ExecutorDeviceStatus,
     ExecutorPermission,
+    LedgerTransactionStatus,
+    LedgerTransactionType,
     MarketDataQualityStatus,
     MarketDataSourceStatus,
     MarketSyncStatus,
@@ -41,8 +45,11 @@ from alphadesk_domain.enums import (
     OrderStatus,
     OrderType,
     OutboxStatus,
+    PositionLedgerEntryType,
+    ReconciliationStatus,
     RiskDecisionType,
     RiskLayer,
+    SettlementPolicy,
     SignalStatus,
     SignalType,
     StrategyStatus,
@@ -135,6 +142,14 @@ class TradingAccountModel(MutableTimestampedModel, Base):
         UniqueConstraint("account_code", name="uq_trading_accounts_account_code"),
         CheckConstraint(f"account_type IN ({enum_values(AccountType)})", name="account_type_valid"),
         CheckConstraint(f"status IN ({enum_values(AccountStatus)})", name="account_status_valid"),
+        CheckConstraint(
+            f"settlement_policy IN ({enum_values(SettlementPolicy)})",
+            name="settlement_policy_valid",
+        ),
+        UniqueConstraint(
+            "creation_idempotency_key",
+            name="uq_trading_accounts_creation_idempotency_key",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -144,6 +159,10 @@ class TradingAccountModel(MutableTimestampedModel, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     broker_type: Mapped[str] = mapped_column(String(64), nullable=False)
     base_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    settlement_policy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=SettlementPolicy.IMMEDIATE.value
+    )
+    creation_idempotency_key: Mapped[str | None] = mapped_column(String(128))
     external_account_reference: Mapped[str | None] = mapped_column(String(256))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
@@ -157,9 +176,21 @@ class PositionModel(MutableTimestampedModel, Base):
         CheckConstraint("total_quantity >= 0", name="total_quantity_non_negative"),
         CheckConstraint("available_quantity >= 0", name="available_quantity_non_negative"),
         CheckConstraint("frozen_quantity >= 0", name="frozen_quantity_non_negative"),
+        CheckConstraint("unsettled_quantity >= 0", name="unsettled_quantity_non_negative"),
         CheckConstraint(
-            "available_quantity + frozen_quantity <= total_quantity",
-            name="available_frozen_within_total",
+            "available_quantity + frozen_quantity + unsettled_quantity = total_quantity",
+            name="quantity_components_equal_total",
+        ),
+        CheckConstraint("cost_basis >= 0", name="cost_basis_non_negative"),
+        CheckConstraint("average_cost >= 0", name="average_cost_non_negative"),
+        CheckConstraint(
+            "total_quantity <> 0 OR (cost_basis = 0 AND average_cost = 0)",
+            name="closed_position_cost_zero",
+        ),
+        CheckConstraint("last_price IS NULL OR last_price > 0", name="last_price_positive"),
+        CheckConstraint(
+            f"valuation_status IN ({enum_values(AccountValuationStatus)})",
+            name="valuation_status_valid",
         ),
         CheckConstraint("row_version >= 1", name="row_version_positive"),
         Index("ix_positions_account", "account_id"),
@@ -175,12 +206,304 @@ class PositionModel(MutableTimestampedModel, Base):
     total_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
     available_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
     frozen_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    unsettled_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    cost_basis: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
     average_cost: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
-    market_value: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    market_value: Mapped[Decimal | None] = mapped_column(AMOUNT)
     realized_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
-    unrealized_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    unrealized_pnl: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    last_price: Mapped[Decimal | None] = mapped_column(PRICE)
+    last_price_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valuation_status: Mapped[str] = mapped_column(String(32), nullable=False)
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class AccountCashBalanceModel(MutableTimestampedModel, Base):
+    __tablename__ = "account_cash_balances"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "currency", name="uq_account_cash_balances_account_currency"
+        ),
+        CheckConstraint("total_cash >= 0", name="total_cash_non_negative"),
+        CheckConstraint("available_cash >= 0", name="available_cash_non_negative"),
+        CheckConstraint("frozen_cash >= 0", name="frozen_cash_non_negative"),
+        CheckConstraint(
+            "total_cash = available_cash + frozen_cash",
+            name="cash_components_equal_total",
+        ),
+        CheckConstraint("row_version >= 1", name="row_version_positive"),
+        CheckConstraint("length(trim(currency)) > 0", name="currency_non_empty"),
+        Index("ix_account_cash_balances_account", "account_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    total_cash: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    available_cash: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    frozen_cash: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LedgerTransactionModel(MutableTimestampedModel, Base):
+    __tablename__ = "ledger_transactions"
+    __table_args__ = (
+        UniqueConstraint("business_key", name="uq_ledger_transactions_business_key"),
+        CheckConstraint(
+            f"transaction_type IN ({enum_values(LedgerTransactionType)})",
+            name="transaction_type_valid",
+        ),
+        CheckConstraint(f"status IN ({enum_values(LedgerTransactionStatus)})", name="status_valid"),
+        CheckConstraint(
+            "posted_at IS NULL OR posted_at >= occurred_at", name="posted_not_before_occurred"
+        ),
+        CheckConstraint("reversal_of_id IS NULL OR reversal_of_id <> id", name="not_self_reversal"),
+        CheckConstraint(
+            "description IS NULL OR length(description) <= 500", name="description_length"
+        ),
+        Index("ix_ledger_transactions_account_occurred", "account_id", "occurred_at"),
+        Index("ix_ledger_transactions_order", "related_order_id"),
+        Index("ix_ledger_transactions_correlation", "correlation_id"),
+        Index("ix_ledger_transactions_status_created", "status", "created_at"),
+        Index(
+            "uq_ledger_transactions_related_fill",
+            "related_fill_id",
+            unique=True,
+            postgresql_where=text("related_fill_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    transaction_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    business_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    related_order_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="RESTRICT")
+    )
+    related_fill_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("fills.id", ondelete="RESTRICT")
+    )
+    reversal_of_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("ledger_transactions.id", ondelete="RESTRICT")
+    )
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    description: Mapped[str | None] = mapped_column(String(500))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class CashLedgerEntryModel(TimestampedModel, Base):
+    __tablename__ = "cash_ledger_entries"
+    __table_args__ = (
+        CheckConstraint(
+            f"entry_type IN ({enum_values(CashLedgerEntryType)})", name="entry_type_valid"
+        ),
+        CheckConstraint(
+            "total_delta = available_delta + frozen_delta", name="delta_components_equal_total"
+        ),
+        CheckConstraint("total_cash_after >= 0", name="total_cash_after_non_negative"),
+        CheckConstraint("available_cash_after >= 0", name="available_cash_after_non_negative"),
+        CheckConstraint("frozen_cash_after >= 0", name="frozen_cash_after_non_negative"),
+        CheckConstraint(
+            "total_cash_after = available_cash_after + frozen_cash_after",
+            name="balance_components_equal_total",
+        ),
+        CheckConstraint("gross_amount IS NULL OR gross_amount >= 0", name="gross_non_negative"),
+        CheckConstraint("fee_amount IS NULL OR fee_amount >= 0", name="fee_non_negative"),
+        Index("ix_cash_ledger_entries_account_occurred", "account_id", "occurred_at"),
+        Index("ix_cash_ledger_entries_transaction", "ledger_transaction_id"),
+        Index("ix_cash_ledger_entries_fill", "related_fill_id"),
+        Index("ix_cash_ledger_entries_correlation", "correlation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    ledger_transaction_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ledger_transactions.id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    entry_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    total_delta: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    available_delta: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    frozen_delta: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    gross_amount: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    fee_amount: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    total_cash_after: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    available_cash_after: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    frozen_cash_after: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    related_fill_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("fills.id", ondelete="RESTRICT")
+    )
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class PositionLedgerEntryModel(TimestampedModel, Base):
+    __tablename__ = "position_ledger_entries"
+    __table_args__ = (
+        CheckConstraint(
+            f"entry_type IN ({enum_values(PositionLedgerEntryType)})", name="entry_type_valid"
+        ),
+        CheckConstraint(
+            "quantity_delta = available_quantity_delta + frozen_quantity_delta "
+            "+ unsettled_quantity_delta",
+            name="delta_components_equal_total",
+        ),
+        CheckConstraint("total_quantity_after >= 0", name="total_after_non_negative"),
+        CheckConstraint("available_quantity_after >= 0", name="available_after_non_negative"),
+        CheckConstraint("frozen_quantity_after >= 0", name="frozen_after_non_negative"),
+        CheckConstraint("unsettled_quantity_after >= 0", name="unsettled_after_non_negative"),
+        CheckConstraint(
+            "total_quantity_after = available_quantity_after + frozen_quantity_after "
+            "+ unsettled_quantity_after",
+            name="balance_components_equal_total",
+        ),
+        CheckConstraint("cost_basis_after >= 0", name="cost_basis_after_non_negative"),
+        CheckConstraint("average_cost_after >= 0", name="average_cost_after_non_negative"),
+        CheckConstraint(
+            "total_quantity_after <> 0 OR (cost_basis_after = 0 AND average_cost_after = 0)",
+            name="closed_position_cost_zero",
+        ),
+        Index(
+            "ix_position_ledger_entries_account_instrument_occurred",
+            "account_id",
+            "instrument_id",
+            "occurred_at",
+        ),
+        Index("ix_position_ledger_entries_transaction", "ledger_transaction_id"),
+        Index("ix_position_ledger_entries_fill", "related_fill_id"),
+        Index("ix_position_ledger_entries_correlation", "correlation_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    ledger_transaction_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ledger_transactions.id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    entry_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity_delta: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    available_quantity_delta: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    frozen_quantity_delta: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    unsettled_quantity_delta: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    cost_basis_delta: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    realized_pnl_delta: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_quantity_after: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    available_quantity_after: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    frozen_quantity_after: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    unsettled_quantity_after: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    cost_basis_after: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    average_cost_after: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    realized_pnl_after: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    related_fill_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("fills.id", ondelete="RESTRICT")
+    )
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class AccountSnapshotModel(TimestampedModel, Base):
+    __tablename__ = "account_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "cash_total >= 0 AND cash_available >= 0 AND cash_frozen >= 0 "
+            "AND positions_cost_basis >= 0",
+            name="amounts_non_negative",
+        ),
+        CheckConstraint("total_equity IS NULL OR total_equity >= 0", name="equity_non_negative"),
+        CheckConstraint(
+            "priced_position_count >= 0 AND unpriced_position_count >= 0",
+            name="counts_non_negative",
+        ),
+        CheckConstraint(
+            f"valuation_status IN ({enum_values(AccountValuationStatus)})",
+            name="valuation_status_valid",
+        ),
+        Index("ix_account_snapshots_account_as_of", "account_id", "as_of"),
+        Index("ix_account_snapshots_status_as_of", "valuation_status", "as_of"),
+        Index("ix_account_snapshots_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cash_total: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    cash_available: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    cash_frozen: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    positions_cost_basis: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    positions_market_value: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    total_equity: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    realized_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    unrealized_pnl: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    valuation_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    priced_position_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unpriced_position_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    latest_price_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class AccountReconciliationRunModel(TimestampedModel, Base):
+    __tablename__ = "account_reconciliation_runs"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({enum_values(ReconciliationStatus)})", name="status_valid"),
+        CheckConstraint("discrepancy_count >= 0", name="discrepancy_count_non_negative"),
+        CheckConstraint(
+            "status <> 'MATCHED' OR discrepancy_count = 0", name="matched_has_no_discrepancy"
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="completion_not_before_start",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(discrepancies) = 'array' AND jsonb_array_length(discrepancies) <= 100",
+            name="discrepancies_bounded_array",
+        ),
+        Index("ix_account_reconciliation_runs_account_started", "account_id", "started_at"),
+        Index("ix_account_reconciliation_runs_status_started", "status", "started_at"),
+        Index("ix_account_reconciliation_runs_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expected_cash: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actual_cash: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    expected_positions: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actual_positions: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    discrepancy_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    discrepancies: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
 
 
 class StrategyModel(MutableTimestampedModel, Base):
@@ -353,6 +676,9 @@ class OrderModel(MutableTimestampedModel, Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
 
 
 class OrderStateTransitionModel(Base):

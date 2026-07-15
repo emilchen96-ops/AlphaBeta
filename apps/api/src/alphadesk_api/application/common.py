@@ -39,6 +39,7 @@ async def append_event_and_audit(
     action: str | None = None,
     outcome: str = "SUCCESS",
     details: dict[str, object] | None = None,
+    source: str = "ALPHADESK_M03",
 ) -> None:
     now = datetime.now(UTC)
     await uow.events.append(
@@ -47,7 +48,7 @@ async def append_event_and_audit(
             event_type=event_type,
             entity_type=entity_type,
             entity_id=entity_id,
-            source="ALPHADESK_M03",
+            source=source,
             event_time=now,
             received_time=now,
             correlation_id=correlation_id,

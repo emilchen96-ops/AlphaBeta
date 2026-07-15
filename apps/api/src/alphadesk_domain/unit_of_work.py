@@ -4,18 +4,24 @@ from types import TracebackType
 from typing import Protocol, Self
 
 from alphadesk_domain.repositories import (
+    AccountReconciliationRepository,
+    AccountSnapshotRepository,
     AuditLogRepository,
+    CashBalanceRepository,
+    CashLedgerRepository,
     DomainEventRepository,
     ExecutorDeviceRepository,
     FillRepository,
     InstrumentMappingRepository,
     InstrumentRepository,
+    LedgerTransactionRepository,
     MarketBarRepository,
     MarketDataSourceRepository,
     MarketSyncRunRepository,
     OrderCommandRepository,
     OrderRepository,
     OutboxRepository,
+    PositionLedgerRepository,
     PositionRepository,
     RiskDecisionRepository,
     SignalRepository,
@@ -30,6 +36,12 @@ class UnitOfWork(Protocol):
     watchlists: WatchlistRepository
     accounts: TradingAccountRepository
     positions: PositionRepository
+    cash_balances: CashBalanceRepository
+    ledger_transactions: LedgerTransactionRepository
+    cash_ledger: CashLedgerRepository
+    position_ledger: PositionLedgerRepository
+    account_snapshots: AccountSnapshotRepository
+    account_reconciliations: AccountReconciliationRepository
     strategies: StrategyRepository
     signals: SignalRepository
     orders: OrderRepository

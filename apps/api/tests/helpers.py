@@ -20,3 +20,9 @@ def require_m03_test_database_url() -> URL:
     if os.getenv("ALPHADESK_RUN_M03_INTEGRATION", "false").lower() != "true":
         pytest.skip("M03 PostgreSQL integration tests require explicit opt-in")
     return require_test_database_url()
+
+
+def require_m04_test_database_url() -> URL:
+    if os.getenv("ALPHADESK_RUN_M04_INTEGRATION", "false").lower() != "true":
+        pytest.skip("M04 PostgreSQL integration tests require explicit opt-in")
+    return require_test_database_url()

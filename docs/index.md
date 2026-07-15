@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前封板里程碑：**M04**。账本见 [accounting.md](accounting.md)，估值见 [account_valuation.md](account_valuation.md)，核对见 [account_reconciliation.md](account_reconciliation.md)，决策见 [ADR 0011](adr/0011-account-ledger-and-projections.md)。M04 仍无公开 Order/Fill 写 API、撮合、Broker 或实盘能力。
+
 > 当前封板里程碑：**M03**。权威增量文档为 [行情基础数据与适配器](market_data.md)、[自选股业务规则](watchlists.md) 和 [ADR 0008](adr/0008-market-data-source-and-idempotency.md)。系统仍无策略、Signal、订单、风控、Broker 或实盘能力。
 
 M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alphadesk_domain.market`、`alphadesk_api.application`；网页 `/market`；本地验收 `scripts/check_m03.ps1` 或 `scripts/check_m03.sh`。

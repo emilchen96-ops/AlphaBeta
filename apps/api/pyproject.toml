@@ -35,7 +35,12 @@ addopts = "-ra"
 asyncio_mode = "auto"
 pythonpath = ["src"]
 testpaths = ["tests"]
-markers = ["integration: requires explicitly configured external test services"]
+markers = [
+  "unit: isolated deterministic unit tests",
+  "integration: requires explicitly configured external test services",
+  "m04: simulated-account and accounting milestone tests",
+  "concurrency: requires real PostgreSQL locking",
+]
 
 [tool.ruff]
 target-version = "py312"

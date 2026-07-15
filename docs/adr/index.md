@@ -1,5 +1,7 @@
 # 架构决策记录（ADR）索引
 
+> M04 新增：[ADR 0011：模拟账户采用只追加账本与可重建投影](0011-account-ledger-and-projections.md)。
+
 - [0008：行情来源边界、优先级与幂等键](0008-market-data-source-and-idempotency.md)
 
 | ADR | 决策 |

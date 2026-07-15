@@ -12,13 +12,18 @@ from sqlalchemy.orm import DeclarativeBase
 
 from alphadesk_api.infrastructure.mappers import entity_from_model, model_from_entity
 from alphadesk_api.infrastructure.models import (
+    AccountCashBalanceModel,
+    AccountReconciliationRunModel,
+    AccountSnapshotModel,
     AuditLogModel,
+    CashLedgerEntryModel,
     DomainEventModel,
     ExecutorDeviceAccountModel,
     ExecutorDeviceModel,
     FillModel,
     InstrumentMappingModel,
     InstrumentModel,
+    LedgerTransactionModel,
     MarketBarModel,
     MarketDataSourceModel,
     MarketSyncRunModel,
@@ -26,6 +31,7 @@ from alphadesk_api.infrastructure.models import (
     OrderModel,
     OrderStateTransitionModel,
     OutboxMessageModel,
+    PositionLedgerEntryModel,
     PositionModel,
     RiskDecisionModel,
     SignalModel,
@@ -34,6 +40,14 @@ from alphadesk_api.infrastructure.models import (
     TradingAccountModel,
     WatchlistItemModel,
     WatchlistModel,
+)
+from alphadesk_domain.accounting import (
+    AccountReconciliationRun,
+    AccountSnapshot,
+    CashBalance,
+    CashLedgerEntry,
+    LedgerTransaction,
+    PositionLedgerEntry,
 )
 from alphadesk_domain.entities import (
     AuditLog,
@@ -284,6 +298,34 @@ class SqlAlchemyTradingAccountRepository(SqlAlchemyRepository[TradingAccount, Tr
         )
         return None if row is None else entity_from_model(TradingAccount, row)
 
+    async def get_by_creation_idempotency_key(self, key: str) -> TradingAccount | None:
+        row = await self._session.scalar(
+            select(TradingAccountModel).where(TradingAccountModel.creation_idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(TradingAccount, row)
+
+    async def list_all(self) -> list[TradingAccount]:
+        rows = await self._session.scalars(
+            select(TradingAccountModel).order_by(
+                TradingAccountModel.created_at, TradingAccountModel.id
+            )
+        )
+        return [entity_from_model(TradingAccount, row) for row in rows]
+
+    async def update(self, entity: TradingAccount) -> None:
+        await self._session.execute(
+            update(TradingAccountModel)
+            .where(TradingAccountModel.id == entity.id)
+            .values(
+                name=entity.name,
+                status=entity.status.value,
+                settlement_policy=entity.settlement_policy.value,
+                metadata=entity.metadata,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
 
 class SqlAlchemyPositionRepository(SqlAlchemyRepository[Position, PositionModel]):
     entity_type = Position
@@ -302,6 +344,328 @@ class SqlAlchemyPositionRepository(SqlAlchemyRepository[Position, PositionModel]
             )
         )
         return None if row is None else entity_from_model(Position, row)
+
+    async def get_for_update(self, account_id: UUID, instrument_id: UUID) -> Position | None:
+        row = await self._session.scalar(
+            select(PositionModel)
+            .where(
+                PositionModel.account_id == account_id,
+                PositionModel.instrument_id == instrument_id,
+            )
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(Position, row)
+
+    async def list_for_account(self, account_id: UUID) -> list[Position]:
+        rows = await self._session.scalars(
+            select(PositionModel)
+            .where(PositionModel.account_id == account_id)
+            .order_by(PositionModel.created_at, PositionModel.id)
+        )
+        return [entity_from_model(Position, row) for row in rows]
+
+    async def update(self, entity: Position) -> None:
+        await self._session.execute(
+            update(PositionModel)
+            .where(PositionModel.id == entity.id)
+            .values(
+                total_quantity=entity.total_quantity,
+                available_quantity=entity.available_quantity,
+                frozen_quantity=entity.frozen_quantity,
+                unsettled_quantity=entity.unsettled_quantity,
+                cost_basis=entity.cost_basis,
+                average_cost=entity.average_cost,
+                market_value=entity.market_value,
+                realized_pnl=entity.realized_pnl,
+                unrealized_pnl=entity.unrealized_pnl,
+                last_price=entity.last_price,
+                last_price_at=entity.last_price_at,
+                valuation_status=entity.valuation_status.value,
+                as_of=entity.as_of,
+                row_version=entity.row_version,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+
+class SqlAlchemyCashBalanceRepository(SqlAlchemyRepository[CashBalance, AccountCashBalanceModel]):
+    entity_type = CashBalance
+    model_type = AccountCashBalanceModel
+
+    async def add(self, entity: CashBalance) -> None:
+        await self._add(entity)
+
+    async def get(self, account_id: UUID, currency: str) -> CashBalance | None:
+        row = await self._session.scalar(
+            select(AccountCashBalanceModel).where(
+                AccountCashBalanceModel.account_id == account_id,
+                AccountCashBalanceModel.currency == currency,
+            )
+        )
+        return None if row is None else entity_from_model(CashBalance, row)
+
+    async def get_for_update(self, account_id: UUID, currency: str) -> CashBalance | None:
+        row = await self._session.scalar(
+            select(AccountCashBalanceModel)
+            .where(
+                AccountCashBalanceModel.account_id == account_id,
+                AccountCashBalanceModel.currency == currency,
+            )
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(CashBalance, row)
+
+    async def list_for_account(self, account_id: UUID) -> list[CashBalance]:
+        rows = await self._session.scalars(
+            select(AccountCashBalanceModel)
+            .where(AccountCashBalanceModel.account_id == account_id)
+            .order_by(AccountCashBalanceModel.currency)
+        )
+        return [entity_from_model(CashBalance, row) for row in rows]
+
+    async def update(self, entity: CashBalance) -> None:
+        await self._session.execute(
+            update(AccountCashBalanceModel)
+            .where(AccountCashBalanceModel.id == entity.id)
+            .values(
+                total_cash=entity.total_cash,
+                available_cash=entity.available_cash,
+                frozen_cash=entity.frozen_cash,
+                row_version=entity.row_version,
+                as_of=entity.as_of,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+
+class SqlAlchemyLedgerTransactionRepository(
+    SqlAlchemyRepository[LedgerTransaction, LedgerTransactionModel]
+):
+    entity_type = LedgerTransaction
+    model_type = LedgerTransactionModel
+
+    async def add(self, entity: LedgerTransaction) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> LedgerTransaction | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_business_key(self, business_key: str) -> LedgerTransaction | None:
+        row = await self._session.scalar(
+            select(LedgerTransactionModel).where(
+                LedgerTransactionModel.business_key == business_key
+            )
+        )
+        return None if row is None else entity_from_model(LedgerTransaction, row)
+
+    async def get_by_fill_id(self, fill_id: UUID) -> LedgerTransaction | None:
+        row = await self._session.scalar(
+            select(LedgerTransactionModel).where(LedgerTransactionModel.related_fill_id == fill_id)
+        )
+        return None if row is None else entity_from_model(LedgerTransaction, row)
+
+    async def list_for_account(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[LedgerTransaction], int]:
+        return await self._paged(account_id, offset, limit)
+
+    async def _paged(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[LedgerTransaction], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(LedgerTransactionModel)
+                .where(LedgerTransactionModel.account_id == account_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(LedgerTransactionModel)
+            .where(LedgerTransactionModel.account_id == account_id)
+            .order_by(LedgerTransactionModel.occurred_at.desc(), LedgerTransactionModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(LedgerTransaction, row) for row in rows], total
+
+
+class SqlAlchemyCashLedgerRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append(self, entity: CashLedgerEntry) -> None:
+        self._session.add(model_from_entity(CashLedgerEntryModel, entity))
+        await self._session.flush()
+
+    async def list_for_account(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[CashLedgerEntry], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(CashLedgerEntryModel)
+                .where(CashLedgerEntryModel.account_id == account_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(CashLedgerEntryModel)
+            .where(CashLedgerEntryModel.account_id == account_id)
+            .order_by(CashLedgerEntryModel.occurred_at.desc(), CashLedgerEntryModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(CashLedgerEntry, row) for row in rows], total
+
+    async def list_all_for_account(self, account_id: UUID) -> list[CashLedgerEntry]:
+        rows = await self._session.scalars(
+            select(CashLedgerEntryModel)
+            .where(CashLedgerEntryModel.account_id == account_id)
+            .order_by(CashLedgerEntryModel.id)
+        )
+        return [entity_from_model(CashLedgerEntry, row) for row in rows]
+
+    async def get_for_transaction(self, transaction_id: UUID) -> CashLedgerEntry | None:
+        row = await self._session.scalar(
+            select(CashLedgerEntryModel).where(
+                CashLedgerEntryModel.ledger_transaction_id == transaction_id
+            )
+        )
+        return None if row is None else entity_from_model(CashLedgerEntry, row)
+
+
+class SqlAlchemyPositionLedgerRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append(self, entity: PositionLedgerEntry) -> None:
+        self._session.add(model_from_entity(PositionLedgerEntryModel, entity))
+        await self._session.flush()
+
+    async def list_for_account(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[PositionLedgerEntry], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(PositionLedgerEntryModel)
+                .where(PositionLedgerEntryModel.account_id == account_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(PositionLedgerEntryModel)
+            .where(PositionLedgerEntryModel.account_id == account_id)
+            .order_by(
+                PositionLedgerEntryModel.occurred_at.desc(), PositionLedgerEntryModel.id.desc()
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(PositionLedgerEntry, row) for row in rows], total
+
+    async def list_all_for_account(self, account_id: UUID) -> list[PositionLedgerEntry]:
+        rows = await self._session.scalars(
+            select(PositionLedgerEntryModel)
+            .where(PositionLedgerEntryModel.account_id == account_id)
+            .order_by(PositionLedgerEntryModel.id)
+        )
+        return [entity_from_model(PositionLedgerEntry, row) for row in rows]
+
+    async def get_for_transaction(self, transaction_id: UUID) -> PositionLedgerEntry | None:
+        row = await self._session.scalar(
+            select(PositionLedgerEntryModel).where(
+                PositionLedgerEntryModel.ledger_transaction_id == transaction_id
+            )
+        )
+        return None if row is None else entity_from_model(PositionLedgerEntry, row)
+
+
+class SqlAlchemyAccountSnapshotRepository(
+    SqlAlchemyRepository[AccountSnapshot, AccountSnapshotModel]
+):
+    entity_type = AccountSnapshot
+    model_type = AccountSnapshotModel
+
+    async def append(self, entity: AccountSnapshot) -> None:
+        await self._add(entity)
+
+    async def latest(self, account_id: UUID) -> AccountSnapshot | None:
+        row = await self._session.scalar(
+            select(AccountSnapshotModel)
+            .where(AccountSnapshotModel.account_id == account_id)
+            .order_by(AccountSnapshotModel.as_of.desc(), AccountSnapshotModel.id.desc())
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(AccountSnapshot, row)
+
+    async def list_for_account(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[AccountSnapshot], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(AccountSnapshotModel)
+                .where(AccountSnapshotModel.account_id == account_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(AccountSnapshotModel)
+            .where(AccountSnapshotModel.account_id == account_id)
+            .order_by(AccountSnapshotModel.as_of.desc(), AccountSnapshotModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(AccountSnapshot, row) for row in rows], total
+
+
+class SqlAlchemyAccountReconciliationRepository(
+    SqlAlchemyRepository[AccountReconciliationRun, AccountReconciliationRunModel]
+):
+    entity_type = AccountReconciliationRun
+    model_type = AccountReconciliationRunModel
+
+    async def append(self, entity: AccountReconciliationRun) -> None:
+        await self._add(entity)
+
+    async def latest(self, account_id: UUID) -> AccountReconciliationRun | None:
+        row = await self._session.scalar(
+            select(AccountReconciliationRunModel)
+            .where(AccountReconciliationRunModel.account_id == account_id)
+            .order_by(
+                AccountReconciliationRunModel.started_at.desc(),
+                AccountReconciliationRunModel.id.desc(),
+            )
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(AccountReconciliationRun, row)
+
+    async def list_for_account(
+        self, account_id: UUID, offset: int, limit: int
+    ) -> tuple[list[AccountReconciliationRun], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(AccountReconciliationRunModel)
+                .where(AccountReconciliationRunModel.account_id == account_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(AccountReconciliationRunModel)
+            .where(AccountReconciliationRunModel.account_id == account_id)
+            .order_by(
+                AccountReconciliationRunModel.started_at.desc(),
+                AccountReconciliationRunModel.id.desc(),
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(AccountReconciliationRun, row) for row in rows], total
 
 
 class SqlAlchemyStrategyRepository(SqlAlchemyRepository[Strategy, StrategyModel]):

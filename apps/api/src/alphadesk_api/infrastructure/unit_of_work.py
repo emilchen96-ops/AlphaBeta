@@ -6,18 +6,24 @@ from typing import Self
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphadesk_api.infrastructure.repositories import (
+    SqlAlchemyAccountReconciliationRepository,
+    SqlAlchemyAccountSnapshotRepository,
     SqlAlchemyAuditLogRepository,
+    SqlAlchemyCashBalanceRepository,
+    SqlAlchemyCashLedgerRepository,
     SqlAlchemyDomainEventRepository,
     SqlAlchemyExecutorDeviceRepository,
     SqlAlchemyFillRepository,
     SqlAlchemyInstrumentMappingRepository,
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyLedgerTransactionRepository,
     SqlAlchemyMarketBarRepository,
     SqlAlchemyMarketDataSourceRepository,
     SqlAlchemyMarketSyncRunRepository,
     SqlAlchemyOrderCommandRepository,
     SqlAlchemyOrderRepository,
     SqlAlchemyOutboxRepository,
+    SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRiskDecisionRepository,
     SqlAlchemySignalRepository,
@@ -45,6 +51,12 @@ class SqlAlchemyUnitOfWork:
         self.watchlists = SqlAlchemyWatchlistRepository(session)
         self.accounts = SqlAlchemyTradingAccountRepository(session)
         self.positions = SqlAlchemyPositionRepository(session)
+        self.cash_balances = SqlAlchemyCashBalanceRepository(session)
+        self.ledger_transactions = SqlAlchemyLedgerTransactionRepository(session)
+        self.cash_ledger = SqlAlchemyCashLedgerRepository(session)
+        self.position_ledger = SqlAlchemyPositionLedgerRepository(session)
+        self.account_snapshots = SqlAlchemyAccountSnapshotRepository(session)
+        self.account_reconciliations = SqlAlchemyAccountReconciliationRepository(session)
         self.strategies = SqlAlchemyStrategyRepository(session)
         self.signals = SqlAlchemySignalRepository(session)
         self.orders = SqlAlchemyOrderRepository(session)

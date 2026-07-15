@@ -1,5 +1,7 @@
 # 架构总览
 
+> M04 架构增量：FastAPI 应用服务在单个 PostgreSQL 事务内追加资金/持仓账本并更新投影；估值复用 M03 行情查询；Redis 不承载权威账户数据。详见 `accounting.md` 与 ADR 0011。
+
 ## M03 行情切片
 
 行情切片遵守 `Web → FastAPI → 应用服务 → 领域端口 → 基础设施` 的单向依赖。PostgreSQL 保存来源、映射、K 线、同步运行、事件和审计；Redis 在 M03 仍不承载行情事实、缓存或消息。详细边界见 [market_data.md](market_data.md) 与 ADR 0008。

@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> Migration `0004_m04` 新增 `account_cash_balances`、`ledger_transactions`、`cash_ledger_entries`、`position_ledger_entries`、`account_snapshots`、`account_reconciliation_runs`。账本只追加，余额与持仓是带行版本的投影。
+
 ## M03 行情增量
 
 | 表 | 角色 | 关键约束与索引 |

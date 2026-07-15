@@ -16,6 +16,67 @@ class AccountStatus(StrEnum):
     CLOSED = "CLOSED"
 
 
+class SettlementPolicy(StrEnum):
+    IMMEDIATE = "IMMEDIATE"
+    T_PLUS_ONE = "T_PLUS_ONE"
+
+
+class LedgerTransactionType(StrEnum):
+    INITIAL_DEPOSIT = "INITIAL_DEPOSIT"
+    DEPOSIT = "DEPOSIT"
+    WITHDRAWAL = "WITHDRAWAL"
+    BUY_FILL = "BUY_FILL"
+    SELL_FILL = "SELL_FILL"
+    CASH_ADJUSTMENT = "CASH_ADJUSTMENT"
+    POSITION_ADJUSTMENT = "POSITION_ADJUSTMENT"
+    REVERSAL = "REVERSAL"
+
+
+class LedgerTransactionStatus(StrEnum):
+    PENDING = "PENDING"
+    POSTED = "POSTED"
+    FAILED = "FAILED"
+    REVERSED = "REVERSED"
+
+
+class CashLedgerEntryType(StrEnum):
+    INITIAL_DEPOSIT = "INITIAL_DEPOSIT"
+    DEPOSIT = "DEPOSIT"
+    WITHDRAWAL = "WITHDRAWAL"
+    BUY_SETTLEMENT = "BUY_SETTLEMENT"
+    SELL_SETTLEMENT = "SELL_SETTLEMENT"
+    COMMISSION = "COMMISSION"
+    TAX = "TAX"
+    OTHER_FEE = "OTHER_FEE"
+    FREEZE = "FREEZE"
+    RELEASE = "RELEASE"
+    ADJUSTMENT = "ADJUSTMENT"
+    REVERSAL = "REVERSAL"
+
+
+class PositionLedgerEntryType(StrEnum):
+    BUY = "BUY"
+    SELL = "SELL"
+    FREEZE = "FREEZE"
+    RELEASE = "RELEASE"
+    SETTLEMENT = "SETTLEMENT"
+    ADJUSTMENT = "ADJUSTMENT"
+    REVERSAL = "REVERSAL"
+
+
+class AccountValuationStatus(StrEnum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    STALE = "STALE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class ReconciliationStatus(StrEnum):
+    MATCHED = "MATCHED"
+    MISMATCHED = "MISMATCHED"
+    FAILED = "FAILED"
+
+
 class StrategyStatus(StrEnum):
     DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"

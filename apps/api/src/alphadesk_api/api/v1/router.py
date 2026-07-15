@@ -2,13 +2,14 @@
 
 from fastapi import APIRouter
 
-from alphadesk_api.api.v1 import health, instruments, market_data, system, watchlists
+from alphadesk_api.api.v1 import accounts, health, instruments, market_data, system, watchlists
 
 api_router = APIRouter()
 api_router.include_router(system.router)
 api_router.include_router(instruments.router)
 api_router.include_router(watchlists.router)
 api_router.include_router(market_data.router)
+api_router.include_router(accounts.router)
 
 health_router = APIRouter()
 health_router.include_router(health.router)

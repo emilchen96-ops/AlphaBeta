@@ -49,10 +49,10 @@ def create_app(
 
     app = FastAPI(
         title="AlphaDesk API",
-        summary="AlphaDesk local market-data API; no trading capability",
+        summary="AlphaDesk local market-data and simulated-account API",
         description=(
-            "Local-development market-data and watchlist endpoints. No strategy, signal, "
-            "order, broker, or real-trading capability is implemented."
+            "Local-development market-data, watchlist and simulated-account ledger endpoints. "
+            "No public order/fill write API, broker integration, or real-trading capability exists."
         ),
         version=resolved_settings.app_version,
         debug=resolved_settings.debug,

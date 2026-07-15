@@ -5,7 +5,12 @@ from uuid import uuid4
 import pytest
 
 from alphadesk_domain.entities import Instrument, Position, Signal
-from alphadesk_domain.enums import OrderSide, SignalStatus, SignalType
+from alphadesk_domain.enums import (
+    AccountValuationStatus,
+    OrderSide,
+    SignalStatus,
+    SignalType,
+)
 
 
 def instrument(**overrides: object) -> Instrument:
@@ -67,10 +72,15 @@ def test_negative_position_quantity_is_rejected() -> None:
             total_quantity=Decimal("-1"),
             available_quantity=Decimal("0"),
             frozen_quantity=Decimal("0"),
+            unsettled_quantity=Decimal("0"),
+            cost_basis=Decimal("0"),
             average_cost=Decimal("1"),
             market_value=Decimal("0"),
             realized_pnl=Decimal("0"),
             unrealized_pnl=Decimal("0"),
+            last_price=None,
+            last_price_at=None,
+            valuation_status=AccountValuationStatus.UNAVAILABLE,
             as_of=datetime.now(UTC),
         )
 

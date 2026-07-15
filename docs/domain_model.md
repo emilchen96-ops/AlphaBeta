@@ -1,5 +1,7 @@
 # 领域模型
 
+> M04 新增领域对象：`CashBalance`、`LedgerTransaction`、`CashLedgerEntry`、`PositionLedgerEntry`、`AccountSnapshot`、`AccountReconciliationRun`；`Position` 增加成本基数、待结算数量和估值状态。
+
 ## M03 行情领域
 
 `MarketDataSource` 表示来源能力和优先级，`InstrumentMapping` 显式连接内部标的与外部代码，`MarketBar` 保存规范化 K 线事实，`MarketSyncRun` 记录一次摄取的生命周期与计数，`MarketDataFreshness` 是查询时计算的只读值。策略、Signal、订单和 Broker 不得依赖或绕过该边界；详细不变量见 [market_data.md](market_data.md)。
