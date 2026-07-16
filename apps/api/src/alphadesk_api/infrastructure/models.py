@@ -42,6 +42,9 @@ from alphadesk_domain.enums import (
     MarketProviderTier,
     MarketSyncStatus,
     MarketTimeframe,
+    OrderActionType,
+    OrderActorType,
+    OrderIntentSource,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -635,6 +638,10 @@ class OrderModel(MutableTimestampedModel, Base):
             f"time_in_force IN ({enum_values(TimeInForce)})", name="time_in_force_valid"
         ),
         CheckConstraint(f"status IN ({enum_values(OrderStatus)})", name="order_status_valid"),
+        CheckConstraint(
+            f"intent_source IN ({enum_values(OrderIntentSource)})", name="ck_orders_intent_source"
+        ),
+        CheckConstraint("row_version >= 1", name="ck_orders_row_version_positive"),
         CheckConstraint("requested_quantity > 0", name="requested_quantity_positive"),
         CheckConstraint("filled_quantity >= 0", name="filled_quantity_non_negative"),
         CheckConstraint("filled_quantity <= requested_quantity", name="filled_within_requested"),
@@ -643,6 +650,15 @@ class OrderModel(MutableTimestampedModel, Base):
             "order_type <> 'LIMIT' OR limit_price IS NOT NULL", name="limit_order_has_price"
         ),
         Index("ix_orders_account_created", "account_id", "created_at"),
+        Index("ix_orders_account_status_created", "account_id", "status", text("created_at DESC")),
+        Index("ix_orders_instrument_created", "instrument_id", text("created_at DESC")),
+        Index("ix_orders_intent_created", "intent_source", text("created_at DESC")),
+        Index("ix_orders_request_fingerprint", "request_fingerprint"),
+        Index(
+            "ix_orders_expires_pending",
+            "expires_at",
+            postgresql_where=text("expires_at IS NOT NULL"),
+        ),
         Index("ix_orders_status_created", "status", "created_at"),
         Index("ix_orders_correlation", "correlation_id"),
     )
@@ -673,11 +689,26 @@ class OrderModel(MutableTimestampedModel, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     broker_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    intent_source: Mapped[str] = mapped_column(String(16), nullable=False, server_default="MANUAL")
+    request_fingerprint: Mapped[str] = mapped_column(
+        String(128), nullable=False, server_default="legacy"
+    )
+    row_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    confirmation_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     broker_order_id: Mapped[str | None] = mapped_column(String(128))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_actor_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="LOCAL_USER"
+    )
+    created_by_actor_id: Mapped[str | None] = mapped_column(String(128))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
@@ -691,6 +722,7 @@ class OrderStateTransitionModel(Base):
             name="from_status_valid",
         ),
         CheckConstraint(f"to_status IN ({enum_values(OrderStatus)})", name="to_status_valid"),
+        CheckConstraint("order_version >= 1", name="ck_order_state_transitions_version_positive"),
         Index("ix_order_state_transitions_order_occurred", "order_id", "occurred_at"),
         Index("ix_order_state_transitions_correlation", "correlation_id"),
     )
@@ -705,7 +737,59 @@ class OrderStateTransitionModel(Base):
     actor_id: Mapped[str | None] = mapped_column(String(128))
     reason_code: Mapped[str | None] = mapped_column(String(64))
     reason: Mapped[str | None] = mapped_column(Text)
+    order_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # This is the authoritative foreign-key direction.  `OrderAction` keeps
+    # `applied_transition_id` as a nullable lookup value to avoid a cycle.
+    action_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "order_actions.id",
+            name="fk_order_state_transitions_action",
+            ondelete="RESTRICT",
+        ),
+    )
+    command_id: Mapped[UUID | None] = mapped_column(Uuid)
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class OrderActionModel(TimestampedModel, Base):
+    __tablename__ = "order_actions"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_order_actions_idempotency_key"),
+        CheckConstraint(
+            f"action_type IN ({enum_values(OrderActionType)})", name="ck_order_actions_action_type"
+        ),
+        CheckConstraint(
+            f"actor_type IN ({enum_values(OrderActorType)})", name="ck_order_actions_actor_type"
+        ),
+        CheckConstraint(
+            "expected_order_version >= 1", name="order_action_expected_version_positive"
+        ),
+        CheckConstraint(
+            "applied_order_version >= expected_order_version",
+            name="order_action_applied_version_valid",
+        ),
+        Index("ix_order_actions_order_occurred", "order_id", "occurred_at"),
+        Index("ix_order_actions_correlation", "correlation_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    order_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False
+    )
+    action_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(128))
+    expected_order_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    applied_order_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    applied_transition_id: Mapped[int | None] = mapped_column(BigInteger)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(1024))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
@@ -721,6 +805,12 @@ class OrderCommandModel(MutableTimestampedModel, Base):
         CheckConstraint("sequence_number >= 0", name="sequence_number_non_negative"),
         CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
         Index("ix_order_commands_order_sequence", "order_id", "sequence_number"),
+        Index(
+            "uq_order_commands_submit_per_order",
+            "order_id",
+            unique=True,
+            postgresql_where=text("command_type = 'SUBMIT_ORDER'"),
+        ),
         Index("ix_order_commands_target_status", "target_device_id", "status"),
     )
 

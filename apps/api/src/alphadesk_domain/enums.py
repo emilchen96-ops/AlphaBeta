@@ -108,6 +108,28 @@ class OrderType(StrEnum):
     LIMIT = "LIMIT"
 
 
+class OrderIntentSource(StrEnum):
+    MANUAL = "MANUAL"
+    STRATEGY = "STRATEGY"
+    SCANNER = "SCANNER"
+    AI = "AI"
+    SYSTEM = "SYSTEM"
+
+
+class OrderActionType(StrEnum):
+    CONFIRM = "CONFIRM"
+    CANCEL = "CANCEL"
+
+
+class OrderActorType(StrEnum):
+    LOCAL_USER = "LOCAL_USER"
+    SYSTEM = "SYSTEM"
+    RISK_ENGINE = "RISK_ENGINE"
+    EXECUTOR = "EXECUTOR"
+    BROKER = "BROKER"
+    RECONCILIATION = "RECONCILIATION"
+
+
 class TimeInForce(StrEnum):
     DAY = "DAY"
     GTC = "GTC"
@@ -148,11 +170,13 @@ class RiskDecisionType(StrEnum):
 
 class CommandType(StrEnum):
     SUBMIT = "SUBMIT"
+    SUBMIT_ORDER = "SUBMIT_ORDER"
     CANCEL = "CANCEL"
 
 
 class CommandStatus(StrEnum):
     CREATED = "CREATED"
+    PENDING = "PENDING"
     QUEUED = "QUEUED"
     ACKNOWLEDGED = "ACKNOWLEDGED"
     EXPIRED = "EXPIRED"

@@ -294,6 +294,10 @@ class Order:
     idempotency_key: str
     broker_type: str
     correlation_id: UUID
+    intent_source: str = "MANUAL"
+    request_fingerprint: str = ""
+    row_version: int = 1
+    confirmation_required: bool = True
     id: UUID = field(default_factory=uuid4)
     strategy_id: UUID | None = None
     strategy_version_id: UUID | None = None
@@ -305,6 +309,11 @@ class Order:
     expires_at: datetime | None = None
     submitted_at: datetime | None = None
     completed_at: datetime | None = None
+    confirmed_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    expired_at: datetime | None = None
+    created_by_actor_type: str = "LOCAL_USER"
+    created_by_actor_id: str | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -325,7 +334,19 @@ class Order:
         if self.average_fill_price is not None:
             decimal_value(self.average_fill_price, "average_fill_price")
         self.idempotency_key = non_empty(self.idempotency_key, "idempotency_key")
-        for name in ("expires_at", "submitted_at", "completed_at"):
+        # Legacy M02 fixtures predate request fingerprints; M05 services always
+        # supply a SHA-256 value, while old persisted records remain readable.
+        self.request_fingerprint = self.request_fingerprint or f"legacy:{self.idempotency_key}"
+        if self.row_version < 1:
+            raise ValueError("row_version must be at least one")
+        for name in (
+            "expires_at",
+            "submitted_at",
+            "completed_at",
+            "confirmed_at",
+            "cancelled_at",
+            "expired_at",
+        ):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, as_utc(value, name))
@@ -345,10 +366,45 @@ class OrderStateTransition:
     actor_id: str | None = None
     reason_code: str | None = None
     reason: str | None = None
+    order_version: int = 1
+    action_id: UUID | None = None
+    command_id: UUID | None = None
     metadata: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.occurred_at = as_utc(self.occurred_at, "occurred_at")
+        if self.order_version < 1:
+            raise ValueError("order_version must be at least one")
+
+
+@dataclass(slots=True, kw_only=True)
+class OrderAction:
+    order_id: UUID
+    action_type: str
+    idempotency_key: str
+    request_fingerprint: str
+    actor_type: str
+    expected_order_version: int
+    applied_order_version: int
+    correlation_id: UUID
+    occurred_at: datetime
+    id: UUID = field(default_factory=uuid4)
+    actor_id: str | None = None
+    applied_transition_id: int | None = None
+    note: str | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        self.idempotency_key = non_empty(self.idempotency_key, "idempotency_key")
+        self.request_fingerprint = non_empty(self.request_fingerprint, "request_fingerprint")
+        if (
+            self.expected_order_version < 1
+            or self.applied_order_version < self.expected_order_version
+        ):
+            raise ValueError("invalid order action version")
+        self.occurred_at = as_utc(self.occurred_at, "occurred_at")
+        self.created_at = as_utc(self.created_at, "created_at")
 
 
 @dataclass(slots=True, kw_only=True)

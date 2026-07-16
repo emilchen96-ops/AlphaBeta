@@ -28,6 +28,7 @@ from alphadesk_api.infrastructure.models import (
     MarketDataSourceModel,
     MarketRealtimeRunModel,
     MarketSyncRunModel,
+    OrderActionModel,
     OrderCommandModel,
     OrderModel,
     OrderStateTransitionModel,
@@ -58,6 +59,7 @@ from alphadesk_domain.entities import (
     Fill,
     Instrument,
     Order,
+    OrderAction,
     OrderCommand,
     OrderStateTransition,
     OutboxMessage,
@@ -722,6 +724,26 @@ class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):
     async def append_transition(self, transition: OrderStateTransition) -> None:
         self._session.add(model_from_entity(OrderStateTransitionModel, transition))
         await self._session.flush()
+
+    async def get_for_update(self, entity_id: UUID) -> Order | None:
+        row = await self._session.scalar(
+            select(OrderModel).where(OrderModel.id == entity_id).with_for_update()
+        )
+        return None if row is None else entity_from_model(Order, row)
+
+
+class SqlAlchemyOrderActionRepository(SqlAlchemyRepository[OrderAction, OrderActionModel]):
+    entity_type = OrderAction
+    model_type = OrderActionModel
+
+    async def append(self, entity: OrderAction) -> None:
+        await self._add(entity)
+
+    async def get_by_idempotency_key(self, key: str) -> OrderAction | None:
+        row = await self._session.scalar(
+            select(OrderActionModel).where(OrderActionModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(OrderAction, row)
 
 
 class SqlAlchemyOrderCommandRepository(SqlAlchemyRepository[OrderCommand, OrderCommandModel]):

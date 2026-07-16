@@ -1,5 +1,7 @@
 # 领域模型
 
+> M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
+
 > M04.1A 新增 `MarketQuote`、`MarketQuoteSnapshot`、`MarketDataUpdate`、`MarketDataHealth`、`MarketDataCapability`、`MarketSubscriptionSet`、`MarketRealtimeRun` 与盘中估值 DTO。Quote 只存在于 Redis 临时缓存和推送链路，PostgreSQL 只保存运行摘要与历史 K 线事实。
 
 > M04 新增领域对象：`CashBalance`、`LedgerTransaction`、`CashLedgerEntry`、`PositionLedgerEntry`、`AccountSnapshot`、`AccountReconciliationRun`；`Position` 增加成本基数、待结算数量和估值状态。

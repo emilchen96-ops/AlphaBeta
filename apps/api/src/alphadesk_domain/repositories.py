@@ -20,6 +20,7 @@ from alphadesk_domain.entities import (
     Fill,
     Instrument,
     Order,
+    OrderAction,
     OrderCommand,
     OrderStateTransition,
     OutboxMessage,
@@ -170,6 +171,12 @@ class OrderRepository(Protocol):
     async def get_by_id(self, entity_id: UUID) -> Order | None: ...
     async def get_by_idempotency_key(self, key: str) -> Order | None: ...
     async def append_transition(self, transition: OrderStateTransition) -> None: ...
+    async def get_for_update(self, entity_id: UUID) -> Order | None: ...
+
+
+class OrderActionRepository(Protocol):
+    async def append(self, entity: OrderAction) -> None: ...
+    async def get_by_idempotency_key(self, key: str) -> OrderAction | None: ...
 
 
 class OrderCommandRepository(Protocol):

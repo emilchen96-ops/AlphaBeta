@@ -19,6 +19,7 @@ from alphadesk_domain.repositories import (
     MarketDataSourceRepository,
     MarketRealtimeRunRepository,
     MarketSyncRunRepository,
+    OrderActionRepository,
     OrderCommandRepository,
     OrderRepository,
     OutboxRepository,
@@ -46,6 +47,7 @@ class UnitOfWork(Protocol):
     strategies: StrategyRepository
     signals: SignalRepository
     orders: OrderRepository
+    order_actions: OrderActionRepository
     order_commands: OrderCommandRepository
     fills: FillRepository
     risk_decisions: RiskDecisionRepository

@@ -1,5 +1,7 @@
 # 测试策略
 
+> M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
+
 > M04.1A 默认测试使用 fake provider，覆盖字符串到 Decimal、缺失上游时间、时区、限流熔断、Redis revision/去重/乱序和 leader ownership。默认 CI 不访问外部网络；只有 `ALPHADESK_EXTERNAL_FREE_MARKET_TESTS=true` 时运行 `tests/external`。
 
 > M04 测试覆盖 Decimal 公式、幂等、资金/持仓不足、PostgreSQL 迁移与约束、成交闭环、估值状态、核对和 `/portfolio` 前端；并发测试必须使用真实 PostgreSQL 行锁。
