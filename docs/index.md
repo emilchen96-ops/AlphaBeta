@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前风险里程碑为 **R01-A 完成**：轻量风控请求、只读快照、限制、规则契约、确定性评估器和核心规则见 [risk_engine.md](risk_engine.md)。R01-B 尚未开始；当前没有 RiskDecision 持久化、风控 API、页面或订单管道接线。
+
 > 当前策略里程碑为 **S02 完成**：S02-A 指标与策略库、S02-B1 批量研究后端和 S02-B2 批量研究页面均已完成。后端契约见 [strategy_experiments.md](strategy_experiments.md)，页面与边界见 [strategy_experiments_ui.md](strategy_experiments_ui.md)。下一阶段为 R01 轻量风控，尚未开始。
 
 > 当前策略阶段为 **S02-B1 批量研究后端**：参数网格、实验生命周期、事务、幂等和
