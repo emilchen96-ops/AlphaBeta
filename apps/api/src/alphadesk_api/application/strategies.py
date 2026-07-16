@@ -95,6 +95,16 @@ class StrategyResearchService:
                 result[name] = value
         return result
 
+    def parameter_grid(
+        self, strategy_key: str, raw: dict[str, list[str | int | bool]]
+    ) -> dict[str, list[StrategyParameterValue]]:
+        result: dict[str, list[StrategyParameterValue]] = {}
+        for name, candidates in raw.items():
+            result[name] = [
+                self.parameters(strategy_key, {name: candidate})[name] for candidate in candidates
+            ]
+        return result
+
     async def run(self, request: StrategyRunRequest) -> StrategyRunResult:
         try:
             return await self._runner.run(request)

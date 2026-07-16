@@ -1,5 +1,8 @@
 # S02-A 技术指标与基础策略库
 
+> S02-B1 已复用本策略库实现参数网格批量研究与 Signal 比较，见
+> [strategy_experiments.md](strategy_experiments.md)。
+
 ## 范围与接口
 
 S02-A 在纯 Python 领域层提供可复用的增量指标。所有数值输入和计算均使用

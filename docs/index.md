@@ -1,5 +1,8 @@
 # AlphaDesk 文档索引
 
+> 当前策略阶段为 **S02-B1 批量研究后端**：参数网格、实验生命周期、事务、幂等和
+> Signal 对比见 [strategy_experiments.md](strategy_experiments.md)。S02-B2 尚未开始。
+
 > 当前策略阶段为 **S02-A 技术指标与基础策略库**：S01-A/B/C 已完成开发，用户决定
 > 跳过 S01 最终专项审查；指标、三套内置策略和安全边界见
 > [strategy_library.md](strategy_library.md)。S02-B 尚未开始。

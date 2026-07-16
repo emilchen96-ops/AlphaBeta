@@ -11,10 +11,11 @@ UnitOfWorkFactory = Callable[[], UnitOfWork]
 
 
 class ApplicationError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, details: object = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.details = details
 
 
 def correlation_uuid(value: str | UUID | None) -> UUID:

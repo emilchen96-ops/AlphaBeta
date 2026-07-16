@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     free_market_worker_lock_ttl_seconds: int = Field(default=45, ge=15, le=300)
     free_market_websocket_queue_size: int = Field(default=100, ge=10, le=1000)
     free_market_max_subscriptions_per_client: int = Field(default=200, ge=1, le=2000)
+    strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
 
     @field_validator("api_prefix")
     @classmethod

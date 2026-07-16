@@ -62,6 +62,7 @@ from alphadesk_domain.enums import (
     TimeInForce,
 )
 from alphadesk_domain.strategy import StrategyEnvironment
+from alphadesk_domain.strategy_experiments import StrategyExperimentStatus
 from alphadesk_domain.strategy_runs import StrategyRunStatus
 
 PRICE = Numeric(20, 8)
@@ -684,6 +685,91 @@ class StrategyRunModel(MutableTimestampedModel, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(String(512))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class StrategyExperimentModel(MutableTimestampedModel, Base):
+    __tablename__ = "strategy_experiments"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_strategy_experiments_idempotency_key"),
+        CheckConstraint(
+            f"status IN ({enum_values(StrategyExperimentStatus)})",
+            name="strategy_experiment_status_valid",
+        ),
+        CheckConstraint(
+            "environment = 'RESEARCH'", name="strategy_experiment_environment_research"
+        ),
+        CheckConstraint(
+            f"timeframe IN ({enum_values(MarketTimeframe)})",
+            name="strategy_experiment_timeframe_valid",
+        ),
+        CheckConstraint("start_at < end_at", name="strategy_experiment_time_window"),
+        CheckConstraint("combination_count > 0", name="strategy_experiment_combination_positive"),
+        CheckConstraint(
+            "runs_completed >= 0 AND runs_failed >= 0 AND total_signals >= 0",
+            name="strategy_experiment_counters_non_negative",
+        ),
+        Index("ix_strategy_experiments_strategy_created", "strategy_key", "created_at"),
+        Index("ix_strategy_experiments_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    parameter_grid: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    combination_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    runs_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    runs_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_signals: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class StrategyExperimentRunModel(TimestampedModel, Base):
+    __tablename__ = "strategy_experiment_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "experiment_id",
+            "combination_index",
+            name="uq_strategy_experiment_runs_experiment_index",
+        ),
+        UniqueConstraint("strategy_run_id", name="uq_strategy_experiment_runs_strategy_run"),
+        UniqueConstraint(
+            "child_idempotency_key",
+            name="uq_strategy_experiment_runs_child_idempotency_key",
+        ),
+        CheckConstraint("combination_index >= 1", name="strategy_experiment_run_index_positive"),
+        Index(
+            "ix_strategy_experiment_runs_experiment_index",
+            "experiment_id",
+            "combination_index",
+        ),
+        Index("ix_strategy_experiment_runs_strategy_run", "strategy_run_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    experiment_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("strategy_experiments.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    strategy_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("strategy_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    combination_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    normalized_parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    child_idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
 
 
 class ExecutorDeviceModel(MutableTimestampedModel, Base):

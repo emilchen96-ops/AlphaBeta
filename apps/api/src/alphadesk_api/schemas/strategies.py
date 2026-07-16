@@ -96,3 +96,80 @@ class StrategySignalPageResponse(BaseModel):
     page: int
     page_size: int
     total: int
+
+
+class StrategyExperimentCreateBody(BaseModel):
+    strategy_key: str = Field(min_length=2, max_length=64)
+    parameter_grid: dict[str, list[str | int | bool]]
+    instrument_ids: list[UUID] = Field(min_length=1, max_length=100)
+    timeframe: str
+    start_at: datetime
+    end_at: datetime
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class StrategyExperimentResponse(BaseModel):
+    experiment_id: UUID
+    idempotency_key: str
+    strategy_key: str
+    strategy_version: str
+    environment: str
+    timeframe: str
+    instrument_ids: list[UUID]
+    start_at: datetime
+    end_at: datetime
+    parameter_grid: dict[str, list[str | int | bool]]
+    combination_count: int
+    runs_completed: int
+    runs_failed: int
+    total_signals: int
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    failed_at: datetime | None
+    error: dict[str, str] | None
+    correlation_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    replayed: bool = False
+    capabilities: dict[str, bool]
+
+
+class StrategyExperimentPageResponse(BaseModel):
+    items: list[StrategyExperimentResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class StrategyExperimentRunResponse(BaseModel):
+    combination_index: int
+    normalized_parameters: dict[str, str | int | bool]
+    strategy_run_id: UUID
+    run_status: str
+    bars_processed: int
+    signals_generated: int
+    warning: str | None
+
+
+class StrategyExperimentComparisonResponse(BaseModel):
+    combination_index: int
+    normalized_parameters: dict[str, str | int | bool]
+    strategy_run_id: UUID
+    run_status: str
+    bars_processed: int
+    total_signals: int
+    buy_signals: int
+    sell_signals: int
+    first_signal_at: datetime | None
+    last_signal_at: datetime | None
+    signaled_instrument_count: int
+    warning: str | None
+
+
+class StrategySignalOverlapResponse(BaseModel):
+    left_combination_index: int
+    right_combination_index: int
+    intersection_count: int
+    union_count: int
+    similarity: str

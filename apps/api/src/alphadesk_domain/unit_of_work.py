@@ -28,6 +28,8 @@ from alphadesk_domain.repositories import (
     PositionRepository,
     RiskDecisionRepository,
     SignalRepository,
+    StrategyExperimentRepository,
+    StrategyExperimentRunRepository,
     StrategyRepository,
     StrategyRunRepository,
     TradingAccountRepository,
@@ -50,6 +52,8 @@ class UnitOfWork(Protocol):
     strategies: StrategyRepository
     signals: SignalRepository
     strategy_runs: StrategyRunRepository
+    strategy_experiments: StrategyExperimentRepository
+    strategy_experiment_runs: StrategyExperimentRunRepository
     historical_bars: HistoricalBarProvider
     orders: OrderRepository
     order_actions: OrderActionRepository

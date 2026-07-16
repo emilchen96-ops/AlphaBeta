@@ -38,6 +38,8 @@ from alphadesk_api.infrastructure.models import (
     PositionModel,
     RiskDecisionModel,
     SignalModel,
+    StrategyExperimentModel,
+    StrategyExperimentRunModel,
     StrategyModel,
     StrategyRunModel,
     StrategyVersionModel,
@@ -92,6 +94,7 @@ from alphadesk_domain.market import (
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
 from alphadesk_domain.strategy import StrategyBar, StrategyError
+from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import StrategyRun
 
 
@@ -846,6 +849,119 @@ class SqlAlchemyStrategyRunRepository(SqlAlchemyRepository[StrategyRun, Strategy
             .limit(limit)
         )
         return [entity_from_model(StrategyRun, row) for row in rows], total
+
+
+class SqlAlchemyStrategyExperimentRepository(
+    SqlAlchemyRepository[StrategyExperiment, StrategyExperimentModel]
+):
+    entity_type = StrategyExperiment
+    model_type = StrategyExperimentModel
+
+    async def add(self, entity: StrategyExperiment) -> None:
+        await self._add(entity)
+
+    async def claim(self, entity: StrategyExperiment) -> bool:
+        values = model_values(model_from_entity(StrategyExperimentModel, entity))
+        statement = (
+            pg_insert(StrategyExperimentModel)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["idempotency_key"])
+            .returning(StrategyExperimentModel.id)
+        )
+        return (await self._session.scalar(statement)) is not None
+
+    async def get_by_id(self, entity_id: UUID) -> StrategyExperiment | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> StrategyExperiment | None:
+        row = await self._session.scalar(
+            select(StrategyExperimentModel).where(StrategyExperimentModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(StrategyExperiment, row)
+
+    async def get_for_update(self, entity_id: UUID) -> StrategyExperiment | None:
+        row = await self._session.scalar(
+            select(StrategyExperimentModel)
+            .where(StrategyExperimentModel.id == entity_id)
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(StrategyExperiment, row)
+
+    async def update_status(self, entity: StrategyExperiment) -> None:
+        values = model_values(model_from_entity(StrategyExperimentModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(StrategyExperimentModel)
+            .where(StrategyExperimentModel.id == entity.id)
+            .values(**values)
+        )
+
+    async def list(
+        self,
+        *,
+        strategy_key: str | None,
+        status: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[StrategyExperiment], int]:
+        conditions = []
+        if strategy_key is not None:
+            conditions.append(StrategyExperimentModel.strategy_key == strategy_key)
+        if status is not None:
+            conditions.append(StrategyExperimentModel.status == status)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(StrategyExperimentModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(StrategyExperimentModel)
+            .where(*conditions)
+            .order_by(StrategyExperimentModel.created_at.desc(), StrategyExperimentModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(StrategyExperiment, row) for row in rows], total
+
+
+class SqlAlchemyStrategyExperimentRunRepository(
+    SqlAlchemyRepository[StrategyExperimentRun, StrategyExperimentRunModel]
+):
+    entity_type = StrategyExperimentRun
+    model_type = StrategyExperimentRunModel
+
+    async def append(self, entity: StrategyExperimentRun) -> None:
+        await self._add(entity)
+
+    async def get_by_experiment_and_index(
+        self, experiment_id: UUID, combination_index: int
+    ) -> StrategyExperimentRun | None:
+        row = await self._session.scalar(
+            select(StrategyExperimentRunModel).where(
+                StrategyExperimentRunModel.experiment_id == experiment_id,
+                StrategyExperimentRunModel.combination_index == combination_index,
+            )
+        )
+        return None if row is None else entity_from_model(StrategyExperimentRun, row)
+
+    async def list_by_experiment(self, experiment_id: UUID) -> list[StrategyExperimentRun]:
+        rows = await self._session.scalars(
+            select(StrategyExperimentRunModel)
+            .where(StrategyExperimentRunModel.experiment_id == experiment_id)
+            .order_by(StrategyExperimentRunModel.combination_index)
+        )
+        return [entity_from_model(StrategyExperimentRun, row) for row in rows]
+
+    async def count_by_experiment(self, experiment_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(StrategyExperimentRunModel)
+                .where(StrategyExperimentRunModel.experiment_id == experiment_id)
+            )
+            or 0
+        )
 
 
 class SqlAlchemyHistoricalBarProvider:

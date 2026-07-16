@@ -48,6 +48,7 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import StrategyRun
 
 
@@ -205,6 +206,32 @@ class StrategyRunRepository(Protocol):
         offset: int,
         limit: int,
     ) -> tuple[list[StrategyRun], int]: ...
+
+
+class StrategyExperimentRepository(Protocol):
+    async def add(self, entity: StrategyExperiment) -> None: ...
+    async def claim(self, entity: StrategyExperiment) -> bool: ...
+    async def get_by_id(self, entity_id: UUID) -> StrategyExperiment | None: ...
+    async def get_by_idempotency_key(self, key: str) -> StrategyExperiment | None: ...
+    async def get_for_update(self, entity_id: UUID) -> StrategyExperiment | None: ...
+    async def update_status(self, entity: StrategyExperiment) -> None: ...
+    async def list(
+        self,
+        *,
+        strategy_key: str | None,
+        status: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[StrategyExperiment], int]: ...
+
+
+class StrategyExperimentRunRepository(Protocol):
+    async def append(self, entity: StrategyExperimentRun) -> None: ...
+    async def get_by_experiment_and_index(
+        self, experiment_id: UUID, combination_index: int
+    ) -> StrategyExperimentRun | None: ...
+    async def list_by_experiment(self, experiment_id: UUID) -> list[StrategyExperimentRun]: ...
+    async def count_by_experiment(self, experiment_id: UUID) -> int: ...
 
 
 class OrderRepository(Protocol):

@@ -1,5 +1,9 @@
 # PostgreSQL 持久化模型
 
+> S02-B1 新增 `strategy_experiments` 和只追加的 `strategy_experiment_runs`。前者保存
+> 规范参数网格、范围、状态和汇总；后者以唯一组合序号连接既有 `strategy_runs`，并对
+> `strategy_run_id` 与子幂等键建立唯一约束。结构由 Migration 0008 管理。
+
 > S01-B Migration `0007_s01` 新增 `strategy_runs`，并扩展既有 `signals` 以记录运行 ID、连续序号、稳定策略键/版本、K 线时间、置信度、元数据和 schema 版本。研究 Signal 的账户与数据库策略外键允许为空；`(strategy_run_id, sequence_number)` 唯一。运行成功时 StrategyRun 与全部 Signal 原子提交，失败时回滚后以独立短事务只记录 FAILED 运行。
 
 > M05 的 `0006_m05` 扩展 Order 版本/确认字段，增加 `order_actions`，并补齐 Command 的 `SUBMIT_ORDER/PENDING` 约束和每订单唯一提交命令索引。确认的全部事实与 Outbox 在同一事务提交；账本、Position 与 Fill 表不被修改。
