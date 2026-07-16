@@ -1,4 +1,6 @@
-# S02-B1 批量策略研究实验
+# S02-B1/B2 批量策略研究实验
+
+S02-B2 已完成真实 API 的网页闭环：参数网格配置、实验列表、组合运行、Signal 对比与 Jaccard 重合矩阵见 [strategy_experiments_ui.md](strategy_experiments_ui.md)。实验列表 API 同步支持 `strategy_key`、`status`、`created_from`、`created_to` 和稳定分页筛选。S02 策略研究阶段至此完成；下一阶段为 R01 轻量风控，但不属于本次实现。
 
 S02-B1 将策略参数候选网格按参数定义顺序做确定性笛卡尔积展开，并为每个组合复用
 现有 `StrategyRunner` 创建独立 `StrategyRun`。未出现在网格中的参数使用注册表默认值；

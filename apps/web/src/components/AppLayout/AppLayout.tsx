@@ -28,6 +28,11 @@ const menuItems = [
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
   { key: "/strategies", icon: <ExperimentOutlined />, label: "策略" },
+  {
+    key: "/strategy-experiments",
+    icon: <ExperimentOutlined />,
+    label: "批量研究",
+  },
   { key: "/strategy-runs", icon: <DatabaseOutlined />, label: "研究运行" },
   { key: "/signals", icon: <AuditOutlined />, label: "研究 Signal" },
   { key: "/orders", icon: <OrderedListOutlined />, label: "订单" },
@@ -53,7 +58,9 @@ export function AppLayout() {
   const statusQuery = useQuery(systemStatusQueryOptions);
   const websocket = useSystemWebSocket();
   const selectedKey =
-    menuItems.find((item) => item.key === location.pathname)?.key ?? "";
+    menuItems.find(
+      (item) => location.pathname.startsWith(item.key) && item.key !== "/",
+    )?.key ?? (location.pathname === "/" ? "/" : "");
   const status = statusQuery.data;
 
   return (

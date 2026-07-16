@@ -356,12 +356,16 @@ async def list_strategy_experiments(
     request: Request,
     strategy_key: str | None = None,
     experiment_status: Annotated[str | None, Query(alias="status")] = None,
+    created_from: datetime | None = None,
+    created_to: datetime | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> StrategyExperimentPageResponse:
     items, total = await StrategyExperimentQueryService(uow_factory(request)).list(
         strategy_key=strategy_key,
         status=experiment_status,
+        created_from=created_from,
+        created_to=created_to,
         offset=(page - 1) * page_size,
         limit=page_size,
     )

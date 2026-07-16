@@ -87,3 +87,87 @@ export interface StrategySignalPage {
   page_size: number;
   total: number;
 }
+
+export type ParameterGridValue = string | number | boolean;
+
+export type StrategyExperimentStatus =
+  "CREATED" | "RUNNING" | "COMPLETED" | "PARTIAL_FAILED" | "FAILED";
+
+export interface StrategyExperimentSummary {
+  experiment_id: string;
+  idempotency_key: string;
+  strategy_key: string;
+  strategy_version: string;
+  environment: string;
+  timeframe: string;
+  instrument_ids: string[];
+  start_at: string;
+  end_at: string;
+  parameter_grid: Record<string, ParameterGridValue[]>;
+  combination_count: number;
+  runs_completed: number;
+  runs_failed: number;
+  total_signals: number;
+  status: StrategyExperimentStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  failed_at: string | null;
+  error: { code: string; message: string } | null;
+  correlation_id: string;
+  created_at: string;
+  updated_at: string;
+  replayed?: boolean;
+  capabilities?: Record<string, boolean>;
+}
+
+export type StrategyExperiment = StrategyExperimentSummary;
+
+export interface StrategyExperimentPage {
+  items: StrategyExperimentSummary[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface StrategyExperimentRun {
+  combination_index: number;
+  normalized_parameters: Record<string, ParameterGridValue>;
+  strategy_run_id: string | null;
+  run_status: StrategyRun["status"];
+  bars_processed: number;
+  signals_generated: number;
+  warning: string | null;
+}
+
+export interface StrategyExperimentComparisonRow {
+  combination_index: number;
+  normalized_parameters: Record<string, ParameterGridValue>;
+  strategy_run_id: string | null;
+  run_status: StrategyRun["status"];
+  bars_processed: number;
+  total_signals: number;
+  buy_signals: number;
+  sell_signals: number;
+  first_signal_at: string | null;
+  last_signal_at: string | null;
+  signaled_instrument_count: number;
+  warning: string | null;
+}
+
+export interface StrategySignalOverlap {
+  left_combination_index: number;
+  right_combination_index: number;
+  intersection_count: number;
+  union_count: number;
+  similarity: string;
+}
+
+export interface CreateStrategyExperimentRequest {
+  strategy_key: string;
+  instrument_ids: string[];
+  timeframe: string;
+  start_at: string;
+  end_at: string;
+  parameter_grid: Record<string, ParameterGridValue[]>;
+  idempotency_key: string;
+}

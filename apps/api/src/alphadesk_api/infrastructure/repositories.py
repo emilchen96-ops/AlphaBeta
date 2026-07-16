@@ -901,6 +901,8 @@ class SqlAlchemyStrategyExperimentRepository(
         *,
         strategy_key: str | None,
         status: str | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
         offset: int,
         limit: int,
     ) -> tuple[list[StrategyExperiment], int]:
@@ -909,6 +911,10 @@ class SqlAlchemyStrategyExperimentRepository(
             conditions.append(StrategyExperimentModel.strategy_key == strategy_key)
         if status is not None:
             conditions.append(StrategyExperimentModel.status == status)
+        if created_from is not None:
+            conditions.append(StrategyExperimentModel.created_at >= created_from)
+        if created_to is not None:
+            conditions.append(StrategyExperimentModel.created_at <= created_to)
         total = int(
             await self._session.scalar(
                 select(func.count()).select_from(StrategyExperimentModel).where(*conditions)

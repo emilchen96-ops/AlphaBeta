@@ -301,6 +301,8 @@ class StrategyExperimentQueryService:
         *,
         strategy_key: str | None = None,
         status: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> tuple[builtins.list[StrategyExperiment], int]:
@@ -308,6 +310,8 @@ class StrategyExperimentQueryService:
             return await uow.strategy_experiments.list(
                 strategy_key=strategy_key,
                 status=status,
+                created_from=created_from,
+                created_to=created_to,
                 offset=offset,
                 limit=limit,
             )

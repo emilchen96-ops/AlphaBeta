@@ -20,12 +20,13 @@ export class ApiError extends Error {
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(
-    () => controller.abort(),
-    DEFAULT_TIMEOUT_MS,
-  );
+  const externalSignal = init.signal;
+  const cancelRequest = () => controller.abort();
+  externalSignal?.addEventListener("abort", cancelRequest, { once: true });
+  const timeoutId = window.setTimeout(cancelRequest, timeoutMs);
 
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -62,10 +63,14 @@ export async function apiRequest<T>(
       throw error;
     }
     if (error instanceof DOMException && error.name === "AbortError") {
+      if (externalSignal?.aborted) {
+        throw new ApiError("请求已取消", 0, "REQUEST_CANCELLED", null);
+      }
       throw new ApiError("请求超时，请稍后重试", 0, "REQUEST_TIMEOUT", null);
     }
     throw new ApiError("无法连接 AlphaDesk API", 0, "NETWORK_ERROR", null);
   } finally {
     window.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", cancelRequest);
   }
 }

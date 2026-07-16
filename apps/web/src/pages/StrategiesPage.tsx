@@ -133,12 +133,24 @@ export function StrategiesPage() {
             key={item.strategy_key}
             title={item.display_name}
             extra={
-              <Button
-                icon={<ExperimentOutlined />}
-                onClick={() => openRun(item.strategy_key)}
-              >
-                创建研究运行
-              </Button>
+              <Space wrap>
+                <Button
+                  icon={<ExperimentOutlined />}
+                  onClick={() =>
+                    void navigate(
+                      `/strategy-experiments?strategy_key=${encodeURIComponent(item.strategy_key)}`,
+                    )
+                  }
+                >
+                  批量研究
+                </Button>
+                <Button
+                  icon={<ExperimentOutlined />}
+                  onClick={() => openRun(item.strategy_key)}
+                >
+                  创建研究运行
+                </Button>
+              </Space>
             }
           >
             <Typography.Paragraph>{item.description}</Typography.Paragraph>

@@ -57,11 +57,24 @@ def test_strategy_experiment_api_end_to_end() -> None:
         assert replayed.json()["experiment_id"] == experiment_id
 
         listing = client.get("/api/v1/strategy-experiments?page=1&page_size=10")
+        filtered_in = client.get(
+            "/api/v1/strategy-experiments",
+            params={
+                "created_from": datetime(2025, 1, 1, tzinfo=UTC).isoformat(),
+                "created_to": datetime(2027, 1, 1, tzinfo=UTC).isoformat(),
+            },
+        )
+        filtered_out = client.get(
+            "/api/v1/strategy-experiments",
+            params={"created_from": datetime(2099, 1, 1, tzinfo=UTC).isoformat()},
+        )
         detail = client.get(f"/api/v1/strategy-experiments/{experiment_id}")
         runs = client.get(f"/api/v1/strategy-experiments/{experiment_id}/runs")
         comparison = client.get(f"/api/v1/strategy-experiments/{experiment_id}/comparison")
         overlap = client.get(f"/api/v1/strategy-experiments/{experiment_id}/signal-overlap")
         assert listing.status_code == detail.status_code == 200
+        assert any(row["experiment_id"] == experiment_id for row in filtered_in.json()["items"])
+        assert filtered_out.json()["total"] == 0
         assert runs.status_code == comparison.status_code == overlap.status_code == 200
         assert len(runs.json()) == len(comparison.json()) == 2
         assert overlap.json()[0]["similarity"] == "1"

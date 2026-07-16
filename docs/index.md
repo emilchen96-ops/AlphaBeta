@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前策略里程碑为 **S02 完成**：S02-A 指标与策略库、S02-B1 批量研究后端和 S02-B2 批量研究页面均已完成。后端契约见 [strategy_experiments.md](strategy_experiments.md)，页面与边界见 [strategy_experiments_ui.md](strategy_experiments_ui.md)。下一阶段为 R01 轻量风控，尚未开始。
+
 > 当前策略阶段为 **S02-B1 批量研究后端**：参数网格、实验生命周期、事务、幂等和
 > Signal 对比见 [strategy_experiments.md](strategy_experiments.md)。S02-B2 尚未开始。
 
@@ -37,17 +39,17 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 
 ## 按任务定位
 
-| 变更内容 | 必读文档 |
-| --- | --- |
-| 策略、信号、回测 | `domain_model.md`、`backtest_rules.md`、`risk_model.md` |
-| 订单、成交、执行器 | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md` |
-| M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016 |
-| 数据库、事件、审计 | `database_schema.md`、`event_model.md`、`reliable_messaging.md`、ADR 0002、0004、0007 |
-| Redis、队列、推送 | `reliable_messaging.md`、ADR 0003、0004 |
-| Web 或 API | `architecture.md`、`security.md`、`coding_standards.md` |
-| Broker 或行情适配器 | `architecture.md`、`risk_model.md`、ADR 0005 |
-| 免费行情、Worker、实时推送 | `free_market_data.md`、`free_market_worker.md`、`market_data_websocket.md`、ADR 0012–0014 |
-| 盘中估值 | `live_valuation.md`、`account_valuation.md`、ADR 0011、0014 |
+| 变更内容                        | 必读文档                                                                                  |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
+| 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
+| M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016            |
+| 数据库、事件、审计              | `database_schema.md`、`event_model.md`、`reliable_messaging.md`、ADR 0002、0004、0007     |
+| Redis、队列、推送               | `reliable_messaging.md`、ADR 0003、0004                                                   |
+| Web 或 API                      | `architecture.md`、`security.md`、`coding_standards.md`                                   |
+| Broker 或行情适配器             | `architecture.md`、`risk_model.md`、ADR 0005                                              |
+| 免费行情、Worker、实时推送      | `free_market_data.md`、`free_market_worker.md`、`market_data_websocket.md`、ADR 0012–0014 |
+| 盘中估值                        | `live_valuation.md`、`account_valuation.md`、ADR 0011、0014                               |
 
 若文档与实现发生冲突，先暂停变更并更新经评审的文档或 ADR；不得以临时实现绕过既定约束。
 

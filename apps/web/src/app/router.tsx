@@ -12,6 +12,10 @@ import { PortfolioPage } from "../pages/PortfolioPage";
 import { RiskPage } from "../pages/RiskPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
+import {
+  StrategyExperimentDetailPage,
+  StrategyExperimentsPage,
+} from "../pages/StrategyExperimentsPage";
 import { SignalsPage } from "../pages/SignalsPage";
 import {
   StrategyRunDetailPage,
@@ -42,6 +46,11 @@ export const routes: RouteObject[] = [
       },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "strategies", element: <StrategiesPage /> },
+      { path: "strategy-experiments", element: <StrategyExperimentsPage /> },
+      {
+        path: "strategy-experiments/:experimentId",
+        element: <StrategyExperimentDetailPage />,
+      },
       { path: "strategy-runs", element: <StrategyRunsPage /> },
       { path: "strategy-runs/:runId", element: <StrategyRunDetailPage /> },
       { path: "signals", element: <SignalsPage /> },

@@ -220,6 +220,8 @@ class StrategyExperimentRepository(Protocol):
         *,
         strategy_key: str | None,
         status: str | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
         offset: int,
         limit: int,
     ) -> tuple[list[StrategyExperiment], int]: ...
