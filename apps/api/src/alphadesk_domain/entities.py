@@ -224,9 +224,9 @@ class StrategyVersion:
 
 @dataclass(slots=True, kw_only=True)
 class Signal:
-    strategy_id: UUID
-    strategy_version_id: UUID
-    account_id: UUID
+    strategy_id: UUID | None
+    strategy_version_id: UUID | None
+    account_id: UUID | None
     instrument_id: UUID
     signal_type: SignalType
     side: OrderSide
@@ -241,9 +241,19 @@ class Signal:
     reason: str | None = None
     causation_id: UUID | None = None
     payload: JsonObject = field(default_factory=dict)
+    strategy_run_id: UUID | None = None
+    sequence_number: int | None = None
+    strategy_key: str | None = None
+    strategy_version: str | None = None
+    bar_timestamp: datetime | None = None
+    confidence: Decimal | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    schema_version: int = 1
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
+        if self.target_quantity is not None and self.target_weight is not None:
+            raise ValueError("target_quantity and target_weight are mutually exclusive")
         if self.target_quantity is not None:
             decimal_value(self.target_quantity, "target_quantity")
             if self.target_quantity <= 0:
@@ -254,7 +264,19 @@ class Signal:
                 raise ValueError("target_weight must be between zero and one")
         if self.reference_price is not None:
             decimal_value(self.reference_price, "reference_price")
+            if self.reference_price <= 0:
+                raise ValueError("reference_price must be positive")
+        if self.confidence is not None:
+            decimal_value(self.confidence, "confidence")
+            if not Decimal("0") <= self.confidence <= Decimal("1"):
+                raise ValueError("confidence must be between zero and one")
+        if self.sequence_number is not None and self.sequence_number < 1:
+            raise ValueError("sequence_number must be positive")
+        if self.schema_version < 1:
+            raise ValueError("schema_version must be positive")
         self.generated_at = as_utc(self.generated_at, "generated_at")
+        if self.bar_timestamp is not None:
+            self.bar_timestamp = as_utc(self.bar_timestamp, "bar_timestamp")
         self.valid_until = as_utc(self.valid_until, "valid_until")
         if self.valid_until <= self.generated_at:
             raise ValueError("valid_until must be later than generated_at")

@@ -193,6 +193,14 @@ class StrategyContext:
             raise StrategyError("STRATEGY_INVALID_CONTEXT", "state key must not be empty")
         self._state[key] = value
 
+    def advance_time(self, value: datetime) -> None:
+        """Advance event time without exposing unrestricted context mutation."""
+
+        current_time = _aware_utc(value, "current_time", "STRATEGY_INVALID_CONTEXT")
+        if current_time < self._current_time:
+            raise StrategyError("STRATEGY_INVALID_CONTEXT", "current_time must not move backwards")
+        object.__setattr__(self, "_current_time", current_time)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class StrategyBar:
@@ -502,3 +510,20 @@ class StrategyRegistry:
                 "STRATEGY_EXECUTION_ERROR", f"strategy '{strategy_key}' violates its registration"
             )
         return instance
+
+    def validate_parameters(
+        self,
+        strategy_key: str,
+        supplied_parameters: Mapping[str, StrategyParameterValue] | None = None,
+    ) -> Mapping[str, StrategyParameterValue]:
+        """Return the registry-defined normalized parameter set without creating a strategy."""
+
+        try:
+            registration = self._registrations[strategy_key]
+        except KeyError as exc:
+            raise StrategyError(
+                "STRATEGY_NOT_FOUND", f"strategy '{strategy_key}' is not registered"
+            ) from exc
+        return validate_strategy_parameters(
+            registration.parameter_definitions, supplied_parameters or {}
+        )

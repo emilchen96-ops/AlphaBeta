@@ -1,5 +1,7 @@
 # S01 统一策略接口
 
+> S01-B 已在 S01-A 纯契约之上增加同步历史运行、StrategyRun/Signal 持久化和运行幂等；事务与查询规则见 [strategy_runner.md](strategy_runner.md)。策略契约本身仍保持纯 Python。
+
 ## S01-A 范围
 
 S01-A 建立纯 Python 的 `MarketBar -> Strategy -> SignalDraft` 契约。它不持久化 Signal，
@@ -39,5 +41,5 @@ S01-A 建立纯 Python 的 `MarketBar -> Strategy -> SignalDraft` 契约。它�
 ## 安全边界与后续阶段
 
 策略领域模块不依赖 FastAPI、SQLAlchemy、Redis、Broker、MiniQMT、OrderService 或 Unit of
-Work。S01-A 只完成内存契约。未来 S01-B 才能在单独评审后处理 Signal 持久化与查询入口；
-即使进入后续阶段，Strategy 仍只能生成 SignalDraft，不能绕过风险控制直接创建 Order。
+Work。S01-A 只定义内存契约；S01-B 的应用与基础设施层已处理历史运行、Signal 持久化与只读
+查询入口。Strategy 仍只能生成 SignalDraft，不能绕过风险控制直接创建 Order。

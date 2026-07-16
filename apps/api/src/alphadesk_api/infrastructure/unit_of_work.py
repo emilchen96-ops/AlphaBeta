@@ -14,6 +14,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyDomainEventRepository,
     SqlAlchemyExecutorDeviceRepository,
     SqlAlchemyFillRepository,
+    SqlAlchemyHistoricalBarProvider,
     SqlAlchemyInstrumentMappingRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyLedgerTransactionRepository,
@@ -31,6 +32,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyRiskDecisionRepository,
     SqlAlchemySignalRepository,
     SqlAlchemyStrategyRepository,
+    SqlAlchemyStrategyRunRepository,
     SqlAlchemyTradingAccountRepository,
     SqlAlchemyWatchlistRepository,
 )
@@ -62,6 +64,8 @@ class SqlAlchemyUnitOfWork:
         self.account_reconciliations = SqlAlchemyAccountReconciliationRepository(session)
         self.strategies = SqlAlchemyStrategyRepository(session)
         self.signals = SqlAlchemySignalRepository(session)
+        self.strategy_runs = SqlAlchemyStrategyRunRepository(session)
+        self.historical_bars = SqlAlchemyHistoricalBarProvider(session)
         self.orders = SqlAlchemyOrderRepository(session)
         self.order_actions = SqlAlchemyOrderActionRepository(session)
         self.order_state_transitions = SqlAlchemyOrderStateTransitionRepository(session)

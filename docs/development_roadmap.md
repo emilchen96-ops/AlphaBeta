@@ -1,6 +1,8 @@
 # 开发路线图
 
-> 2026-07-16：S01-A 已完成纯 Python 策略契约、只读上下文与 K 线、SignalDraft、严格参数校验、显式注册表和 SMA 交叉示例策略。S01-B 尚未开始，S01 整体仍未完成；当前没有 Signal 持久化、API、页面、回测、调度、Order 创建或交易执行能力。详见 [strategy_interface.md](strategy_interface.md)。
+> 2026-07-16：S01-B 已完成同步历史 StrategyRunner、StrategyRun/Signal 持久化、请求指纹幂等、失败回滚与只读完整性查询。S01-C 及 API、CLI、页面、调度、回测撮合、风控和交易执行均未开始。
+
+> 2026-07-16：S01-A 已完成纯 Python 策略契约；S01-B 已完成历史运行和 Signal 持久化。S01 整体仍未完成，当前没有 API、页面、完整回测、调度、Order 创建或交易执行能力。详见 [strategy_interface.md](strategy_interface.md) 与 [strategy_runner.md](strategy_runner.md)。
 
 > 2026-07-16：M05 订单事实管道已完成并封板。它只在 PostgreSQL 原子创建本地订单/命令/Outbox 事实，不发送、不成交、不改变账本。下一阶段为 S01 统一策略接口：`MarketBar -> Strategy -> Signal -> Signal 持久化和查询页面`；S01 不得直接创建 Order。
 

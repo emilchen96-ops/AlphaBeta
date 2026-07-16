@@ -43,6 +43,7 @@ markers = [
   "integration: requires explicitly configured external test services",
   "m04: simulated-account and accounting milestone tests",
   "m05: order fact pipeline milestone tests",
+  "s01: strategy interface and historical-runner milestone tests",
   "concurrency: requires real PostgreSQL locking",
   "accounting_regression: verifies order facts do not alter M04 ledgers",
   "external: requires explicit access to free external providers",

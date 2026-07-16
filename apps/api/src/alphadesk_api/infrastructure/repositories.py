@@ -39,6 +39,7 @@ from alphadesk_api.infrastructure.models import (
     RiskDecisionModel,
     SignalModel,
     StrategyModel,
+    StrategyRunModel,
     StrategyVersionModel,
     TradingAccountModel,
     WatchlistItemModel,
@@ -90,6 +91,8 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.strategy import StrategyBar, StrategyError
+from alphadesk_domain.strategy_runs import StrategyRun
 
 
 def model_values(model: DeclarativeBase) -> dict[str, Any]:
@@ -706,6 +709,130 @@ class SqlAlchemySignalRepository(SqlAlchemyRepository[Signal, SignalModel]):
 
     async def get_by_id(self, entity_id: UUID) -> Signal | None:
         return await self._get_by_id(entity_id)
+
+    async def append_many(self, entities: list[Signal]) -> None:
+        self._session.add_all([model_from_entity(SignalModel, item) for item in entities])
+        await self._session.flush()
+
+    async def list_by_run(self, run_id: UUID, offset: int, limit: int) -> tuple[list[Signal], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(SignalModel)
+                .where(SignalModel.strategy_run_id == run_id)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(SignalModel)
+            .where(SignalModel.strategy_run_id == run_id)
+            .order_by(SignalModel.sequence_number, SignalModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(Signal, row) for row in rows], total
+
+    async def count_by_run(self, run_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(SignalModel)
+                .where(SignalModel.strategy_run_id == run_id)
+            )
+            or 0
+        )
+
+
+class SqlAlchemyStrategyRunRepository(SqlAlchemyRepository[StrategyRun, StrategyRunModel]):
+    entity_type = StrategyRun
+    model_type = StrategyRunModel
+
+    async def add(self, entity: StrategyRun) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> StrategyRun | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> StrategyRun | None:
+        row = await self._session.scalar(
+            select(StrategyRunModel).where(StrategyRunModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(StrategyRun, row)
+
+    async def update(self, entity: StrategyRun) -> None:
+        values = model_values(model_from_entity(StrategyRunModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(StrategyRunModel).where(StrategyRunModel.id == entity.id).values(**values)
+        )
+        await self._session.flush()
+
+    async def list(self, offset: int, limit: int) -> tuple[list[StrategyRun], int]:
+        total = int(await self._session.scalar(select(func.count(StrategyRunModel.id))) or 0)
+        rows = await self._session.scalars(
+            select(StrategyRunModel)
+            .order_by(StrategyRunModel.created_at.desc(), StrategyRunModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(StrategyRun, row) for row in rows], total
+
+
+class SqlAlchemyHistoricalBarProvider:
+    """Read immutable S01 strategy bars from persisted market-bar facts."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_bars(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[StrategyBar]:
+        result = await self._session.execute(
+            select(MarketBarModel, InstrumentModel)
+            .join(InstrumentModel, InstrumentModel.id == MarketBarModel.instrument_id)
+            .where(
+                MarketBarModel.instrument_id.in_(instrument_ids),
+                MarketBarModel.timeframe == timeframe.value,
+                MarketBarModel.bar_time >= start_at,
+                MarketBarModel.bar_time < end_at,
+            )
+            .order_by(
+                MarketBarModel.bar_time,
+                MarketBarModel.instrument_id,
+                MarketBarModel.id,
+            )
+        )
+        bars: list[StrategyBar] = []
+        seen: set[tuple[UUID, datetime]] = set()
+        for row, instrument in result.tuples():
+            identity = (row.instrument_id, row.bar_time)
+            if identity in seen:
+                raise StrategyError(
+                    "STRATEGY_INVALID_BAR",
+                    "multiple market-bar facts exist for one instrument and timestamp",
+                )
+            seen.add(identity)
+            bars.append(
+                StrategyBar(
+                    instrument_id=row.instrument_id,
+                    symbol=instrument.symbol,
+                    exchange=instrument.exchange,
+                    timeframe=timeframe,
+                    timestamp=row.bar_time,
+                    open=row.open,
+                    high=row.high,
+                    low=row.low,
+                    close=row.close,
+                    volume=row.volume,
+                    amount=row.amount,
+                )
+            )
+        return bars
 
 
 class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):

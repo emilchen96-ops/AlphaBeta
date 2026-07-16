@@ -21,7 +21,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphadesk_api.infrastructure.database import Base
@@ -61,6 +61,8 @@ from alphadesk_domain.enums import (
     SyncTriggerType,
     TimeInForce,
 )
+from alphadesk_domain.strategy import StrategyEnvironment
+from alphadesk_domain.strategy_runs import StrategyRunStatus
 
 PRICE = Numeric(20, 8)
 QUANTITY = Numeric(24, 8)
@@ -573,19 +575,34 @@ class SignalModel(TimestampedModel, Base):
             name="target_weight_range",
         ),
         CheckConstraint("valid_until > generated_at", name="validity_window"),
+        CheckConstraint(
+            "target_quantity IS NULL OR target_weight IS NULL",
+            name="signal_target_mutually_exclusive",
+        ),
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="signal_confidence_range",
+        ),
+        CheckConstraint(
+            "sequence_number IS NULL OR sequence_number >= 1",
+            name="signal_sequence_positive",
+        ),
+        CheckConstraint("schema_version >= 1", name="signal_schema_version_positive"),
+        UniqueConstraint("strategy_run_id", "sequence_number", name="uq_signals_run_sequence"),
         Index("ix_signals_strategy_generated", "strategy_id", "generated_at"),
         Index("ix_signals_account_instrument", "account_id", "instrument_id"),
+        Index("ix_signals_strategy_run_id", "strategy_run_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    strategy_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("strategies.id", ondelete="RESTRICT"), nullable=False
+    strategy_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategies.id", ondelete="RESTRICT")
     )
-    strategy_version_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id", ondelete="RESTRICT")
     )
-    account_id: Mapped[UUID] = mapped_column(
-        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    account_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT")
     )
     instrument_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
@@ -604,6 +621,69 @@ class SignalModel(TimestampedModel, Base):
     payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+    strategy_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_runs.id", ondelete="RESTRICT")
+    )
+    sequence_number: Mapped[int | None] = mapped_column(Integer)
+    strategy_key: Mapped[str | None] = mapped_column(String(64))
+    strategy_version: Mapped[str | None] = mapped_column(String(32))
+    bar_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confidence: Mapped[Decimal | None] = mapped_column(RATIO)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class StrategyRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "strategy_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_strategy_runs_idempotency_key"),
+        CheckConstraint(
+            f"status IN ({enum_values(StrategyRunStatus)})", name="strategy_run_status_valid"
+        ),
+        CheckConstraint(
+            f"environment IN ({enum_values(StrategyEnvironment)})",
+            name="strategy_run_environment_valid",
+        ),
+        CheckConstraint(
+            f"timeframe IN ({enum_values(MarketTimeframe)})", name="run_timeframe_valid"
+        ),
+        CheckConstraint("start_at < end_at", name="strategy_run_time_window"),
+        CheckConstraint(
+            "bars_processed >= 0 AND signals_generated >= 0",
+            name="strategy_run_counters_non_negative",
+        ),
+        Index("ix_strategy_runs_status_created", "status", "created_at"),
+        Index("ix_strategy_runs_strategy_created", "strategy_key", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategies.id", ondelete="RESTRICT")
+    )
+    strategy_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id", ondelete="RESTRICT")
+    )
+    environment: Mapped[str] = mapped_column(String(16), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    bars_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signals_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
 
 
 class ExecutorDeviceModel(MutableTimestampedModel, Base):

@@ -29,9 +29,11 @@ from alphadesk_domain.repositories import (
     RiskDecisionRepository,
     SignalRepository,
     StrategyRepository,
+    StrategyRunRepository,
     TradingAccountRepository,
     WatchlistRepository,
 )
+from alphadesk_domain.strategy_runs import HistoricalBarProvider
 
 
 class UnitOfWork(Protocol):
@@ -47,6 +49,8 @@ class UnitOfWork(Protocol):
     account_reconciliations: AccountReconciliationRepository
     strategies: StrategyRepository
     signals: SignalRepository
+    strategy_runs: StrategyRunRepository
+    historical_bars: HistoricalBarProvider
     orders: OrderRepository
     order_actions: OrderActionRepository
     order_state_transitions: OrderStateTransitionRepository
