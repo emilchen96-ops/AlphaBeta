@@ -1,5 +1,9 @@
 # AlphaDesk 文档索引
 
+> M04.1A sealed status: BaoStock is historical-only, the real-time provider is `disabled`, and no other free real-time source is being added. The retained Redis/WebSocket/UI path awaits a later Windows Agent/MiniQMT integration; no order validation may rely on real-time market data.
+
+> 当前开发里程碑：**M04.1A**。免费真实行情见 [free_market_data.md](free_market_data.md)，独立 Worker 见 [free_market_worker.md](free_market_worker.md)，推送协议见 [market_data_websocket.md](market_data_websocket.md)，盘中估值见 [live_valuation.md](live_valuation.md)。所有免费数据均为尽力而为、仅供研究、非交易级。
+
 > 当前封板里程碑：**M04**。账本见 [accounting.md](accounting.md)，估值见 [account_valuation.md](account_valuation.md)，核对见 [account_reconciliation.md](account_reconciliation.md)，决策见 [ADR 0011](adr/0011-account-ledger-and-projections.md)。M04 仍无公开 Order/Fill 写 API、撮合、Broker 或实盘能力。
 
 > 当前封板里程碑：**M03**。权威增量文档为 [行情基础数据与适配器](market_data.md)、[自选股业务规则](watchlists.md) 和 [ADR 0008](adr/0008-market-data-source-and-idempotency.md)。系统仍无策略、Signal、订单、风控、Broker 或实盘能力。
@@ -28,6 +32,8 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | Redis、队列、推送 | `reliable_messaging.md`、ADR 0003、0004 |
 | Web 或 API | `architecture.md`、`security.md`、`coding_standards.md` |
 | Broker 或行情适配器 | `architecture.md`、`risk_model.md`、ADR 0005 |
+| 免费行情、Worker、实时推送 | `free_market_data.md`、`free_market_worker.md`、`market_data_websocket.md`、ADR 0012–0014 |
+| 盘中估值 | `live_valuation.md`、`account_valuation.md`、ADR 0011、0014 |
 
 若文档与实现发生冲突，先暂停变更并更新经评审的文档或 ADR；不得以临时实现绕过既定约束。
 

@@ -39,6 +39,7 @@ from alphadesk_domain.enums import (
     LedgerTransactionType,
     MarketDataQualityStatus,
     MarketDataSourceStatus,
+    MarketProviderTier,
     MarketSyncStatus,
     MarketTimeframe,
     OrderSide,
@@ -46,6 +47,7 @@ from alphadesk_domain.enums import (
     OrderType,
     OutboxStatus,
     PositionLedgerEntryType,
+    RealtimeRunStatus,
     ReconciliationStatus,
     RiskDecisionType,
     RiskLayer,
@@ -932,6 +934,14 @@ class MarketDataSourceModel(MutableTimestampedModel, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False)
     supports_realtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provider_tier: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=MarketProviderTier.DEMO.value
+    )
+    supports_quotes: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_recent_minute_bars: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     supported_timeframes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
@@ -1095,6 +1105,43 @@ class MarketSyncRunModel(MutableTimestampedModel, Base):
     total_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_summary: Mapped[str | None] = mapped_column(String(1000))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class MarketRealtimeRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "market_realtime_runs"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({enum_values(RealtimeRunStatus)})", name="status_valid"),
+        CheckConstraint(
+            "requested_count >= 0 AND received_count >= 0 AND changed_count >= 0 "
+            "AND rejected_count >= 0",
+            name="counters_non_negative",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at", name="completion_not_early"
+        ),
+        CheckConstraint(
+            "error_summary IS NULL OR length(error_summary) <= 1000",
+            name="error_summary_length",
+        ),
+        Index("ix_market_realtime_runs_source_started", "source_id", "started_at"),
+        Index("ix_market_realtime_runs_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("market_data_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requested_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    received_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    changed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rejected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )

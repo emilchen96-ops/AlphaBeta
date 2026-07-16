@@ -26,6 +26,7 @@ from alphadesk_api.infrastructure.models import (
     LedgerTransactionModel,
     MarketBarModel,
     MarketDataSourceModel,
+    MarketRealtimeRunModel,
     MarketSyncRunModel,
     OrderCommandModel,
     OrderModel,
@@ -74,6 +75,7 @@ from alphadesk_domain.enums import (
     MarketDataSourceStatus,
     MarketSyncStatus,
     MarketTimeframe,
+    RealtimeRunStatus,
 )
 from alphadesk_domain.market import (
     InstrumentMapping,
@@ -82,6 +84,7 @@ from alphadesk_domain.market import (
     MarketDataSource,
     MarketSyncRun,
 )
+from alphadesk_domain.realtime_market import MarketRealtimeRun
 
 
 def model_values(model: DeclarativeBase) -> dict[str, Any]:
@@ -1078,6 +1081,52 @@ class SqlAlchemyMarketSyncRunRepository(SqlAlchemyRepository[MarketSyncRun, Mark
                 total_inserted=total_inserted,
                 total_updated=total_updated,
                 total_rejected=total_rejected,
+                error_summary=error_summary,
+                updated_at=completed_at,
+            )
+        )
+
+
+class SqlAlchemyMarketRealtimeRunRepository(
+    SqlAlchemyRepository[MarketRealtimeRun, MarketRealtimeRunModel]
+):
+    entity_type = MarketRealtimeRun
+    model_type = MarketRealtimeRunModel
+
+    async def add(self, entity: MarketRealtimeRun) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> MarketRealtimeRun | None:
+        return await self._get_by_id(entity_id)
+
+    async def list_recent(self, limit: int) -> list[MarketRealtimeRun]:
+        rows = await self._session.scalars(
+            select(MarketRealtimeRunModel)
+            .order_by(MarketRealtimeRunModel.started_at.desc())
+            .limit(limit)
+        )
+        return [entity_from_model(MarketRealtimeRun, row) for row in rows]
+
+    async def complete(
+        self,
+        entity_id: UUID,
+        *,
+        status: RealtimeRunStatus,
+        completed_at: datetime,
+        received_count: int,
+        changed_count: int,
+        rejected_count: int,
+        error_summary: str | None,
+    ) -> None:
+        await self._session.execute(
+            update(MarketRealtimeRunModel)
+            .where(MarketRealtimeRunModel.id == entity_id)
+            .values(
+                status=status.value,
+                completed_at=completed_at,
+                received_count=received_count,
+                changed_count=changed_count,
+                rejected_count=rejected_count,
                 error_summary=error_summary,
                 updated_at=completed_at,
             )

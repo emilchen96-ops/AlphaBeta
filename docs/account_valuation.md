@@ -1,5 +1,13 @@
 # 账户估值
 
+## M04.1A 盘中预览
+
+盘中估值先读取 Redis Quote，再按既定来源优先级回退到 PostgreSQL `DAY_1` 收盘事实。Redis 命中可标为实时来源；PostgreSQL 回退必须明确标为历史回退，不能冒充实时价。结果沿用 `COMPLETE`、`PARTIAL`、`STALE`、`UNAVAILABLE` 四种状态，并携带逐持仓来源、新鲜度和缺价信息。
+
+`GET /api/v1/accounts/{account_id}/live-summary` 是只读临时预览：不得修改现金余额、持仓数量、成本、账本条目或持仓投影，也不得创建 `AccountSnapshot`。免费行情仅供研究，网页必须持续展示这一限制。
+
+## M04 持久化估值
+
 账户估值读取 M03 PostgreSQL 行情事实，默认使用优先级最高的活动行情源、`DAY_1` 和 `NONE` 复权。估值不会生成成交，也不会改变成本或已实现盈亏。
 
 - 持仓市值：`quantity × latest_close`。

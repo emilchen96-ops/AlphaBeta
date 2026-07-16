@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> M04.1A Migration `0005_m04_1_free_market_data.py` 为 `market_data_sources` 增加 provider tier、quote/近期分钟线能力和健康检查时间，并新增 `market_realtime_runs`。实时 quote 不持久化到 PostgreSQL；其 Redis 结构见 [free_market_worker.md](free_market_worker.md)。
+
 > Migration `0004_m04` 新增 `account_cash_balances`、`ledger_transactions`、`cash_ledger_entries`、`position_ledger_entries`、`account_snapshots`、`account_reconciliation_runs`。账本只追加，余额与持仓是带行版本的投影。
 
 ## M03 行情增量
@@ -10,6 +12,7 @@
 | `instrument_mappings` | 内部标的与来源代码映射 | `(source_id, external_symbol)` 与 `(source_id, instrument_id)` 唯一；外键 `RESTRICT` |
 | `market_bars` | 规范化 OHLCV K 线事实 | 标的/来源/周期/复权/时间唯一；正价格、OHLC、非负数量约束；时间降序复合索引 |
 | `market_sync_runs` | 每次同步请求和计数终态 | 状态/触发类型/周期受约束；计数非负；按来源、状态、开始时间检索 |
+| `market_realtime_runs` | 免费实时摄取运行摘要 | 来源、状态、触发类型和计数受约束；按来源、状态、开始时间索引；不保存 Quote payload |
 
 `watchlists.name` 从 M03 起唯一；删除列表对条目使用 `CASCADE`，但标的、来源、映射和 K 线外键继续 `RESTRICT`。
 
@@ -20,6 +23,7 @@ erDiagram
   INSTRUMENTS ||--o{ MARKET_BARS : priced_by
   MARKET_DATA_SOURCES ||--o{ MARKET_BARS : supplies
   MARKET_DATA_SOURCES ||--o{ MARKET_SYNC_RUNS : records
+  MARKET_DATA_SOURCES ||--o{ MARKET_REALTIME_RUNS : records
   WATCHLISTS ||--o{ WATCHLIST_ITEMS : contains
   INSTRUMENTS ||--o{ WATCHLIST_ITEMS : references
 ```

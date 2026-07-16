@@ -19,7 +19,9 @@ from alphadesk_api.application.accounting import (
     SimulatedAccountService,
 )
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.application.live_valuation import LiveAccountValuationService
 from alphadesk_api.application.market_data import MarketDataQueryService
+from alphadesk_api.infrastructure.free_market_cache import QuoteCache
 from alphadesk_api.schemas.accounting import (
     AccountCreateRequest,
     AccountDetailResponse,
@@ -36,9 +38,27 @@ from alphadesk_api.schemas.accounting import (
     PositionResponse,
     ReconciliationResponse,
 )
+from alphadesk_api.schemas.realtime_market import AccountLiveValuationResponse
 from alphadesk_domain.enums import AccountStatus, AccountType
 
 router = APIRouter(prefix="/accounts", tags=["simulated-accounts"])
+
+
+@router.get("/{account_id}/live-summary", response_model=AccountLiveValuationResponse)
+async def live_summary(request: Request, account_id: UUID) -> AccountLiveValuationResponse:
+    client = getattr(request.app.state.redis, "client", None)
+    if client is None:
+        raise to_app_error(ApplicationError("REALTIME_CACHE_UNAVAILABLE", "实时行情缓存不可用"))
+    settings = request.app.state.settings
+    try:
+        value = await LiveAccountValuationService(
+            uow_factory(request),
+            QuoteCache(client, settings.free_market_quote_ttl_seconds),
+            settings.free_market_stale_seconds,
+        ).value(account_id)
+        return AccountLiveValuationResponse.model_validate(value, from_attributes=True)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
 
 
 def _validated[ResponseT: BaseModel](response_type: type[ResponseT], entity: object) -> ResponseT:

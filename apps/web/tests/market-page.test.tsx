@@ -59,10 +59,29 @@ function installMarketFetch() {
             status: "ACTIVE",
             priority: 0,
             supports_realtime: false,
+            provider_tier: "DEMO",
+            supports_quotes: false,
+            supports_recent_minute_bars: false,
+            last_health_check_at: null,
             supported_timeframes: ["DAY_1", "MINUTE_1"],
             updated_at: "2026-07-15T00:00:00Z",
           },
         ];
+      if (url.includes("/market-data/realtime/status"))
+        body = {
+          enabled: false,
+          state: "DISABLED",
+          source_code: null,
+          circuit_state: null,
+          consecutive_failures: 0,
+          requested_count: 0,
+          received_count: 0,
+          changed_count: 0,
+          rejected_count: 0,
+          checked_at: "2026-07-15T00:00:00Z",
+          error_summary: null,
+          worker_heartbeat: null,
+        };
       if (url.includes("/market-data/bars"))
         body = {
           source_code: "DEMO",
@@ -104,6 +123,13 @@ test("行情路由显示完整工作台", async () => {
 test("展示 DEMO 行情源状态", async () => {
   renderRoute("/market");
   expect(await screen.findByText("DEMO · ACTIVE")).toBeInTheDocument();
+});
+
+test("免费行情关闭时明确显示 Best-Effort 状态", async () => {
+  renderRoute("/market");
+  expect(
+    await screen.findByText("FREE_BEST_EFFORT · DISABLED"),
+  ).toBeInTheDocument();
 });
 
 test("标的目录展示代码和名称", async () => {

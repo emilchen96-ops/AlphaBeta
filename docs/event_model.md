@@ -1,6 +1,12 @@
 # 事件模型
 
+> M04.1A 不为每条 Quote 创建 `DomainEvent` 或 Outbox。临时行情通过 Redis Pub/Sub 传送；只有运行摘要、历史 K 线同步以及必要审计进入 PostgreSQL，Pub/Sub 绝不能复用于订单可靠投递。
+
 > M04 在业务事务内记录账户创建/更新、资金入出、成交记账、估值和核对领域事件及审计日志；尚不发布 Outbox，也不创建 Redis 消费者。
+
+## M04.1A 行情更新语义
+
+实时更新以 `instrument_id`、`source_code`、`quote_time`、`received_at`、payload hash 和单调 `revision` 标识。相同 payload 只刷新 TTL，不发布重复增量；更旧的 `quote_time` 被拒绝。WebSocket 的 snapshot/update/heartbeat 是可丢弃的展示消息，不是领域事实，也不提供重放或至少一次交付保证。`market_realtime_runs` 保存可审计运行结果，但不把完整上游响应或全部订阅集合写入事件日志。
 
 ## M03 行情与自选股事件
 

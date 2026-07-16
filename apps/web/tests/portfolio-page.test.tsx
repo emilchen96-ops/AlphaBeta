@@ -79,6 +79,16 @@ function installPortfolioFetch(options?: {
           },
           latest_reconciliation: null,
         };
+      } else if (url.endsWith(`/accounts/${account.id}/live-summary`)) {
+        body = {
+          account_id: account.id,
+          cash_balance: balance.total_cash,
+          positions_market_value: "0",
+          total_equity: balance.total_cash,
+          status: "COMPLETE",
+          calculated_at: "2026-07-15T00:00:00Z",
+          positions: [],
+        };
       } else if (url.includes(`/accounts/${account.id}/`)) {
         body = { items: [], page: 1, page_size: 100, total: 0 };
       }
@@ -107,6 +117,7 @@ test("模拟账户页展示账本摘要和主要操作", async () => {
   expect(await screen.findByText("100,319.84")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /重新估值/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /执行核对/ })).toBeInTheDocument();
+  expect(screen.getByText(/免费行情仅供研究/)).toBeInTheDocument();
 });
 
 test("持仓页提供五类账本与核对标签页", async () => {

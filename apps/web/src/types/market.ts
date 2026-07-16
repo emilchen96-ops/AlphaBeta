@@ -1,4 +1,5 @@
-export type MarketTimeframe = "DAY_1" | "MINUTE_1";
+export type MarketTimeframe =
+  "DAY_1" | "MINUTE_1" | "MINUTE_5" | "MINUTE_15" | "MINUTE_30" | "MINUTE_60";
 export type AdjustmentType = "NONE" | "FORWARD" | "BACKWARD";
 export type FreshnessStatus =
   "NORMAL" | "DELAYED" | "INCOMPLETE" | "INVALID" | "UNKNOWN";
@@ -53,8 +54,56 @@ export interface MarketDataSource {
   status: "ACTIVE" | "DISABLED" | "DEGRADED";
   priority: number;
   supports_realtime: boolean;
+  provider_tier: "DEMO" | "FREE_BEST_EFFORT";
+  supports_quotes: boolean;
+  supports_recent_minute_bars: boolean;
+  last_health_check_at: string | null;
   supported_timeframes: string[];
   updated_at: string;
+}
+
+export interface MarketQuote {
+  instrument_id: string;
+  source_code: string;
+  symbol: string;
+  quote_time: string | null;
+  received_at: string;
+  last_price: string;
+  previous_close?: string | null;
+  open?: string | null;
+  high?: string | null;
+  low?: string | null;
+  volume?: string | null;
+  amount?: string | null;
+  quality_status: FreshnessStatus;
+  provider_tier?: "FREE_BEST_EFFORT";
+  usage?: ("RESEARCH_ONLY" | "NON_TRADING_GRADE")[];
+  quality_flags?: Record<string, unknown>;
+  revision: number;
+  freshness?: "FRESH" | "STALE" | "MISSING";
+  age_seconds?: number;
+}
+
+export interface LatestQuotesResponse {
+  schema_version: 1;
+  items: MarketQuote[];
+  missing_instrument_ids: string[];
+  calculated_at: string;
+}
+
+export interface RealtimeMarketStatus {
+  enabled: boolean;
+  state: string;
+  source_code: string | null;
+  circuit_state: string | null;
+  consecutive_failures: number;
+  requested_count: number;
+  received_count: number;
+  changed_count: number;
+  rejected_count: number;
+  checked_at: string | null;
+  error_summary: string | null;
+  worker_heartbeat: Record<string, unknown> | null;
 }
 
 export interface MarketBar {

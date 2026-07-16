@@ -10,6 +10,7 @@ from alphadesk_domain.enums import (
     AdjustmentType,
     MarketDataQualityStatus,
     MarketDataSourceStatus,
+    MarketProviderTier,
     MarketSyncStatus,
     MarketTimeframe,
     SyncTriggerType,
@@ -27,6 +28,10 @@ class MarketDataSource:
     priority: int
     supports_realtime: bool
     supported_timeframes: tuple[MarketTimeframe, ...]
+    provider_tier: MarketProviderTier = MarketProviderTier.DEMO
+    supports_quotes: bool = False
+    supports_recent_minute_bars: bool = False
+    last_health_check_at: datetime | None = None
     id: UUID = field(default_factory=uuid4)
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
@@ -41,6 +46,8 @@ class MarketDataSource:
             raise ValueError("supported_timeframes must not be empty")
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
+        if self.last_health_check_at is not None:
+            self.last_health_check_at = as_utc(self.last_health_check_at, "last_health_check_at")
 
 
 @dataclass(slots=True, kw_only=True)

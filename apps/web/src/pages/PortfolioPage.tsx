@@ -27,12 +27,13 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   createAccount,
   getAccounts,
   getAccountSummary,
+  getAccountLiveSummary,
   getCashLedger,
   getPositionLedger,
   getReconciliations,
@@ -42,6 +43,7 @@ import {
   valueAccount,
 } from "../api/accounts";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { useMarketQuotes } from "../hooks/useMarketQuotes";
 import type {
   AccountSnapshot,
   CashLedgerEntry,
@@ -83,6 +85,22 @@ export function PortfolioPage() {
     queryFn: () => getAccountSummary(effectiveAccount ?? ""),
     enabled: Boolean(effectiveAccount),
   });
+  const liveSummary = useQuery({
+    queryKey: ["account-live-summary", effectiveAccount],
+    queryFn: () => getAccountLiveSummary(effectiveAccount ?? ""),
+    enabled: Boolean(effectiveAccount),
+    refetchInterval: 30_000,
+  });
+  const liveQuotes = useMarketQuotes(
+    summary.data?.positions.map((position) => position.instrument_id) ?? [],
+  );
+  useEffect(() => {
+    if (Object.keys(liveQuotes.quotes).length > 0) {
+      void queryClient.invalidateQueries({
+        queryKey: ["account-live-summary", effectiveAccount],
+      });
+    }
+  }, [liveQuotes.quotes, effectiveAccount, queryClient]);
   const cashLedger = useQuery({
     queryKey: ["cash-ledger", effectiveAccount],
     queryFn: () => getCashLedger(effectiveAccount ?? ""),
@@ -107,6 +125,7 @@ export function PortfolioPage() {
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["accounts"] });
     await queryClient.invalidateQueries({ queryKey: ["account-summary"] });
+    await queryClient.invalidateQueries({ queryKey: ["account-live-summary"] });
     await queryClient.invalidateQueries({ queryKey: ["cash-ledger"] });
     await queryClient.invalidateQueries({ queryKey: ["position-ledger"] });
     await queryClient.invalidateQueries({ queryKey: ["account-snapshots"] });
@@ -194,6 +213,12 @@ export function PortfolioPage() {
       ) : null}
       {effectiveAccount && summary.data ? (
         <>
+          <Alert
+            type="info"
+            showIcon
+            title={`盘中估值：${liveSummary.data?.status ?? "UNAVAILABLE"}`}
+            description={`实时链路 ${liveQuotes.status}；免费行情仅供研究，不用于交易决策。盘中总权益 ${decimal(liveSummary.data?.total_equity)}。`}
+          />
           <Flex
             justify="space-between"
             align="center"

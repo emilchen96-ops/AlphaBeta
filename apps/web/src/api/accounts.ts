@@ -3,6 +3,7 @@ import type {
   Account,
   AccountSnapshot,
   AccountSummary,
+  AccountLiveValuation,
   CashLedgerEntry,
   LedgerTransaction,
   Page,
@@ -32,6 +33,12 @@ export function createAccount(input: {
 
 export function getAccountSummary(id: string) {
   return apiRequest<AccountSummary>(`/api/v1/accounts/${id}/summary`);
+}
+
+export function getAccountLiveSummary(id: string) {
+  return apiRequest<AccountLiveValuation>(
+    `/api/v1/accounts/${id}/live-summary`,
+  );
 }
 
 export function postFunding(

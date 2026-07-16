@@ -86,6 +86,28 @@ export interface AccountSummary {
   latest_reconciliation: Reconciliation | null;
 }
 
+export interface LivePositionValuation {
+  instrument_id: string;
+  symbol: string;
+  quantity: string;
+  price: string | null;
+  market_value: string | null;
+  unrealized_pnl: string | null;
+  price_source: string | null;
+  quote_time: string | null;
+  freshness: "FRESH" | "STALE" | "MISSING";
+}
+
+export interface AccountLiveValuation {
+  account_id: string;
+  cash_balance: string;
+  positions_market_value: string;
+  total_equity: string;
+  status: "COMPLETE" | "STALE" | "UNAVAILABLE";
+  calculated_at: string;
+  positions: LivePositionValuation[];
+}
+
 export interface LedgerTransaction {
   id: string;
   transaction_type: string;

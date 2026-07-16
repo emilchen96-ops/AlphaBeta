@@ -66,6 +66,7 @@ services:
       ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
       ALPHADESK_WEBSOCKET_HEARTBEAT_SECONDS: ${ALPHADESK_WEBSOCKET_HEARTBEAT_SECONDS:-20}
       ALPHADESK_CORRELATION_ID_HEADER: ${ALPHADESK_CORRELATION_ID_HEADER:-X-Correlation-ID}
+      ALPHADESK_FREE_MARKET_DATA_ENABLED: ${ALPHADESK_FREE_MARKET_DATA_ENABLED:-false}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
@@ -85,6 +86,46 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    restart: unless-stopped
+
+  market_worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "alphadesk_api.workers.free_market_data"]
+    environment:
+      ALPHADESK_ENVIRONMENT: ${ALPHADESK_ENVIRONMENT:-development}
+      ALPHADESK_POSTGRES_HOST: postgres
+      ALPHADESK_POSTGRES_PORT: 5432
+      ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+      ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_REDIS_HOST: redis
+      ALPHADESK_REDIS_PORT: 6379
+      ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
+      ALPHADESK_FREE_MARKET_DATA_ENABLED: ${ALPHADESK_FREE_MARKET_DATA_ENABLED:-false}
+      ALPHADESK_FREE_MARKET_POLL_SECONDS: ${ALPHADESK_FREE_MARKET_POLL_SECONDS:-30}
+      ALPHADESK_FREE_MARKET_IDLE_POLL_SECONDS: ${ALPHADESK_FREE_MARKET_IDLE_POLL_SECONDS:-120}
+      ALPHADESK_FREE_MARKET_CLOSED_POLL_SECONDS: ${ALPHADESK_FREE_MARKET_CLOSED_POLL_SECONDS:-600}
+      ALPHADESK_FREE_MARKET_MINUTE_SYNC_SECONDS: ${ALPHADESK_FREE_MARKET_MINUTE_SYNC_SECONDS:-300}
+      ALPHADESK_FREE_MARKET_MINUTE_MAX_SYMBOLS: ${ALPHADESK_FREE_MARKET_MINUTE_MAX_SYMBOLS:-20}
+      ALPHADESK_FREE_MARKET_MINUTE_LOOKBACK_MINUTES: ${ALPHADESK_FREE_MARKET_MINUTE_LOOKBACK_MINUTES:-120}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:market:v1:worker:heartbeat'); x.close()",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   web:

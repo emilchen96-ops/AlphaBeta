@@ -32,7 +32,12 @@ from alphadesk_domain.entities import (
     Watchlist,
     WatchlistItem,
 )
-from alphadesk_domain.enums import AdjustmentType, MarketSyncStatus, MarketTimeframe
+from alphadesk_domain.enums import (
+    AdjustmentType,
+    MarketSyncStatus,
+    MarketTimeframe,
+    RealtimeRunStatus,
+)
 from alphadesk_domain.market import (
     InstrumentMapping,
     MarketBar,
@@ -40,6 +45,7 @@ from alphadesk_domain.market import (
     MarketDataSource,
     MarketSyncRun,
 )
+from alphadesk_domain.realtime_market import MarketRealtimeRun
 
 
 class InstrumentRepository(Protocol):
@@ -269,5 +275,22 @@ class MarketSyncRunRepository(Protocol):
         total_inserted: int,
         total_updated: int,
         total_rejected: int,
+        error_summary: str | None,
+    ) -> None: ...
+
+
+class MarketRealtimeRunRepository(Protocol):
+    async def add(self, entity: MarketRealtimeRun) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> MarketRealtimeRun | None: ...
+    async def list_recent(self, limit: int) -> list[MarketRealtimeRun]: ...
+    async def complete(
+        self,
+        entity_id: UUID,
+        *,
+        status: RealtimeRunStatus,
+        completed_at: datetime,
+        received_count: int,
+        changed_count: int,
+        rejected_count: int,
         error_summary: str | None,
     ) -> None: ...

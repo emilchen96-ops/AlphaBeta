@@ -1,5 +1,9 @@
 # 架构总览
 
+> The real-time market provider is currently `disabled`; historical prices cannot act as real-time prices. MiniQMT can only arrive through a Windows Agent after M06. There is no real-trading capability and this system must not be publicly deployed.
+
+> M04.1A 新增独立 `market_worker`：PostgreSQL 保存来源、K 线和运行审计；Redis 保存可重建的最新 quote、leader 租约、状态及 UI Pub/Sub；FastAPI 只运行共享 Redis listener 和只读 HTTP/WebSocket 接口，不在 lifespan 抓取外部行情。
+
 > M04 架构增量：FastAPI 应用服务在单个 PostgreSQL 事务内追加资金/持仓账本并更新投影；估值复用 M03 行情查询；Redis 不承载权威账户数据。详见 `accounting.md` 与 ADR 0011。
 
 ## M03 行情切片

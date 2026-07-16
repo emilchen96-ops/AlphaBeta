@@ -60,6 +60,39 @@ class ExternalMarketBar:
     source_updated_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExternalMarketQuote:
+    symbol: str
+    quote_time: datetime | None
+    last_price: str
+    previous_close: str | None = None
+    open: str | None = None
+    high: str | None = None
+    low: str | None = None
+    volume: str | None = None
+    amount: str | None = None
+    bid_price_1: str | None = None
+    bid_volume_1: str | None = None
+    ask_price_1: str | None = None
+    ask_volume_1: str | None = None
+
+
+class RealtimeMarketDataAdapter(Protocol):
+    @property
+    def source_code(self) -> str: ...
+
+    async def health_check(self) -> MarketDataHealth: ...
+
+    async def fetch_quotes(self, symbols: list[str]) -> list[ExternalMarketQuote]: ...
+
+    def fetch_recent_minute_bars(
+        self,
+        symbols: list[str],
+        start: datetime,
+        end: datetime,
+    ) -> AsyncIterator[ExternalMarketBar]: ...
+
+
 class MarketDataAdapter(Protocol):
     @property
     def source_code(self) -> str: ...

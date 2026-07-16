@@ -1,5 +1,9 @@
 # 行情基础数据与适配器
 
+> M04.1A 增量边界见 [免费真实行情](free_market_data.md) 与 [ADR 0012](adr/0012-free-provider-boundary.md)。M03 的 DEMO、幂等 K 线与来源优先级规则保持不变。
+
+> M04.1A is sealed: BaoStock is historical-only and the real-time provider is `disabled`; the project is not expanding free real-time sources and awaits a later Windows Agent/MiniQMT integration.
+
 M03 建立只读行情基础设施：标的目录、来源映射、K 线、同步运行记录、查询 API 与离线演示数据。它不包含策略、Signal、订单、风控、Broker 或交易执行。
 
 ## 边界与依赖方向

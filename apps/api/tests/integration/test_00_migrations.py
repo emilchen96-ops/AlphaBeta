@@ -40,7 +40,7 @@ def run_alembic(*arguments: str) -> subprocess.CompletedProcess[str]:
 def test_upgrade_downgrade_reupgrade_and_check() -> None:
     run_alembic("upgrade", "head")
     current = run_alembic("current")
-    assert "0004_m04" in current.stdout
+    assert "0005_m04_1" in current.stdout
 
     run_alembic("downgrade", "0002_m02")
     downgraded = run_alembic("current")
@@ -48,6 +48,6 @@ def test_upgrade_downgrade_reupgrade_and_check() -> None:
 
     run_alembic("upgrade", "head")
     reupgraded = run_alembic("current")
-    assert "0004_m04" in reupgraded.stdout
+    assert "0005_m04_1" in reupgraded.stdout
     check = run_alembic("check")
     assert "No new upgrade operations detected" in check.stdout

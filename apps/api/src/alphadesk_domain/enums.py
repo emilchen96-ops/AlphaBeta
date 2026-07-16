@@ -217,6 +217,55 @@ class MarketDataQualityStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class MarketProviderTier(StrEnum):
+    DEMO = "DEMO"
+    FREE_BEST_EFFORT = "FREE_BEST_EFFORT"
+
+
+class MarketProviderUsage(StrEnum):
+    RESEARCH_ONLY = "RESEARCH_ONLY"
+    NON_TRADING_GRADE = "NON_TRADING_GRADE"
+
+
+class RealtimeRunStatus(StrEnum):
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIALLY_SUCCEEDED = "PARTIALLY_SUCCEEDED"
+    FAILED = "FAILED"
+    SKIPPED_NOT_LEADER = "SKIPPED_NOT_LEADER"
+    DISABLED = "DISABLED"
+
+
+class ProviderCapabilityStatus(StrEnum):
+    SUPPORTED = "SUPPORTED"
+    UNSUPPORTED = "UNSUPPORTED"
+    DEGRADED = "DEGRADED"
+    DISABLED = "DISABLED"
+
+
+class CircuitState(StrEnum):
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+
+class QuoteUpdateType(StrEnum):
+    SNAPSHOT = "SNAPSHOT"
+    UPDATE = "UPDATE"
+
+
+class SubscriptionReason(StrEnum):
+    WATCHLIST = "WATCHLIST"
+    POSITION = "POSITION"
+    CLIENT = "CLIENT"
+
+
+class QuoteFreshnessStatus(StrEnum):
+    FRESH = "FRESH"
+    STALE = "STALE"
+    MISSING = "MISSING"
+
+
 class SyncTriggerType(StrEnum):
     MANUAL = "MANUAL"
     CLI = "CLI"

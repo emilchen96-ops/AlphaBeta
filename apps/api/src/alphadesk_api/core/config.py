@@ -54,6 +54,26 @@ class Settings(BaseSettings):
     market_csv_max_bytes: int = Field(default=10_000_000, ge=1024, le=100_000_000)
     market_csv_max_rows: int = Field(default=100_000, ge=1, le=1_000_000)
     external_market_data_enabled: bool = False
+    free_market_enabled: bool = False
+    realtime_market_provider: Literal["disabled"] = "disabled"
+    historical_market_provider: Literal["baostock"] = "baostock"
+    free_market_data_enabled: bool = False
+    free_market_poll_seconds: int = Field(default=30, ge=30, le=3600)
+    free_market_idle_poll_seconds: int = Field(default=120, ge=60, le=3600)
+    free_market_closed_poll_seconds: int = Field(default=600, ge=600, le=3600)
+    free_market_minute_sync_seconds: int = Field(default=300, ge=300, le=3600)
+    free_market_minute_max_symbols: int = Field(default=20, ge=1, le=20)
+    free_market_minute_lookback_minutes: int = Field(default=120, ge=5, le=480)
+    free_market_provider_min_interval_seconds: float = Field(default=5.0, ge=5, le=300)
+    free_market_provider_max_concurrency: int = Field(default=1, ge=1, le=1)
+    free_market_provider_max_retries: int = Field(default=2, ge=0, le=5)
+    free_market_circuit_failure_threshold: int = Field(default=5, ge=1, le=20)
+    free_market_circuit_open_seconds: int = Field(default=600, ge=30, le=3600)
+    free_market_quote_ttl_seconds: int = Field(default=120, ge=30, le=3600)
+    free_market_stale_seconds: int = Field(default=60, ge=10, le=3600)
+    free_market_worker_lock_ttl_seconds: int = Field(default=45, ge=15, le=300)
+    free_market_websocket_queue_size: int = Field(default=100, ge=10, le=1000)
+    free_market_max_subscriptions_per_client: int = Field(default=200, ge=1, le=2000)
 
     @field_validator("api_prefix")
     @classmethod

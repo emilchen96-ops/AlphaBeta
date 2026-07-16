@@ -1,5 +1,7 @@
 # AlphaDesk
 
+> M04.1A 已加入默认禁用的免费真实行情基础设施：BaoStock 历史行情、AKShare/EastMoney 快照与近期 1 分钟线、独立单 Leader Worker、Redis 最新报价、版本化 WebSocket 和只读盘中估值。全部免费数据仅供研究、非交易级；没有新增下单、撮合、Broker 或实盘能力。
+
 > M04 已加入本地模拟账户、资金/持仓只追加账本、成交记账、行情估值、账本核对与 `/portfolio` 网页。它不包含公开订单/成交写 API、撮合、Broker 或实盘。详见 [账本](docs/accounting.md)、[估值](docs/account_valuation.md) 和 [核对](docs/account_reconciliation.md)。
 
 当前封板里程碑为 M03：项目提供离线确定性的 DEMO 行情、受限本地 CSV 导入、标的目录、自选股与网页行情工作台。真实外部行情入口默认禁用；系统没有策略、Signal、订单、Broker 或实盘能力。详见 [M03 行情文档](docs/market_data.md) 与 [自选股规则](docs/watchlists.md)。
@@ -19,7 +21,7 @@ M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成。当前�
 - PostgreSQL、Redis、API、Web 的本地 Docker Compose 编排；
 - 后端与前端自动化测试、静态检查、依赖锁文件和基础 CI。
 
-当前只有上述对象的领域/持久化模型，**不具备**行情接入、账户同步、持仓投影、策略运行、信号处理、风控执行、订单状态机服务、成交接入、模拟 Broker、MiniQMT/XtQuant、AI 或真实交易能力。系统也没有用户认证、登录或权限功能。
+M04.1A market infrastructure is sealed: BaoStock historical data is available, while the real-time provider is disabled after AKShare validation failed. Redis, WebSocket, and UI plumbing remain for a later Windows Agent/MiniQMT integration. Historical closes are not real-time prices; the system has no real-trading capability and must not be publicly deployed.
 
 > 该系统目前只能用于本地开发，禁止部署到公网。
 
@@ -51,6 +53,9 @@ docker compose ps
 - 网页：http://localhost:5173
 - API：http://localhost:8000
 - API 文档：http://localhost:8000/docs
+- 行情 WebSocket：ws://localhost:8000/ws/v1/market-data
+
+M04.1A 完整工程验收运行 `./scripts/check_m04_1.ps1`；真实免费源连接仅在显式运行 `./scripts/check_m04_1_external.ps1` 时检查，不属于默认 CI。
 
 端口可通过 `.env` 中的 `WEB_PORT` 和 `API_PORT` 调整。PostgreSQL 和 Redis 默认不映射到宿主机端口，只在 Compose 网络内使用。
 

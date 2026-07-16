@@ -2,14 +2,22 @@
 
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
+from redis.asyncio import Redis
 
 from alphadesk_api.api.v1.market_common import to_app_error, uow_factory
 from alphadesk_api.application.common import ApplicationError
 from alphadesk_api.application.market_data import MarketDataQueryService
+from alphadesk_api.infrastructure.free_market_cache import (
+    HEARTBEAT_KEY,
+    STATUS_KEY,
+    SUBSCRIPTIONS_KEY,
+    QuoteCache,
+    read_json,
+)
 from alphadesk_api.schemas.market import (
     MarketBarResponse,
     MarketBarsResponse,
@@ -19,7 +27,13 @@ from alphadesk_api.schemas.market import (
     MarketLatestResponse,
     MarketSyncRunResponse,
 )
-from alphadesk_domain.enums import AdjustmentType, MarketTimeframe
+from alphadesk_api.schemas.realtime_market import (
+    LatestQuotesResponse,
+    QuoteResponse,
+    RealtimeStatusResponse,
+    SubscriptionSummaryResponse,
+)
+from alphadesk_domain.enums import AdjustmentType, MarketTimeframe, QuoteFreshnessStatus
 from alphadesk_domain.market import MarketBar, MarketDataFreshness
 
 router = APIRouter(prefix="/market-data", tags=["market-data"])
@@ -144,6 +158,10 @@ async def get_sources(request: Request) -> list[MarketDataSourceResponse]:
             status=value.status,
             priority=value.priority,
             supports_realtime=value.supports_realtime,
+            provider_tier=value.provider_tier,
+            supports_quotes=value.supports_quotes,
+            supports_recent_minute_bars=value.supports_recent_minute_bars,
+            last_health_check_at=value.last_health_check_at,
             supported_timeframes=value.supported_timeframes,
             updated_at=value.updated_at,
         )
@@ -157,3 +175,62 @@ async def get_sync_runs(
 ) -> list[MarketSyncRunResponse]:
     values = await query_service(request).sync_runs(limit)
     return [MarketSyncRunResponse(**asdict(value)) for value in values]
+
+
+def _redis_client(request: Request) -> Redis:
+    client = getattr(request.app.state.redis, "client", None)
+    if client is None:
+        raise to_app_error(ApplicationError("REALTIME_CACHE_UNAVAILABLE", "实时行情缓存不可用"))
+    return cast(Redis, client)
+
+
+@router.get("/quotes/latest", response_model=LatestQuotesResponse)
+async def get_latest_quotes(
+    request: Request,
+    instrument_ids: Annotated[list[UUID], Query(min_length=1, max_length=100)],
+) -> LatestQuotesResponse:
+    now = datetime.now(UTC)
+    snapshots = await QuoteCache(
+        _redis_client(request), request.app.state.settings.free_market_quote_ttl_seconds
+    ).get_many(instrument_ids)
+    found = {item.quote.instrument_id for item in snapshots}
+    items = []
+    for snapshot in snapshots:
+        quote = snapshot.quote
+        age = max(0, int((now - quote.received_at).total_seconds()))
+        freshness = (
+            QuoteFreshnessStatus.FRESH
+            if age <= request.app.state.settings.free_market_stale_seconds
+            else QuoteFreshnessStatus.STALE
+        )
+        items.append(
+            QuoteResponse(
+                **asdict(quote),
+                revision=snapshot.revision.revision,
+                freshness=freshness,
+                age_seconds=age,
+            )
+        )
+    return LatestQuotesResponse(
+        items=items,
+        missing_instrument_ids=[item for item in instrument_ids if item not in found],
+        calculated_at=now,
+    )
+
+
+@router.get("/realtime/status", response_model=RealtimeStatusResponse)
+async def realtime_status(request: Request) -> RealtimeStatusResponse:
+    client = _redis_client(request)
+    status_value = await read_json(client, STATUS_KEY) or {
+        "enabled": request.app.state.settings.free_market_data_enabled,
+        "state": "NOT_STARTED",
+    }
+    status_value["worker_heartbeat"] = await read_json(client, HEARTBEAT_KEY)
+    return RealtimeStatusResponse(**status_value)
+
+
+@router.get("/realtime/subscriptions", response_model=SubscriptionSummaryResponse)
+async def realtime_subscriptions(request: Request) -> SubscriptionSummaryResponse:
+    return SubscriptionSummaryResponse(
+        **((await read_json(_redis_client(request), SUBSCRIPTIONS_KEY)) or {})
+    )

@@ -17,6 +17,7 @@ from alphadesk_domain.repositories import (
     LedgerTransactionRepository,
     MarketBarRepository,
     MarketDataSourceRepository,
+    MarketRealtimeRunRepository,
     MarketSyncRunRepository,
     OrderCommandRepository,
     OrderRepository,
@@ -56,6 +57,7 @@ class UnitOfWork(Protocol):
     instrument_mappings: InstrumentMappingRepository
     market_bars: MarketBarRepository
     market_sync_runs: MarketSyncRunRepository
+    market_realtime_runs: MarketRealtimeRunRepository
 
     async def __aenter__(self) -> Self: ...
     async def __aexit__(

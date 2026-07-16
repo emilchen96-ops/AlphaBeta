@@ -9,7 +9,7 @@ from alphadesk_api.application.common import (
     append_event_and_audit,
 )
 from alphadesk_domain.entities import Instrument
-from alphadesk_domain.enums import MarketDataSourceStatus, MarketTimeframe
+from alphadesk_domain.enums import MarketDataSourceStatus, MarketProviderTier, MarketTimeframe
 from alphadesk_domain.market import InstrumentMapping, MarketDataSource
 from alphadesk_domain.market_adapters import MarketDataAdapter
 
@@ -27,6 +27,9 @@ class InstrumentCatalogService:
         priority: int,
         supports_realtime: bool,
         supported_timeframes: tuple[MarketTimeframe, ...],
+        provider_tier: MarketProviderTier = MarketProviderTier.DEMO,
+        supports_quotes: bool = False,
+        supports_recent_minute_bars: bool = False,
     ) -> MarketDataSource:
         async with self._uow_factory() as uow:
             existing = await uow.market_data_sources.get_by_code(source_code)
@@ -39,6 +42,9 @@ class InstrumentCatalogService:
                 priority=priority,
                 supports_realtime=supports_realtime,
                 supported_timeframes=supported_timeframes,
+                provider_tier=provider_tier,
+                supports_quotes=supports_quotes,
+                supports_recent_minute_bars=supports_recent_minute_bars,
                 metadata={"classification": "DEMO" if source_code == "DEMO" else "EXTERNAL"},
             )
             await uow.market_data_sources.add(source)

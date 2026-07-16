@@ -1,5 +1,5 @@
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from alphadesk_api.core.config import Settings, get_settings
 
@@ -16,4 +16,7 @@ def test_settings_read_environment_variables(monkeypatch: object) -> None:
 
 def test_production_rejects_missing_explicit_database_password() -> None:
     with pytest.raises(ValidationError, match="explicitly supplied PostgreSQL password"):
-        Settings(environment="production")
+        Settings(
+            environment="production",
+            postgres_password=SecretStr("change-me-local-only"),
+        )

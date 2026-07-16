@@ -10,6 +10,7 @@ from alphadesk_domain.enums import (
     AdjustmentType,
     MarketDataQualityStatus,
     MarketDataSourceStatus,
+    MarketProviderTier,
     MarketSyncStatus,
     MarketTimeframe,
     SyncTriggerType,
@@ -99,6 +100,10 @@ class MarketDataSourceResponse(BaseModel):
     status: MarketDataSourceStatus
     priority: int
     supports_realtime: bool
+    provider_tier: MarketProviderTier
+    supports_quotes: bool
+    supports_recent_minute_bars: bool
+    last_health_check_at: datetime | None
     supported_timeframes: tuple[MarketTimeframe, ...]
     updated_at: datetime
 

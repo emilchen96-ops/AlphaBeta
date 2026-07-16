@@ -9,12 +9,15 @@ description = "AlphaDesk M01 infrastructure API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.16,<2",
+  "akshare==1.18.64",
   "asyncpg>=0.30,<1",
+  "baostock==0.9.3",
   "fastapi>=0.115,<1",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.9,<3",
   "redis>=6,<7",
   "sqlalchemy[asyncio]>=2.0,<3",
+  "tzdata>=2026.3,<2027",
   "uvicorn[standard]>=0.34,<1",
 ]
 
@@ -40,6 +43,7 @@ markers = [
   "integration: requires explicitly configured external test services",
   "m04: simulated-account and accounting milestone tests",
   "concurrency: requires real PostgreSQL locking",
+  "external: requires explicit access to free external providers",
 ]
 
 [tool.ruff]
@@ -59,5 +63,5 @@ plugins = ["pydantic.mypy"]
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["redis.*"]
+module = ["redis.*", "akshare", "baostock"]
 ignore_missing_imports = true

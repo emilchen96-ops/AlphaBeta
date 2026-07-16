@@ -1,6 +1,14 @@
 # 领域模型
 
+> M04.1A 新增 `MarketQuote`、`MarketQuoteSnapshot`、`MarketDataUpdate`、`MarketDataHealth`、`MarketDataCapability`、`MarketSubscriptionSet`、`MarketRealtimeRun` 与盘中估值 DTO。Quote 只存在于 Redis 临时缓存和推送链路，PostgreSQL 只保存运行摘要与历史 K 线事实。
+
 > M04 新增领域对象：`CashBalance`、`LedgerTransaction`、`CashLedgerEntry`、`PositionLedgerEntry`、`AccountSnapshot`、`AccountReconciliationRun`；`Position` 增加成本基数、待结算数量和估值状态。
+
+## M04.1A 免费行情领域
+
+`MarketQuote` 使用 `Decimal` 表达价格、成交量和成交额，`quote_time` 与 `received_at` 必须是 aware datetime 并规范为 UTC。领域校验拒绝非正价格、负数量、naive datetime 和不一致的高低价；上游缺少业务时间时保留为空并标记数据不完整，不得以接收时间伪造。
+
+`MarketSubscriptionSet` 由自选股与非零持仓解析，持仓优先；`MarketRealtimeRun` 只记录一次 Best-Effort 摄取的状态、计数和安全错误摘要。领域包仍为纯 Python，不依赖 AKShare、BaoStock、FastAPI、Redis、SQLAlchemy 或 WebSocket，具体 SDK/DataFrame/Cursor 只允许停留在 Adapter 边界。
 
 ## M03 行情领域
 
@@ -37,6 +45,8 @@ erDiagram
   Signal ||--o| RiskDecision : evaluated_by
   Instrument ||--o{ Signal : targets
   Instrument ||--o{ Order : trades
+  Instrument ||--o{ MarketQuote : quoted_as
+  MarketDataSource ||--o{ MarketRealtimeRun : records
   Order ||--o{ OrderCommand : dispatched_as
   Order ||--o{ Fill : receives
   Order ||--o{ DomainEvent : records

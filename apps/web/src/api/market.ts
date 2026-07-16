@@ -5,6 +5,8 @@ import type {
   MarketBarsResponse,
   MarketDataSource,
   MarketTimeframe,
+  LatestQuotesResponse,
+  RealtimeMarketStatus,
   Watchlist,
   WatchlistDetail,
   WatchlistItem,
@@ -16,6 +18,20 @@ export function getInstruments(keyword: string) {
   const query = new URLSearchParams({ page: "1", page_size: "50" });
   if (keyword.trim()) query.set("keyword", keyword.trim());
   return apiRequest<InstrumentPage>(`/api/v1/instruments?${query}`);
+}
+
+export function getLatestQuotes(instrumentIds: string[]) {
+  const query = new URLSearchParams();
+  for (const id of instrumentIds) query.append("instrument_ids", id);
+  return apiRequest<LatestQuotesResponse>(
+    `/api/v1/market-data/quotes/latest?${query}`,
+  );
+}
+
+export function getRealtimeMarketStatus() {
+  return apiRequest<RealtimeMarketStatus>(
+    "/api/v1/market-data/realtime/status",
+  );
 }
 
 export function getWatchlists() {

@@ -34,6 +34,7 @@ import {
   getBars,
   getInstruments,
   getMarketSources,
+  getRealtimeMarketStatus,
   getWatchlist,
   getWatchlists,
   removeWatchlistItem,
@@ -43,6 +44,7 @@ import {
 } from "../api/market";
 import { CandlestickChart } from "../components/CandlestickChart/CandlestickChart";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { useMarketQuotes } from "../hooks/useMarketQuotes";
 import type {
   AdjustmentType,
   Instrument,
@@ -91,6 +93,11 @@ export function MarketPage() {
     queryFn: getMarketSources,
     refetchInterval: 30_000,
   });
+  const realtimeStatus = useQuery({
+    queryKey: ["market-realtime-status"],
+    queryFn: getRealtimeMarketStatus,
+    refetchInterval: 15_000,
+  });
   const effectiveInstrument =
     selectedInstrument ?? detail.data?.items[0]?.instrument;
   const bars = useQuery({
@@ -99,6 +106,10 @@ export function MarketPage() {
       getBars(effectiveInstrument?.id ?? "", timeframe, adjustment),
     enabled: Boolean(effectiveInstrument),
   });
+  const subscribedIds = (detail.data?.items ?? []).map(
+    (item) => item.instrument.id,
+  );
+  const live = useMarketQuotes(subscribedIds);
 
   const refreshWatchlists = async () => {
     await queryClient.invalidateQueries({ queryKey: ["watchlists"] });
@@ -120,7 +131,15 @@ export function MarketPage() {
     [effectiveWatchlist, watchlists.data],
   );
   const latest = bars.data?.items.at(-1);
-  const change = latest ? Number(latest.close) - Number(latest.open) : 0;
+  const liveQuote = effectiveInstrument
+    ? live.quotes[effectiveInstrument.id]
+    : undefined;
+  const displayedPrice = liveQuote?.last_price ?? latest?.close;
+  const referencePrice = liveQuote?.previous_close ?? latest?.open;
+  const change =
+    displayedPrice && referencePrice
+      ? Number(displayedPrice) - Number(referencePrice)
+      : 0;
 
   function openWatchlistDialog(mode: "create" | "edit") {
     setWatchlistDialog(mode);
@@ -177,6 +196,19 @@ export function MarketPage() {
                 {source.source_code} · {source.status}
               </Tag>
             ))}
+            <Tag
+              color={
+                realtimeStatus.data?.enabled &&
+                realtimeStatus.data.state !== "FAILED"
+                  ? "green"
+                  : "default"
+              }
+            >
+              FREE_BEST_EFFORT · {realtimeStatus.data?.state ?? "UNKNOWN"}
+            </Tag>
+            <Tag color={live.status === "connected" ? "green" : "orange"}>
+              实时 · {live.status}
+            </Tag>
             <Button
               icon={<ReloadOutlined />}
               onClick={() => void bars.refetch()}
@@ -263,6 +295,9 @@ export function MarketPage() {
                         >{`${item.instrument.symbol} ${item.instrument.name}`}</Typography.Text>
                         <Typography.Text type="secondary">
                           {item.note || item.instrument.exchange}
+                        </Typography.Text>
+                        <Typography.Text>
+                          {live.quotes[item.instrument.id]?.last_price ?? "—"}
                         </Typography.Text>
                       </div>
                       <Space size={0}>
@@ -419,7 +454,7 @@ export function MarketPage() {
                   <Col span={6}>
                     <Statistic
                       title="最新价"
-                      value={latest ? Number(latest.close) : "--"}
+                      value={displayedPrice ? Number(displayedPrice) : "--"}
                       precision={3}
                     />
                   </Col>
@@ -436,7 +471,13 @@ export function MarketPage() {
                   <Col span={6}>
                     <Statistic
                       title="成交量"
-                      value={latest ? Number(latest.volume) : 0}
+                      value={
+                        liveQuote?.volume
+                          ? Number(liveQuote.volume)
+                          : latest
+                            ? Number(latest.volume)
+                            : 0
+                      }
                     />
                   </Col>
                   <Col span={6}>
@@ -449,7 +490,9 @@ export function MarketPage() {
                           : "orange"
                       }
                     >
-                      {bars.data?.freshness.freshness_status ?? "UNKNOWN"}
+                      {liveQuote?.freshness ??
+                        bars.data?.freshness.freshness_status ??
+                        "UNKNOWN"}
                     </Tag>
                   </Col>
                 </Row>

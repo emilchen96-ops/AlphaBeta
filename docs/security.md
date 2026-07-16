@@ -1,6 +1,16 @@
 # 安全规范
 
+> M04.1A 免费行情不使用券商凭据或行情 Token，不做代理轮换或访问限制绕过。外部访问只发生在独立 Worker/CLI Adapter；浏览器不能提交上游 URL，也不存在通用代理接口。
+
 > M04 安全边界：仅允许 `SIMULATED` 账户；资金 API 只修改本地模拟账本；无公开 Order/Fill 写接口；不保存 Broker、银行或支付凭证；系统仍不得部署公网。
+
+## M04.1A 行情与 WebSocket 安全
+
+- AKShare/BaoStock SDK、DataFrame 和 Cursor 被限制在基础设施 Adapter 内；日志只记录安全计数与错误摘要，不记录完整上游响应或全部自选股。
+- WebSocket 校验 Origin、schema 版本、消息类型、UUID 和单连接订阅上限，只接受内部 Instrument ID，不接受供应商代码或任意 URL。
+- Redis Quote、Leader Lock、心跳和 Pub/Sub 均为临时运行数据；Redis 不是历史事实来源，也不承载订单消息。
+- 当前系统没有认证，API/Web 只能绑定可信本机地址，免费行情启用不改变“禁止公网部署”的结论。
+- 上游拒绝、超时或结构变化必须受限重试、退避、熔断并安全降级，禁止代理规避或无限重试。
 
 ## M03 行情数据安全补充
 

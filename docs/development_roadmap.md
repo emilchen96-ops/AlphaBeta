@@ -1,5 +1,9 @@
 # 开发路线图
 
+> M04.1A is sealed with a disabled real-time provider: BaoStock historical data remains available, but AKShare real-time validation did not pass. A Windows Agent/MiniQMT integration is deferred until after M06; no public deployment or real trading is authorized.
+
+> M04.1A 已完成免费行情工程实现：AKShare/EastMoney 负责全市场快照与重点标的近期分钟线，BaoStock 负责历史日线/分钟线补充；独立 Worker、Redis 临时 Quote、WebSocket 和盘中估值预览均保持 Best-Effort、非交易级。真实来源连接与交易时段 10 分钟验收必须独立记录，未通过时不得宣称行情已接通。
+
 > M04 已实现模拟账户、资金与持仓账本、成交记账、估值、核对和持仓网页；订单状态机、撮合、Broker 与实盘仍属于后续里程碑。
 
 > 2026-07-15 经 M03 任务明确修订：M03 为“行情基础数据、行情适配器与自选股业务闭环”，现已完成。下一个 M04 只允许“账户、资金、持仓与账本”，不得接入 Broker、订单、策略、风控或实盘。本说明取代下方早期表格中 M03/M04 的旧名称；其余远期阶段仍需在进入时重新评审。
@@ -9,6 +13,10 @@
 新增 4 张行情表、确定性 DEMO 和受限本地 CSV Adapter、批量幂等 Upsert、同步运行/事件/审计、标的与自选股 API，以及懒加载行情工作台。真实外部行情入口仍禁用；Outbox 发布、Redis Streams、策略、订单和 Broker 均未进入本阶段。
 
 每个里程碑必须通过其验收门槛，且不得提前开启实盘能力。阶段编号用于规划，不代表已完成。
+
+## M04.1A 工程状态
+
+M04.1A 是 M04 之后的受限行情增量，不改变远期阶段的授权顺序。默认配置关闭外部免费行情，核心 CI 只使用 Fake Client；联网验收必须显式启用，且即使通过也只代表免费 Best-Effort 数据可用。该阶段没有 Signal、Order、Fill、撮合、Broker、执行器或实盘能力，也不授权继续实施 M05。
 
 | 阶段 | 目标 | 验收门槛 |
 | --- | --- | --- |

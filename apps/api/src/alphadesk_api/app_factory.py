@@ -7,6 +7,10 @@ from typing import Protocol
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from alphadesk_api.api.v1.market_websocket import (
+    MarketDataWebSocketHub,
+    market_data_websocket,
+)
 from alphadesk_api.api.v1.router import api_router, health_router
 from alphadesk_api.api.v1.system import system_websocket
 from alphadesk_api.core.config import Settings, get_settings
@@ -41,9 +45,20 @@ def create_app(
         app.state.settings = resolved_settings
         app.state.database = database_service
         app.state.redis = resolved_redis_service
+        redis_client = getattr(resolved_redis_service, "client", None)
+        market_ws_hub = (
+            MarketDataWebSocketHub(redis_client, resolved_settings)
+            if redis_client is not None
+            else None
+        )
+        app.state.market_ws_hub = market_ws_hub
+        if market_ws_hub is not None:
+            await market_ws_hub.start()
         try:
             yield
         finally:
+            if market_ws_hub is not None:
+                await market_ws_hub.stop()
             await resolved_redis_service.close()
             await database_service.close()
 
@@ -61,6 +76,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.database = database_service
     app.state.redis = resolved_redis_service
+    app.state.market_ws_hub = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -79,4 +95,5 @@ def create_app(
     app.include_router(api_router, prefix=resolved_settings.api_prefix)
     # WebSocket stays outside the versioned HTTP prefix and is display-only.
     app.add_api_websocket_route("/ws/system", system_websocket)
+    app.add_api_websocket_route("/ws/v1/market-data", market_data_websocket)
     return app
