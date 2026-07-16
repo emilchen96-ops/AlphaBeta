@@ -35,7 +35,11 @@ NOW = datetime(2026, 2, 2, 1, tzinfo=UTC)
 
 
 async def seed_history(
-    factory: async_sessionmaker[AsyncSession], *, duplicate_source: bool = False
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    duplicate_source: bool = False,
+    closes: tuple[str, ...] | None = None,
+    volumes: tuple[str, ...] | None = None,
 ) -> Instrument:
     instrument = Instrument(
         symbol=f"T{uuid4().hex[:7]}",
@@ -61,6 +65,11 @@ async def seed_history(
     async with uow_factory() as uow:
         await uow.instruments.add(instrument)
         await uow.market_data_sources.add(source)
+        close_values = closes or tuple(
+            str(Decimal("10") + Decimal(index) / Decimal("10")) for index in range(8)
+        )
+        volume_values = volumes or ("1000",) * len(close_values)
+        assert len(close_values) == len(volume_values)
         bars = [
             MarketBar(
                 instrument_id=instrument.id,
@@ -68,15 +77,15 @@ async def seed_history(
                 timeframe=MarketTimeframe.MINUTE_1,
                 adjustment_type=AdjustmentType.NONE,
                 bar_time=NOW + timedelta(minutes=index),
-                open=Decimal("10"),
-                high=Decimal("11"),
-                low=Decimal("9"),
-                close=Decimal("10") + Decimal(index) / Decimal("10"),
-                volume=Decimal("1000"),
+                open=Decimal(close),
+                high=Decimal(close) + Decimal("0.25"),
+                low=Decimal(close) - Decimal("0.25"),
+                close=Decimal(close),
+                volume=Decimal(volume_values[index]),
                 received_at=NOW + timedelta(minutes=index),
                 quality_status=MarketDataQualityStatus.NORMAL,
             )
-            for index in range(8)
+            for index, close in enumerate(close_values)
         ]
         await uow.market_bars.upsert_many(bars)
         if duplicate_source:

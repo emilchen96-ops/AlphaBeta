@@ -256,10 +256,18 @@ def test_registry_metadata_order_is_stable_and_unregister_is_controlled() -> Non
     registry.register(second_metadata, (), lambda _: NoSignalStrategy(second_metadata))
     assert [item.strategy_key for item in registry.list_metadata()] == [
         "alpha_demo",
+        "atr_channel",
         "sma_crossover",
+        "trend_pullback",
+        "volume_breakout",
     ]
     registry.unregister("alpha_demo")
-    assert [item.strategy_key for item in registry.list_metadata()] == ["sma_crossover"]
+    assert [item.strategy_key for item in registry.list_metadata()] == [
+        "atr_channel",
+        "sma_crossover",
+        "trend_pullback",
+        "volume_breakout",
+    ]
 
 
 class NoSignalStrategy:
@@ -361,10 +369,13 @@ def test_sma_rejects_out_of_order_bars_and_never_creates_orders() -> None:
 
 def test_strategy_modules_have_no_infrastructure_dependencies() -> None:
     domain_root = Path(__file__).parents[2] / "src" / "alphadesk_domain"
-    source = "\n".join(
-        (domain_root / name).read_text(encoding="utf-8")
-        for name in ("strategy.py", "strategy_examples.py")
-    ).lower()
+    strategy_files = [
+        domain_root / "strategy.py",
+        domain_root / "strategy_examples.py",
+        domain_root / "strategy_library.py",
+        *sorted((domain_root / "indicators").glob("*.py")),
+    ]
+    source = "\n".join(path.read_text(encoding="utf-8") for path in strategy_files).lower()
     for forbidden in (
         "fastapi",
         "sqlalchemy",

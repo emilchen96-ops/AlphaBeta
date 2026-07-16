@@ -1,5 +1,9 @@
 # AlphaDesk 文档索引
 
+> 当前策略阶段为 **S02-A 技术指标与基础策略库**：S01-A/B/C 已完成开发，用户决定
+> 跳过 S01 最终专项审查；指标、三套内置策略和安全边界见
+> [strategy_library.md](strategy_library.md)。S02-B 尚未开始。
+
 > S01-A、S01-B、S01-C 功能开发已完成；策略目录、研究运行 API 与页面见 [strategy_api_and_ui.md](strategy_api_and_ui.md)。S01 最终短审查与封板尚未完成，下一步不是直接进入 N01。
 
 > 当前策略里程碑为 **S01-B 历史策略运行器**：契约见 [strategy_interface.md](strategy_interface.md)，历史运行、幂等、Signal 持久化和失败事务见 [strategy_runner.md](strategy_runner.md)。本阶段没有订单、撮合、资金/持仓变化、API、CLI、页面或实盘能力。

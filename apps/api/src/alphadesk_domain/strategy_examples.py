@@ -175,3 +175,6 @@ def register_builtin_strategies(registry: StrategyRegistry) -> None:
         SMA_CROSSOVER_PARAMETERS,
         SmaCrossoverStrategy,
     )
+    from alphadesk_domain.strategy_library import register_strategy_library
+
+    register_strategy_library(registry)

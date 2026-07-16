@@ -1,5 +1,9 @@
 # S01 统一策略接口
 
+> S02-A 已在本契约之上完成 Decimal 增量指标与 `volume_breakout`、
+> `trend_pullback`、`atr_channel` 基础策略；计算定义和边界见
+> [strategy_library.md](strategy_library.md)。S02-B 尚未开始。
+
 > S01-C 已提供策略目录、同步历史研究 API 和查询页面。S01-A/B/C 功能开发完成，但 S01 最终审查与封板尚未执行；接口和页面规则见 [strategy_api_and_ui.md](strategy_api_and_ui.md)。
 
 > S01-B 已在 S01-A 纯契约之上增加同步历史运行、StrategyRun/Signal 持久化和运行幂等；事务与查询规则见 [strategy_runner.md](strategy_runner.md)。策略契约本身仍保持纯 Python。

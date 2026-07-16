@@ -68,7 +68,9 @@ def test_catalog_is_stable_and_hides_implementation(
 ) -> None:
     response = strategy_client[0].get("/api/v1/strategies/catalog")
     assert response.status_code == 200
-    item = response.json()[0]
+    catalog = {item["strategy_key"]: item for item in response.json()}
+    assert {"volume_breakout", "trend_pullback", "atr_channel"} <= catalog.keys()
+    item = catalog["sma_crossover"]
     assert item["strategy_key"] == "sma_crossover"
     assert item["parameters"][2]["default"] == "100"
     assert "class" not in item and "path" not in item
