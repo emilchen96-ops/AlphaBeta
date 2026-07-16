@@ -1,5 +1,7 @@
 # AlphaDesk
 
+> M05 已完成本地订单事实管道：模拟账户手工创建、人工确认、取消、过期、查询/Timeline、`SUBMIT_ORDER/PENDING` 与 Transactional Outbox 原子写入，以及 `/orders` 网页。QUEUED 不是已发送，Outbox PENDING 不是已发布；没有 Broker、Executor、Fill、资金/组合风控或实盘。详见 [订单](docs/orders.md)、[人工确认](docs/order_confirmation.md) 与 [Outbox](docs/transactional_outbox.md)。
+
 > M04.1A 已加入默认禁用的免费真实行情基础设施：BaoStock 历史行情、AKShare/EastMoney 快照与近期 1 分钟线、独立单 Leader Worker、Redis 最新报价、版本化 WebSocket 和只读盘中估值。全部免费数据仅供研究、非交易级；没有新增下单、撮合、Broker 或实盘能力。
 
 > M04 已加入本地模拟账户、资金/持仓只追加账本、成交记账、行情估值、账本核对与 `/portfolio` 网页。它不包含公开订单/成交写 API、撮合、Broker 或实盘。详见 [账本](docs/accounting.md)、[估值](docs/account_valuation.md) 和 [核对](docs/account_reconciliation.md)。

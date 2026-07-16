@@ -1,5 +1,7 @@
 # 行情基础数据与适配器
 
+> M05 未修改 M04.1 行情模块，也不使用历史收盘价冒充实时价格。LIMIT 估算只使用用户数量与限价；MARKET 无估算金额，且当前不执行价格偏离或涨跌停校验。
+
 > M04.1A 增量边界见 [免费真实行情](free_market_data.md) 与 [ADR 0012](adr/0012-free-provider-boundary.md)。M03 的 DEMO、幂等 K 线与来源优先级规则保持不变。
 
 > M04.1A is sealed: BaoStock is historical-only and the real-time provider is `disabled`; the project is not expanding free real-time sources and awaits a later Windows Agent/MiniQMT integration.

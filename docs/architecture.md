@@ -1,5 +1,7 @@
 # 架构总览
 
+> M05 状态：Web/FastAPI 已具备本地手工订单事实管道。确认事务只写 PostgreSQL 的 Action、Transition、Command、Event、Audit 与 PENDING Outbox；没有 Publisher、Redis 订单流、执行器、Broker、Fill 或实盘。QUEUED 不等于已发送。
+
 > The real-time market provider is currently `disabled`; historical prices cannot act as real-time prices. MiniQMT can only arrive through a Windows Agent after M06. There is no real-trading capability and this system must not be publicly deployed.
 
 > M04.1A 新增独立 `market_worker`：PostgreSQL 保存来源、K 线和运行审计；Redis 保存可重建的最新 quote、leader 租约、状态及 UI Pub/Sub；FastAPI 只运行共享 Redis listener 和只读 HTTP/WebSocket 接口，不在 lifespan 抓取外部行情。

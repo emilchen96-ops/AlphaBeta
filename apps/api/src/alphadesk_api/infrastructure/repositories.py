@@ -1,5 +1,6 @@
 """SQLAlchemy asynchronous repository adapters for domain ports."""
 
+import builtins
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
@@ -74,9 +75,11 @@ from alphadesk_domain.entities import (
 )
 from alphadesk_domain.enums import (
     AdjustmentType,
+    CommandType,
     MarketDataSourceStatus,
     MarketSyncStatus,
     MarketTimeframe,
+    OutboxStatus,
     RealtimeRunStatus,
 )
 from alphadesk_domain.market import (
@@ -325,7 +328,7 @@ class SqlAlchemyTradingAccountRepository(SqlAlchemyRepository[TradingAccount, Tr
                 name=entity.name,
                 status=entity.status.value,
                 settlement_policy=entity.settlement_policy.value,
-                metadata=entity.metadata,
+                metadata_json=entity.metadata,
                 updated_at=entity.updated_at,
             )
         )
@@ -721,15 +724,98 @@ class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):
         )
         return None if row is None else entity_from_model(Order, row)
 
-    async def append_transition(self, transition: OrderStateTransition) -> None:
-        self._session.add(model_from_entity(OrderStateTransitionModel, transition))
-        await self._session.flush()
-
     async def get_for_update(self, entity_id: UUID) -> Order | None:
         row = await self._session.scalar(
             select(OrderModel).where(OrderModel.id == entity_id).with_for_update()
         )
         return None if row is None else entity_from_model(Order, row)
+
+    async def append_transition(self, transition: OrderStateTransition) -> None:
+        """Retain the sealed M02 repository entry point for compatibility."""
+
+        self._session.add(model_from_entity(OrderStateTransitionModel, transition))
+        await self._session.flush()
+
+    async def list(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        account_id: UUID | None = None,
+        instrument_id: UUID | None = None,
+        status: str | None = None,
+        side: str | None = None,
+        order_type: str | None = None,
+        intent_source: str | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+    ) -> tuple[builtins.list[Order], int]:
+        filters = []
+        if account_id is not None:
+            filters.append(OrderModel.account_id == account_id)
+        if instrument_id is not None:
+            filters.append(OrderModel.instrument_id == instrument_id)
+        if status is not None:
+            filters.append(OrderModel.status == status)
+        if side is not None:
+            filters.append(OrderModel.side == side)
+        if order_type is not None:
+            filters.append(OrderModel.order_type == order_type)
+        if intent_source is not None:
+            filters.append(OrderModel.intent_source == intent_source)
+        if created_from is not None:
+            filters.append(OrderModel.created_at >= created_from)
+        if created_to is not None:
+            filters.append(OrderModel.created_at <= created_to)
+        total = int(
+            await self._session.scalar(select(func.count()).select_from(OrderModel).where(*filters))
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(OrderModel)
+            .where(*filters)
+            .order_by(OrderModel.created_at.desc(), OrderModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(Order, row) for row in rows], total
+
+    async def list_expirable(self, now: datetime, limit: int) -> builtins.list[Order]:
+        rows = await self._session.scalars(
+            select(OrderModel)
+            .where(
+                OrderModel.expires_at.is_not(None),
+                OrderModel.expires_at <= now,
+                OrderModel.status.in_(("CREATED", "WAITING_CONFIRMATION")),
+            )
+            .order_by(OrderModel.expires_at, OrderModel.id)
+            .limit(limit)
+        )
+        return [entity_from_model(Order, row) for row in rows]
+
+    async def update_projection(self, entity: Order) -> None:
+        await self._session.execute(
+            update(OrderModel)
+            .where(OrderModel.id == entity.id)
+            .values(
+                {
+                    OrderModel.status: entity.status.value,
+                    OrderModel.row_version: entity.row_version,
+                    OrderModel.confirmation_required: entity.confirmation_required,
+                    OrderModel.confirmed_at: entity.confirmed_at,
+                    OrderModel.cancelled_at: entity.cancelled_at,
+                    OrderModel.expired_at: entity.expired_at,
+                    OrderModel.submitted_at: entity.submitted_at,
+                    OrderModel.completed_at: entity.completed_at,
+                    OrderModel.filled_quantity: entity.filled_quantity,
+                    OrderModel.average_fill_price: entity.average_fill_price,
+                    OrderModel.broker_order_id: entity.broker_order_id,
+                    OrderModel.metadata_json: entity.metadata,
+                    OrderModel.updated_at: entity.updated_at,
+                }
+            )
+        )
+        await self._session.flush()
 
 
 class SqlAlchemyOrderActionRepository(SqlAlchemyRepository[OrderAction, OrderActionModel]):
@@ -739,11 +825,51 @@ class SqlAlchemyOrderActionRepository(SqlAlchemyRepository[OrderAction, OrderAct
     async def append(self, entity: OrderAction) -> None:
         await self._add(entity)
 
+    async def get_by_id(self, entity_id: UUID) -> OrderAction | None:
+        return await self._get_by_id(entity_id)
+
     async def get_by_idempotency_key(self, key: str) -> OrderAction | None:
         row = await self._session.scalar(
             select(OrderActionModel).where(OrderActionModel.idempotency_key == key)
         )
         return None if row is None else entity_from_model(OrderAction, row)
+
+    async def list_by_order(self, order_id: UUID) -> list[OrderAction]:
+        rows = await self._session.scalars(
+            select(OrderActionModel)
+            .where(OrderActionModel.order_id == order_id)
+            .order_by(OrderActionModel.occurred_at, OrderActionModel.id)
+        )
+        return [entity_from_model(OrderAction, row) for row in rows]
+
+
+class SqlAlchemyOrderStateTransitionRepository(
+    SqlAlchemyRepository[OrderStateTransition, OrderStateTransitionModel]
+):
+    entity_type = OrderStateTransition
+    model_type = OrderStateTransitionModel
+
+    async def append(self, entity: OrderStateTransition) -> None:
+        await self._add(entity)
+
+    async def list_by_order(self, order_id: UUID) -> list[OrderStateTransition]:
+        rows = await self._session.scalars(
+            select(OrderStateTransitionModel)
+            .where(OrderStateTransitionModel.order_id == order_id)
+            .order_by(OrderStateTransitionModel.occurred_at, OrderStateTransitionModel.id)
+        )
+        return [entity_from_model(OrderStateTransition, row) for row in rows]
+
+    async def get_latest_by_order(self, order_id: UUID) -> OrderStateTransition | None:
+        row = await self._session.scalar(
+            select(OrderStateTransitionModel)
+            .where(OrderStateTransitionModel.order_id == order_id)
+            .order_by(
+                OrderStateTransitionModel.occurred_at.desc(), OrderStateTransitionModel.id.desc()
+            )
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(OrderStateTransition, row)
 
 
 class SqlAlchemyOrderCommandRepository(SqlAlchemyRepository[OrderCommand, OrderCommandModel]):
@@ -753,11 +879,44 @@ class SqlAlchemyOrderCommandRepository(SqlAlchemyRepository[OrderCommand, OrderC
     async def add(self, entity: OrderCommand) -> None:
         await self._add(entity)
 
+    async def get_by_id(self, entity_id: UUID) -> OrderCommand | None:
+        return await self._get_by_id(entity_id)
+
     async def get_by_command_id(self, command_id: UUID) -> OrderCommand | None:
         row = await self._session.scalar(
             select(OrderCommandModel).where(OrderCommandModel.command_id == command_id)
         )
         return None if row is None else entity_from_model(OrderCommand, row)
+
+    async def get_submit_command_by_order(self, order_id: UUID) -> OrderCommand | None:
+        row = await self._session.scalar(
+            select(OrderCommandModel).where(
+                OrderCommandModel.order_id == order_id,
+                OrderCommandModel.command_type == CommandType.SUBMIT_ORDER.value,
+            )
+        )
+        return None if row is None else entity_from_model(OrderCommand, row)
+
+    async def list_by_order(self, order_id: UUID) -> list[OrderCommand]:
+        rows = await self._session.scalars(
+            select(OrderCommandModel)
+            .where(OrderCommandModel.order_id == order_id)
+            .order_by(OrderCommandModel.sequence_number, OrderCommandModel.created_at)
+        )
+        return [entity_from_model(OrderCommand, row) for row in rows]
+
+    async def count_submit_by_order(self, order_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(OrderCommandModel)
+                .where(
+                    OrderCommandModel.order_id == order_id,
+                    OrderCommandModel.command_type == CommandType.SUBMIT_ORDER.value,
+                )
+            )
+            or 0
+        )
 
 
 class SqlAlchemyFillRepository(SqlAlchemyRepository[Fill, FillModel]):
@@ -789,6 +948,17 @@ class SqlAlchemyDomainEventRepository(SqlAlchemyRepository[DomainEvent, DomainEv
     async def get_by_event_id(self, event_id: UUID) -> DomainEvent | None:
         return await self._get_by_id(event_id)
 
+    async def list_by_entity(self, entity_type: str, entity_id: UUID) -> list[DomainEvent]:
+        rows = await self._session.scalars(
+            select(DomainEventModel)
+            .where(
+                DomainEventModel.entity_type == entity_type,
+                DomainEventModel.entity_id == entity_id,
+            )
+            .order_by(DomainEventModel.event_time, DomainEventModel.sequence)
+        )
+        return [entity_from_model(DomainEvent, row) for row in rows]
+
 
 class SqlAlchemyAuditLogRepository(SqlAlchemyRepository[AuditLog, AuditLogModel]):
     entity_type = AuditLog
@@ -796,6 +966,17 @@ class SqlAlchemyAuditLogRepository(SqlAlchemyRepository[AuditLog, AuditLogModel]
 
     async def append(self, entity: AuditLog) -> None:
         await self._add(entity)
+
+    async def list_by_resource(self, resource_type: str, resource_id: UUID) -> list[AuditLog]:
+        rows = await self._session.scalars(
+            select(AuditLogModel)
+            .where(
+                AuditLogModel.resource_type == resource_type,
+                AuditLogModel.resource_id == resource_id,
+            )
+            .order_by(AuditLogModel.occurred_at, AuditLogModel.id)
+        )
+        return [entity_from_model(AuditLog, row) for row in rows]
 
 
 class SqlAlchemyOutboxRepository(SqlAlchemyRepository[OutboxMessage, OutboxMessageModel]):
@@ -807,6 +988,46 @@ class SqlAlchemyOutboxRepository(SqlAlchemyRepository[OutboxMessage, OutboxMessa
 
     async def get_by_id(self, entity_id: UUID) -> OutboxMessage | None:
         return await self._get_by_id(entity_id)
+
+    async def get_by_event_and_topic(self, event_id: UUID, topic: str) -> OutboxMessage | None:
+        row = await self._session.scalar(
+            select(OutboxMessageModel).where(
+                OutboxMessageModel.event_id == event_id, OutboxMessageModel.topic == topic
+            )
+        )
+        return None if row is None else entity_from_model(OutboxMessage, row)
+
+    async def list_pending(self, limit: int) -> list[OutboxMessage]:
+        rows = await self._session.scalars(
+            select(OutboxMessageModel)
+            .where(OutboxMessageModel.status == OutboxStatus.PENDING.value)
+            .order_by(OutboxMessageModel.available_at, OutboxMessageModel.id)
+            .limit(limit)
+        )
+        return [entity_from_model(OutboxMessage, row) for row in rows]
+
+    async def count_pending(self) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(OutboxMessageModel)
+                .where(OutboxMessageModel.status == OutboxStatus.PENDING.value)
+            )
+            or 0
+        )
+
+    async def list_by_aggregate(
+        self, aggregate_type: str, aggregate_id: UUID
+    ) -> list[OutboxMessage]:
+        rows = await self._session.scalars(
+            select(OutboxMessageModel)
+            .where(
+                OutboxMessageModel.aggregate_type == aggregate_type,
+                OutboxMessageModel.aggregate_id == aggregate_id,
+            )
+            .order_by(OutboxMessageModel.created_at, OutboxMessageModel.id)
+        )
+        return [entity_from_model(OutboxMessage, row) for row in rows]
 
 
 class SqlAlchemyExecutorDeviceRepository(SqlAlchemyRepository[ExecutorDevice, ExecutorDeviceModel]):

@@ -1,5 +1,7 @@
 # 可靠消息与命令
 
+> M05 只完成 Transactional Outbox 的原子写入边界：`order.commands.submit.v1` 保持 PENDING，未发布 Redis Streams。Command/Outbox 共享版本化白名单 payload 与 canonical SHA-256；后续 Publisher 不在本阶段。详见 ADR 0016。
+
 > M03 边界说明：行情摄取和自选股写入领域事件与审计，但不创建 Outbox 消息、不启动发布器或 Redis Streams。现有 Outbox 仅保留 M02 数据模型能力；可靠消息的发布/消费仍未启用。
 
 ## 基本模型

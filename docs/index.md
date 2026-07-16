@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前封板里程碑：**M05 订单事实管道**。业务规则见 [orders.md](orders.md)，人工确认见 [order_confirmation.md](order_confirmation.md)，本地 Outbox 见 [transactional_outbox.md](transactional_outbox.md)，决策见 ADR 0015–0016。QUEUED/PENDING 均不表示已发送；系统无 Broker、Fill 或实盘能力。下一阶段仅规划 S01 统一策略接口，策略只能产生 Signal。
+
 > M04.1A sealed status: BaoStock is historical-only, the real-time provider is `disabled`, and no other free real-time source is being added. The retained Redis/WebSocket/UI path awaits a later Windows Agent/MiniQMT integration; no order validation may rely on real-time market data.
 
 > 当前开发里程碑：**M04.1A**。免费真实行情见 [free_market_data.md](free_market_data.md)，独立 Worker 见 [free_market_worker.md](free_market_worker.md)，推送协议见 [market_data_websocket.md](market_data_websocket.md)，盘中估值见 [live_valuation.md](live_valuation.md)。所有免费数据均为尽力而为、仅供研究、非交易级。
@@ -28,6 +30,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | --- | --- |
 | 策略、信号、回测 | `domain_model.md`、`backtest_rules.md`、`risk_model.md` |
 | 订单、成交、执行器 | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md` |
+| M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016 |
 | 数据库、事件、审计 | `database_schema.md`、`event_model.md`、`reliable_messaging.md`、ADR 0002、0004、0007 |
 | Redis、队列、推送 | `reliable_messaging.md`、ADR 0003、0004 |
 | Web 或 API | `architecture.md`、`security.md`、`coding_standards.md` |

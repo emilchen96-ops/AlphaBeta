@@ -1,5 +1,7 @@
 # 架构决策记录（ADR）索引
 
+> M05 新增：[ADR 0015](0015-order-state-machine-and-manual-confirmation.md) 与 [ADR 0016](0016-transactional-outbox-command-boundary.md)。
+
 > M04.1A 新增：[ADR 0012](0012-free-provider-boundary.md)、[ADR 0013](0013-independent-market-worker.md)、[ADR 0014](0014-ephemeral-quote-push.md)。
 
 - [0008：行情来源边界、优先级与幂等键](0008-market-data-source-and-idempotency.md)

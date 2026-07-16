@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> M05 的 `0006_m05` 扩展 Order 版本/确认字段，增加 `order_actions`，并补齐 Command 的 `SUBMIT_ORDER/PENDING` 约束和每订单唯一提交命令索引。确认的全部事实与 Outbox 在同一事务提交；账本、Position 与 Fill 表不被修改。
+
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
 
 > `order_state_transitions.action_id` is the authoritative optional foreign key to `order_actions.id`. `order_actions.applied_transition_id` is a nullable lookup ID rather than a foreign key, so an action can be appended before its state transition without a circular-insert dependency.

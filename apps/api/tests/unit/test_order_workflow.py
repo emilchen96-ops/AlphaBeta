@@ -4,7 +4,15 @@ from uuid import uuid4
 
 import pytest
 
-from alphadesk_api.application.order_contracts import action_fingerprint, order_fingerprint
+from alphadesk_api.application.order_contracts import (
+    action_fingerprint,
+    cancel_fingerprint,
+    canonical_json,
+    decimal_text,
+    order_fingerprint,
+    payload_hash,
+    utc_text,
+)
 from alphadesk_domain.entities import OrderAction, OrderStateTransition
 from alphadesk_domain.enums import OrderStatus
 from alphadesk_domain.order_workflow import InvalidOrderTransition, OrderStateMachine
@@ -106,6 +114,36 @@ def test_order_fingerprints_are_stable_and_sensitive_to_business_input() -> None
         order_id=order_id, action_type="CONFIRM", expected_order_version=2, note="ok"
     ) == action_fingerprint(
         order_id=order_id, action_type="CONFIRM", expected_order_version=2, note="ok"
+    )
+
+
+def test_canonical_payload_contract_uses_stable_json_decimal_and_utc() -> None:
+    value = {
+        "quantity": decimal_text(Decimal("1000.00000000")),
+        "created_at": utc_text(datetime(2026, 7, 16, tzinfo=UTC)),
+        "schema_version": 1,
+    }
+    assert canonical_json(value) == (
+        '{"created_at":"2026-07-16T00:00:00Z","quantity":"1000.00000000","schema_version":1}'
+    )
+    assert payload_hash(value) == payload_hash(dict(reversed(list(value.items()))))
+
+
+def test_contract_rejects_float_non_finite_decimal_and_naive_time() -> None:
+    with pytest.raises(ValueError):
+        decimal_text(1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        decimal_text(Decimal("NaN"))
+    with pytest.raises(ValueError):
+        utc_text(datetime(2026, 7, 16))
+
+
+def test_cancel_fingerprint_is_stable_and_reason_sensitive() -> None:
+    order_id = uuid4()
+    first = cancel_fingerprint(order_id=order_id, expected_order_version=2, reason=" user ")
+    assert first == cancel_fingerprint(order_id=order_id, expected_order_version=2, reason="user")
+    assert first != cancel_fingerprint(
+        order_id=order_id, expected_order_version=2, reason="different"
     )
     assert action_fingerprint(
         order_id=order_id, action_type="CONFIRM", expected_order_version=2, note="changed"

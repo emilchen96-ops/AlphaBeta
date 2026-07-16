@@ -1,5 +1,7 @@
 # 订单状态机
 
+> M05 已实现：`START -> CREATED -> WAITING_CONFIRMATION`，人工确认后 `-> QUEUED`；CREATED/WAITING_CONFIRMATION 可取消或过期。QUEUED 表示本地命令事实存在，不表示已发送；终态禁止继续迁移，RECONCILIATION_REQUIRED 不是终态。详见 ADR 0015。
+
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
 
 所有订单必须经过此状态机。每次迁移均需原子记录原状态、新状态、UTC 时间、原因、操作主体（用户、服务或设备）和 `correlation_id`，并产生事件与审计记录。

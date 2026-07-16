@@ -1,5 +1,7 @@
 # 模拟账户与只追加账本
 
+> M05 边界：创建、确认、取消、过期、Command 和 Outbox 均不得修改 CashBalance、Position、两类账本、Fill、AccountSnapshot 或 Reconciliation。Order 不是成交，QUEUED 不冻结资金或持仓。
+
 M04 只实现本地 `SIMULATED` 账户。PostgreSQL 中的 `ledger_transactions`、`cash_ledger_entries` 与 `position_ledger_entries` 是不可变业务事实；`account_cash_balances` 和 `positions` 是可重建投影。Redis 不保存权威资金或持仓。
 
 `LedgerTransaction` 是一次业务记账的原子边界，使用全局唯一 `business_key`，成交交易还使用唯一 `related_fill_id`。每笔资金变化追加一条净额 `CashLedgerEntry`，每笔持仓变化追加一条 `PositionLedgerEntry`。分录记录变化量和变化后的余额，便于追查与重算。账户创建、入金、出金和成交均在一个数据库事务内更新投影、追加账本、领域事件和审计记录。

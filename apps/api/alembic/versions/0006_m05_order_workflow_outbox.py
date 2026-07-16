@@ -20,6 +20,23 @@ JSON_OBJECT = sa.text("'{}'::jsonb")
 
 
 def upgrade() -> None:
+    # M02's command constraints predate M05's explicit local submit fact.
+    op.drop_constraint(
+        op.f("ck_order_commands_command_type_valid"), "order_commands", type_="check"
+    )
+    op.drop_constraint(
+        op.f("ck_order_commands_command_status_valid"), "order_commands", type_="check"
+    )
+    op.create_check_constraint(
+        op.f("ck_order_commands_command_type_valid"),
+        "order_commands",
+        "command_type IN ('SUBMIT','SUBMIT_ORDER','CANCEL')",
+    )
+    op.create_check_constraint(
+        op.f("ck_order_commands_command_status_valid"),
+        "order_commands",
+        "status IN ('CREATED','PENDING','QUEUED','ACKNOWLEDGED','EXPIRED','FAILED')",
+    )
     op.add_column(
         "orders", sa.Column("intent_source", sa.String(16), nullable=False, server_default="MANUAL")
     )
@@ -147,6 +164,22 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_order_commands_submit_per_order", table_name="order_commands")
+    op.drop_constraint(
+        op.f("ck_order_commands_command_type_valid"), "order_commands", type_="check"
+    )
+    op.drop_constraint(
+        op.f("ck_order_commands_command_status_valid"), "order_commands", type_="check"
+    )
+    op.create_check_constraint(
+        op.f("ck_order_commands_command_type_valid"),
+        "order_commands",
+        "command_type IN ('SUBMIT','CANCEL')",
+    )
+    op.create_check_constraint(
+        op.f("ck_order_commands_command_status_valid"),
+        "order_commands",
+        "status IN ('CREATED','QUEUED','ACKNOWLEDGED','EXPIRED','FAILED')",
+    )
     op.drop_constraint(
         "fk_order_state_transitions_action", "order_state_transitions", type_="foreignkey"
     )

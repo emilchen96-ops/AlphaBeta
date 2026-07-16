@@ -73,3 +73,14 @@ def action_fingerprint(
             "note": (note or "").strip(),
         }
     )
+
+
+def cancel_fingerprint(*, order_id: UUID, expected_order_version: int, reason: str | None) -> str:
+    """Fingerprint the stable cancellation business fields only."""
+
+    return action_fingerprint(
+        order_id=order_id,
+        action_type="CANCEL",
+        expected_order_version=expected_order_version,
+        note=reason,
+    )

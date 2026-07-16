@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-16：M05 订单事实管道已完成并封板。它只在 PostgreSQL 原子创建本地订单/命令/Outbox 事实，不发送、不成交、不改变账本。下一阶段为 S01 统一策略接口：`MarketBar -> Strategy -> Signal -> Signal 持久化和查询页面`；S01 不得直接创建 Order。
+
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
 
 > M04.1A is sealed with a disabled real-time provider: BaoStock historical data remains available, but AKShare real-time validation did not pass. A Windows Agent/MiniQMT integration is deferred until after M06; no public deployment or real trading is authorized.

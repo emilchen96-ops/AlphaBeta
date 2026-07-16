@@ -24,6 +24,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyOrderActionRepository,
     SqlAlchemyOrderCommandRepository,
     SqlAlchemyOrderRepository,
+    SqlAlchemyOrderStateTransitionRepository,
     SqlAlchemyOutboxRepository,
     SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
@@ -63,6 +64,7 @@ class SqlAlchemyUnitOfWork:
         self.signals = SqlAlchemySignalRepository(session)
         self.orders = SqlAlchemyOrderRepository(session)
         self.order_actions = SqlAlchemyOrderActionRepository(session)
+        self.order_state_transitions = SqlAlchemyOrderStateTransitionRepository(session)
         self.order_commands = SqlAlchemyOrderCommandRepository(session)
         self.fills = SqlAlchemyFillRepository(session)
         self.risk_decisions = SqlAlchemyRiskDecisionRepository(session)

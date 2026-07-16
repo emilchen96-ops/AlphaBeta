@@ -22,6 +22,7 @@ from alphadesk_domain.repositories import (
     OrderActionRepository,
     OrderCommandRepository,
     OrderRepository,
+    OrderStateTransitionRepository,
     OutboxRepository,
     PositionLedgerRepository,
     PositionRepository,
@@ -48,6 +49,7 @@ class UnitOfWork(Protocol):
     signals: SignalRepository
     orders: OrderRepository
     order_actions: OrderActionRepository
+    order_state_transitions: OrderStateTransitionRepository
     order_commands: OrderCommandRepository
     fills: FillRepository
     risk_decisions: RiskDecisionRepository

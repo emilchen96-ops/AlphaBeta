@@ -1,5 +1,7 @@
 # 事件模型
 
+> M05 新增 ORDER_CREATED、ORDER_WAITING_CONFIRMATION、ORDER_CONFIRMED、ORDER_COMMAND_CREATED、ORDER_CANCELLED 与 ORDER_EXPIRED 事实。事件携带 schema version、UTC 时间和 correlation ID；普通 API 仅返回安全摘要。
+
 > M04.1A 不为每条 Quote 创建 `DomainEvent` 或 Outbox。临时行情通过 Redis Pub/Sub 传送；只有运行摘要、历史 K 线同步以及必要审计进入 PostgreSQL，Pub/Sub 绝不能复用于订单可靠投递。
 
 > M04 在业务事务内记录账户创建/更新、资金入出、成交记账、估值和核对领域事件及审计日志；尚不发布 Outbox，也不创建 Redis 消费者。

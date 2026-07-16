@@ -1,5 +1,7 @@
 # 测试策略
 
+> M05 验收覆盖 canonical payload、幂等、版本冲突、7 个确认事务故障点、真实 PostgreSQL 并发确认/确认取消竞争、API 契约、CLI、OrdersPage、Migration 往返和 M04 账本零变化回归。并发测试不得使用 SQLite 替代。
+
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
 
 > M04.1A 默认测试使用 fake provider，覆盖字符串到 Decimal、缺失上游时间、时区、限流熔断、Redis revision/去重/乱序和 leader ownership。默认 CI 不访问外部网络；只有 `ALPHADESK_EXTERNAL_FREE_MARKET_TESTS=true` 时运行 `tests/external`。

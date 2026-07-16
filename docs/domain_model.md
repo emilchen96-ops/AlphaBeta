@@ -1,5 +1,7 @@
 # 领域模型
 
+> M05 增量：Order 是意图与生命周期事实，不是 Fill。手工订单由 CREATED 进入 WAITING_CONFIRMATION，人工确认后成为 QUEUED；Action、Transition、Command、DomainEvent 和 Audit 均可追溯。S01 策略仍只能生成 Signal，不得直接生成 Order。
+
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。
 
 > M04.1A 新增 `MarketQuote`、`MarketQuoteSnapshot`、`MarketDataUpdate`、`MarketDataHealth`、`MarketDataCapability`、`MarketSubscriptionSet`、`MarketRealtimeRun` 与盘中估值 DTO。Quote 只存在于 Redis 临时缓存和推送链路，PostgreSQL 只保存运行摘要与历史 K 线事实。
