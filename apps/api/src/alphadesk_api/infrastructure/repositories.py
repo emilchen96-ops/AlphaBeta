@@ -714,19 +714,62 @@ class SqlAlchemySignalRepository(SqlAlchemyRepository[Signal, SignalModel]):
         self._session.add_all([model_from_entity(SignalModel, item) for item in entities])
         await self._session.flush()
 
-    async def list_by_run(self, run_id: UUID, offset: int, limit: int) -> tuple[list[Signal], int]:
+    async def list_by_run(
+        self, run_id: UUID, offset: int, limit: int, signal_type: str | None = None
+    ) -> tuple[list[Signal], int]:
+        conditions = [SignalModel.strategy_run_id == run_id]
+        if signal_type is not None:
+            conditions.append(SignalModel.signal_type == signal_type)
         total = int(
             await self._session.scalar(
-                select(func.count())
-                .select_from(SignalModel)
-                .where(SignalModel.strategy_run_id == run_id)
+                select(func.count()).select_from(SignalModel).where(*conditions)
             )
             or 0
         )
         rows = await self._session.scalars(
             select(SignalModel)
-            .where(SignalModel.strategy_run_id == run_id)
+            .where(*conditions)
             .order_by(SignalModel.sequence_number, SignalModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(Signal, row) for row in rows], total
+
+    async def list_filtered(
+        self,
+        *,
+        strategy_run_id: UUID | None,
+        strategy_key: str | None,
+        instrument_id: UUID | None,
+        signal_type: str | None,
+        generated_from: datetime | None,
+        generated_to: datetime | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[Signal], int]:
+        conditions = []
+        for column, value in (
+            (SignalModel.strategy_run_id, strategy_run_id),
+            (SignalModel.strategy_key, strategy_key),
+            (SignalModel.instrument_id, instrument_id),
+            (SignalModel.signal_type, signal_type),
+        ):
+            if value is not None:
+                conditions.append(column == value)
+        if generated_from is not None:
+            conditions.append(SignalModel.generated_at >= generated_from)
+        if generated_to is not None:
+            conditions.append(SignalModel.generated_at < generated_to)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(SignalModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(SignalModel)
+            .where(*conditions)
+            .order_by(SignalModel.generated_at.desc(), SignalModel.id)
             .offset(offset)
             .limit(limit)
         )
@@ -767,10 +810,37 @@ class SqlAlchemyStrategyRunRepository(SqlAlchemyRepository[StrategyRun, Strategy
         )
         await self._session.flush()
 
-    async def list(self, offset: int, limit: int) -> tuple[list[StrategyRun], int]:
-        total = int(await self._session.scalar(select(func.count(StrategyRunModel.id))) or 0)
+    async def list(
+        self,
+        *,
+        strategy_key: str | None,
+        status: str | None,
+        instrument_id: UUID | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[StrategyRun], int]:
+        conditions = []
+        if strategy_key is not None:
+            conditions.append(StrategyRunModel.strategy_key == strategy_key)
+        if status is not None:
+            conditions.append(StrategyRunModel.status == status)
+        if instrument_id is not None:
+            conditions.append(StrategyRunModel.instrument_ids.contains([instrument_id]))
+        if created_from is not None:
+            conditions.append(StrategyRunModel.created_at >= created_from)
+        if created_to is not None:
+            conditions.append(StrategyRunModel.created_at < created_to)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(StrategyRunModel).where(*conditions)
+            )
+            or 0
+        )
         rows = await self._session.scalars(
             select(StrategyRunModel)
+            .where(*conditions)
             .order_by(StrategyRunModel.created_at.desc(), StrategyRunModel.id)
             .offset(offset)
             .limit(limit)

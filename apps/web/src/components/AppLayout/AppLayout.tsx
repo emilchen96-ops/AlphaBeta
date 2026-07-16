@@ -28,6 +28,8 @@ const menuItems = [
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
   { key: "/strategies", icon: <ExperimentOutlined />, label: "策略" },
+  { key: "/strategy-runs", icon: <DatabaseOutlined />, label: "研究运行" },
+  { key: "/signals", icon: <AuditOutlined />, label: "研究 Signal" },
   { key: "/orders", icon: <OrderedListOutlined />, label: "订单" },
   { key: "/risk", icon: <SafetyCertificateOutlined />, label: "风控" },
   { key: "/backtest", icon: <DatabaseOutlined />, label: "回测" },

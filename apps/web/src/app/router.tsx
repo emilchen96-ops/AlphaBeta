@@ -12,6 +12,11 @@ import { PortfolioPage } from "../pages/PortfolioPage";
 import { RiskPage } from "../pages/RiskPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
+import { SignalsPage } from "../pages/SignalsPage";
+import {
+  StrategyRunDetailPage,
+  StrategyRunsPage,
+} from "../pages/StrategyRunsPage";
 
 const MarketPage = lazy(() =>
   import("../pages/MarketPage").then((module) => ({
@@ -37,6 +42,9 @@ export const routes: RouteObject[] = [
       },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "strategies", element: <StrategiesPage /> },
+      { path: "strategy-runs", element: <StrategyRunsPage /> },
+      { path: "strategy-runs/:runId", element: <StrategyRunDetailPage /> },
+      { path: "signals", element: <SignalsPage /> },
       { path: "orders", element: <OrdersPage /> },
       { path: "risk", element: <RiskPage /> },
       { path: "backtest", element: <BacktestPage /> },

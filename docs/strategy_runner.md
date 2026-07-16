@@ -1,5 +1,7 @@
 # S01-B 历史策略运行器
 
+> S01-C 通过应用服务复用本运行器，并增加策略目录、HTTP DTO 与研究页面；没有复制运行逻辑。同步接口限制与页面边界见 [strategy_api_and_ui.md](strategy_api_and_ui.md)。
+
 ## 范围与事实链
 
 S01-B 只提供同步研究运行链路：`PostgreSQL MarketBar -> HistoricalBarProvider -> StrategyRunner -> Strategy -> SignalDraft -> Signal -> StrategyRun`。运行环境固定为 `RESEARCH`，不创建 Order、RiskDecision、Fill、资金或持仓事实，也不提供 API、CLI、页面、调度器或实时运行能力。

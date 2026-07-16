@@ -1,6 +1,247 @@
-import { PlaceholderPage } from "./PlaceholderPage";
-export function StrategiesPage() {
+import { ExperimentOutlined } from "@ant-design/icons";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { getInstruments } from "../api/market";
+import { createStrategyRun, getStrategyCatalog } from "../api/strategies";
+import { PageHeader } from "../components/PageHeader/PageHeader";
+import type { StrategyParameterDefinition } from "../types/strategies";
+
+interface RunFormValues {
+  strategy_key: string;
+  instrument_ids: string[];
+  timeframe: string;
+  start_at: string;
+  end_at: string;
+  parameters: Record<string, string | number | boolean>;
+  idempotency_key: string;
+}
+
+function ParameterInput({
+  definition,
+}: {
+  definition: StrategyParameterDefinition;
+}) {
+  if (definition.type === "boolean") return <Switch />;
+  if (definition.type === "enum")
+    return <Select options={definition.choices.map((value) => ({ value }))} />;
+  if (definition.type === "integer")
+    return (
+      <InputNumber
+        precision={0}
+        min={Number(definition.min_value ?? undefined)}
+        max={Number(definition.max_value ?? undefined)}
+        style={{ width: "100%" }}
+      />
+    );
   return (
-    <PlaceholderPage title="策略" description="未来用于管理策略和版本。" />
+    <Input inputMode={definition.type === "decimal" ? "decimal" : "text"} />
+  );
+}
+
+export function StrategiesPage() {
+  const { message } = App.useApp();
+  const navigate = useNavigate();
+  const [form] = Form.useForm();
+  const [selectedKey, setSelectedKey] = useState<string>();
+  const [instrumentSearch, setInstrumentSearch] = useState("");
+  const catalog = useQuery({
+    queryKey: ["strategy-catalog"],
+    queryFn: getStrategyCatalog,
+  });
+  const instruments = useQuery({
+    queryKey: ["strategy-instruments", instrumentSearch],
+    queryFn: () => getInstruments(instrumentSearch),
+  });
+  const selected = useMemo(
+    () => catalog.data?.find((item) => item.strategy_key === selectedKey),
+    [catalog.data, selectedKey],
+  );
+  const mutation = useMutation({
+    mutationFn: createStrategyRun,
+    onSuccess: (run) => {
+      void message.success(
+        run.replayed ? "已返回原研究运行" : "历史研究运行已完成",
+      );
+      void navigate(`/strategy-runs/${run.run_id}`);
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
+  const openRun = (key: string) => {
+    const strategy = catalog.data?.find((item) => item.strategy_key === key);
+    setSelectedKey(key);
+    const parameters = Object.fromEntries(
+      strategy?.parameters
+        .filter((item) => item.default !== null)
+        .map((item) => [item.name, item.default]) ?? [],
+    );
+    form.setFieldsValue({
+      strategy_key: key,
+      timeframe: strategy?.supported_timeframes[0],
+      parameters,
+      idempotency_key: `research:${crypto.randomUUID()}`,
+    });
+  };
+  const submit = async () => {
+    const values = (await form.validateFields()) as RunFormValues;
+    mutation.mutate({
+      strategy_key: values.strategy_key,
+      instrument_ids: values.instrument_ids,
+      timeframe: values.timeframe,
+      parameters: values.parameters,
+      idempotency_key: values.idempotency_key,
+      start_at: new Date(values.start_at).toISOString(),
+      end_at: new Date(values.end_at).toISOString(),
+    });
+  };
+
+  return (
+    <section>
+      <PageHeader
+        title="策略目录"
+        description="选择受信任策略与历史数据，生成可审计的研究 Signal。"
+      />
+      <Alert
+        showIcon
+        type="warning"
+        title="Signal 是研究输出，不是订单"
+        description="不会创建 Order、调用风控或 Broker，也不会修改资金和持仓。reference_price 仅供参考；当前不是绩效回测，也没有实时策略调度。"
+      />
+      <Space
+        orientation="vertical"
+        size="middle"
+        style={{ display: "flex", marginTop: 16 }}
+      >
+        {catalog.data?.map((item) => (
+          <Card
+            key={item.strategy_key}
+            title={item.display_name}
+            extra={
+              <Button
+                icon={<ExperimentOutlined />}
+                onClick={() => openRun(item.strategy_key)}
+              >
+                创建研究运行
+              </Button>
+            }
+          >
+            <Typography.Paragraph>{item.description}</Typography.Paragraph>
+            <Space wrap>
+              <Tag>{item.strategy_key}</Tag>
+              <Tag color="blue">v{item.version}</Tag>
+              {item.supported_timeframes.map((value) => (
+                <Tag key={value}>{value}</Tag>
+              ))}
+            </Space>
+            <Typography.Title level={5}>参数定义</Typography.Title>
+            {item.parameters.map((parameter) => (
+              <Typography.Paragraph key={parameter.name}>
+                <code>{parameter.name}</code> · {parameter.type} ·{" "}
+                {parameter.description}
+              </Typography.Paragraph>
+            ))}
+          </Card>
+        ))}
+      </Space>
+      {selected ? (
+        <Card
+          title={`创建 ${selected.display_name} 历史研究运行`}
+          style={{ marginTop: 16 }}
+        >
+          <Form form={form} layout="vertical">
+            <Form.Item name="strategy_key" label="策略">
+              <Input disabled />
+            </Form.Item>
+            <Form.Item
+              name="instrument_ids"
+              label="标的"
+              rules={[{ required: true }]}
+            >
+              <Select
+                mode="multiple"
+                showSearch
+                filterOption={false}
+                onSearch={setInstrumentSearch}
+                options={instruments.data?.items.map((item) => ({
+                  value: item.id,
+                  label: `${item.symbol}.${item.exchange} · ${item.name}`,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="timeframe"
+              label="周期"
+              rules={[{ required: true }]}
+            >
+              <Select
+                options={selected.supported_timeframes.map((value) => ({
+                  value,
+                }))}
+              />
+            </Form.Item>
+            <Space wrap>
+              <Form.Item
+                name="start_at"
+                label="开始时间"
+                rules={[{ required: true }]}
+              >
+                <Input type="datetime-local" />
+              </Form.Item>
+              <Form.Item
+                name="end_at"
+                label="结束时间"
+                rules={[{ required: true }]}
+              >
+                <Input type="datetime-local" />
+              </Form.Item>
+            </Space>
+            {selected.parameters.map((definition) => (
+              <Form.Item
+                key={definition.name}
+                name={["parameters", definition.name]}
+                label={`${definition.name} · ${definition.description}`}
+                valuePropName={
+                  definition.type === "boolean" ? "checked" : "value"
+                }
+                rules={[{ required: definition.required }]}
+              >
+                <ParameterInput definition={definition} />
+              </Form.Item>
+            ))}
+            <Form.Item
+              name="idempotency_key"
+              label="幂等键"
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+            <Button
+              type="primary"
+              loading={mutation.isPending}
+              disabled={mutation.isPending}
+              onClick={() => void submit()}
+            >
+              运行历史研究
+            </Button>
+          </Form>
+        </Card>
+      ) : null}
+    </section>
   );
 }

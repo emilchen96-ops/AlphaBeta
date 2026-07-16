@@ -483,6 +483,16 @@ class StrategyRegistry:
     def list_metadata(self) -> tuple[StrategyMetadata, ...]:
         return tuple(self._registrations[key].metadata for key in sorted(self._registrations))
 
+    def get_parameter_definitions(
+        self, strategy_key: str
+    ) -> tuple[StrategyParameterDefinition, ...]:
+        try:
+            return self._registrations[strategy_key].parameter_definitions
+        except KeyError as exc:
+            raise StrategyError(
+                "STRATEGY_NOT_FOUND", f"strategy '{strategy_key}' is not registered"
+            ) from exc
+
     def create_instance(
         self,
         strategy_key: str,

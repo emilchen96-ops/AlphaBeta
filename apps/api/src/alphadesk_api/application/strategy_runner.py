@@ -5,13 +5,13 @@ from __future__ import annotations
 import builtins
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
-from alphadesk_domain.entities import Signal
+from alphadesk_domain.entities import Instrument, Signal
 from alphadesk_domain.enums import MarketTimeframe, SignalStatus
 from alphadesk_domain.strategy import (
     SignalDraft,
@@ -74,8 +74,15 @@ class StrategyRunDto:
     bars_processed: int
     signals_generated: int
     correlation_id: UUID
+    instrument_ids: tuple[UUID, ...]
+    parameters: dict[str, str | int | bool]
+    started_at: datetime | None
+    completed_at: datetime | None
+    failed_at: datetime | None
+    created_at: datetime
     error_code: str | None
     error_message: str | None
+    instruments: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -90,9 +97,18 @@ class StrategySignalDto:
     bar_timestamp: datetime
     signal_type: str
     side: str
+    symbol: str | None
+    exchange: str | None
+    instrument_name: str | None
+    quantity: str | None
+    target_weight: str | None
+    reference_price: str | None
+    confidence: str | None
+    reason: str | None
+    schema_version: int
 
 
-def _run_dto(run: StrategyRun) -> StrategyRunDto:
+def _run_dto(run: StrategyRun, instruments: Sequence[Instrument] | None = None) -> StrategyRunDto:
     return StrategyRunDto(
         id=run.id,
         idempotency_key=run.idempotency_key,
@@ -105,12 +121,27 @@ def _run_dto(run: StrategyRun) -> StrategyRunDto:
         bars_processed=run.bars_processed,
         signals_generated=run.signals_generated,
         correlation_id=run.correlation_id,
+        instrument_ids=run.instrument_ids,
+        parameters=dict(run.parameters),
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        failed_at=run.failed_at,
+        created_at=run.created_at,
         error_code=run.error_code,
         error_message=run.error_message,
+        instruments=tuple(
+            {
+                "id": str(item.id),
+                "symbol": item.symbol,
+                "exchange": item.exchange,
+                "name": item.name,
+            }
+            for item in (instruments or [])
+        ),
     )
 
 
-def _signal_dto(signal: Signal) -> StrategySignalDto:
+def _signal_dto(signal: Signal, instrument: Instrument | None = None) -> StrategySignalDto:
     if (
         signal.strategy_run_id is None
         or signal.sequence_number is None
@@ -132,6 +163,15 @@ def _signal_dto(signal: Signal) -> StrategySignalDto:
         bar_timestamp=signal.bar_timestamp,
         signal_type=signal.signal_type.value,
         side=signal.side.value,
+        symbol=getattr(instrument, "symbol", None),
+        exchange=getattr(instrument, "exchange", None),
+        instrument_name=getattr(instrument, "name", None),
+        quantity=None if signal.target_quantity is None else str(signal.target_quantity),
+        target_weight=None if signal.target_weight is None else str(signal.target_weight),
+        reference_price=None if signal.reference_price is None else str(signal.reference_price),
+        confidence=None if signal.confidence is None else str(signal.confidence),
+        reason=signal.reason,
+        schema_version=signal.schema_version,
     )
 
 
@@ -215,7 +255,7 @@ class StrategyRunner:
         metadata = self._registry.get(request.strategy_key)
         if request.timeframe not in metadata.supported_timeframes:
             raise ApplicationError(
-                "STRATEGY_TIMEFRAME_UNSUPPORTED", "strategy does not support the timeframe"
+                "STRATEGY_TIMEFRAME_NOT_SUPPORTED", "strategy does not support the timeframe"
             )
         parameters = self._registry.validate_parameters(request.strategy_key, request.parameters)
         fingerprint = _fingerprint_payload(request, version=metadata.version, parameters=parameters)
@@ -327,21 +367,80 @@ class StrategyRunQueryService:
     async def get(self, run_id: UUID) -> StrategyRunDto | None:
         async with self._uow_factory() as uow:
             run = await uow.strategy_runs.get_by_id(run_id)
-            return None if run is None else _run_dto(run)
+            if run is None:
+                return None
+            instruments = await uow.instruments.get_many(list(run.instrument_ids))
+            return _run_dto(run, instruments)
 
     async def list(
-        self, offset: int = 0, limit: int = 100
+        self,
+        *,
+        strategy_key: str | None = None,
+        status: str | None = None,
+        instrument_id: UUID | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        offset: int = 0,
+        limit: int = 100,
     ) -> tuple[builtins.list[StrategyRunDto], int]:
         async with self._uow_factory() as uow:
-            runs, total = await uow.strategy_runs.list(offset, limit)
+            runs, total = await uow.strategy_runs.list(
+                strategy_key=strategy_key,
+                status=status,
+                instrument_id=instrument_id,
+                created_from=created_from,
+                created_to=created_to,
+                offset=offset,
+                limit=limit,
+            )
             return [_run_dto(item) for item in runs], total
 
     async def list_signals(
-        self, run_id: UUID, offset: int = 0, limit: int = 100
+        self,
+        run_id: UUID,
+        offset: int = 0,
+        limit: int = 100,
+        signal_type: str | None = None,
     ) -> tuple[builtins.list[StrategySignalDto], int]:
         async with self._uow_factory() as uow:
-            signals, total = await uow.signals.list_by_run(run_id, offset, limit)
-            return [_signal_dto(item) for item in signals], total
+            run = await uow.strategy_runs.get_by_id(run_id)
+            if run is None:
+                raise ApplicationError("STRATEGY_RUN_NOT_FOUND", "strategy run does not exist")
+            signals, total = await uow.signals.list_by_run(run_id, offset, limit, signal_type)
+            instruments = await uow.instruments.get_many(
+                list({item.instrument_id for item in signals})
+            )
+            by_id = {item.id: item for item in instruments}
+            return [_signal_dto(item, by_id.get(item.instrument_id)) for item in signals], total
+
+    async def list_all_signals(
+        self,
+        *,
+        strategy_run_id: UUID | None = None,
+        strategy_key: str | None = None,
+        instrument_id: UUID | None = None,
+        signal_type: str | None = None,
+        generated_from: datetime | None = None,
+        generated_to: datetime | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[builtins.list[StrategySignalDto], int]:
+        async with self._uow_factory() as uow:
+            signals, total = await uow.signals.list_filtered(
+                strategy_run_id=strategy_run_id,
+                strategy_key=strategy_key,
+                instrument_id=instrument_id,
+                signal_type=signal_type,
+                generated_from=generated_from,
+                generated_to=generated_to,
+                offset=offset,
+                limit=limit,
+            )
+            instruments = await uow.instruments.get_many(
+                list({item.instrument_id for item in signals})
+            )
+            by_id = {item.id: item for item in instruments}
+            return [_signal_dto(item, by_id.get(item.instrument_id)) for item in signals], total
 
     async def check_integrity(self, run_id: UUID) -> StrategyRunIntegrityReport:
         async with self._uow_factory() as uow:

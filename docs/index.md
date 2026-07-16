@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> S01-A、S01-B、S01-C 功能开发已完成；策略目录、研究运行 API 与页面见 [strategy_api_and_ui.md](strategy_api_and_ui.md)。S01 最终短审查与封板尚未完成，下一步不是直接进入 N01。
+
 > 当前策略里程碑为 **S01-B 历史策略运行器**：契约见 [strategy_interface.md](strategy_interface.md)，历史运行、幂等、Signal 持久化和失败事务见 [strategy_runner.md](strategy_runner.md)。本阶段没有订单、撮合、资金/持仓变化、API、CLI、页面或实盘能力。
 
 > 当前封板里程碑：**M05 订单事实管道**。业务规则见 [orders.md](orders.md)，人工确认见 [order_confirmation.md](order_confirmation.md)，本地 Outbox 见 [transactional_outbox.md](transactional_outbox.md)，决策见 ADR 0015–0016。QUEUED/PENDING 均不表示已发送；系统无 Broker、Fill 或实盘能力。下一阶段仅规划 S01 统一策略接口，策略只能产生 Signal。

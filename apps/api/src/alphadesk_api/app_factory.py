@@ -19,6 +19,8 @@ from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.core.middleware import CorrelationIdMiddleware
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
+from alphadesk_domain.strategy import StrategyRegistry
+from alphadesk_domain.strategy_examples import register_builtin_strategies
 
 
 class ManagedProbe(Protocol):
@@ -39,6 +41,8 @@ def create_app(
     configure_logging(resolved_settings)
     database_service = database or DatabaseService(resolved_settings)
     resolved_redis_service = redis_service or RedisService(resolved_settings)
+    strategy_registry = StrategyRegistry()
+    register_builtin_strategies(strategy_registry)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -67,7 +71,9 @@ def create_app(
         summary="AlphaDesk local market-data and simulated-account API",
         description=(
             "Local-development market-data, watchlist and simulated-account ledger endpoints. "
-            "No public order/fill write API, broker integration, or real-trading capability exists."
+            "Strategy Signal endpoints expose historical research output only: Signal is not an "
+            "Order and never invokes risk, broker, fills, cash, or positions. No broker integration "
+            "or real-trading capability exists."
         ),
         version=resolved_settings.app_version,
         debug=resolved_settings.debug,
@@ -77,6 +83,7 @@ def create_app(
     app.state.database = database_service
     app.state.redis = resolved_redis_service
     app.state.market_ws_hub = None
+    app.state.strategy_registry = strategy_registry
 
     app.add_middleware(
         CORSMiddleware,

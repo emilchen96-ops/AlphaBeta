@@ -120,7 +120,10 @@ class RunRepo:
             None,
         )
 
-    async def list(self, offset: int, limit: int) -> tuple[list[StrategyRun], int]:
+    async def list(
+        self, *, offset: int, limit: int, **filters: object
+    ) -> tuple[list[StrategyRun], int]:
+        del filters
         values = list(self.store.runs.values())
         return deepcopy(values[offset : offset + limit]), len(values)
 
@@ -132,10 +135,29 @@ class SignalRepo:
     async def append_many(self, entities: list[Signal]) -> None:
         self.store.signals.extend(deepcopy(entities))
 
-    async def list_by_run(self, run_id: UUID, offset: int, limit: int) -> tuple[list[Signal], int]:
+    async def list_by_run(
+        self, run_id: UUID, offset: int, limit: int, signal_type: str | None = None
+    ) -> tuple[list[Signal], int]:
         values = [item for item in self.store.signals if item.strategy_run_id == run_id]
+        if signal_type is not None:
+            values = [item for item in values if item.signal_type.value == signal_type]
         values.sort(key=lambda item: item.sequence_number or 0)
         return deepcopy(values[offset : offset + limit]), len(values)
+
+    async def list_filtered(
+        self, *, offset: int, limit: int, **filters: object
+    ) -> tuple[list[Signal], int]:
+        values = self.store.signals
+        for field in ("strategy_run_id", "strategy_key", "instrument_id", "signal_type"):
+            value = filters.get(field)
+            if value is not None:
+                values = [item for item in values if _filter_value(item, field) == value]
+        return deepcopy(values[offset : offset + limit]), len(values)
+
+
+def _filter_value(item: Signal, field: str) -> object:
+    value = getattr(item, field)
+    return value.value if field == "signal_type" else value
 
 
 class Bars:
@@ -157,10 +179,15 @@ class FakeUow:
         self.signals = SignalRepo(self.local)
         self.historical_bars = Bars(self.local)
         self.strategies = SimpleNamespace(get_by_business_key=self._no_strategy)
+        self.instruments = SimpleNamespace(get_many=self._no_instruments)
         return self
 
     async def _no_strategy(self, key: str) -> None:
         return None
+
+    async def _no_instruments(self, ids: list[UUID]) -> list[object]:
+        del ids
+        return []
 
     async def commit(self) -> None:
         self.shared.runs = self.local.runs
@@ -295,7 +322,7 @@ async def test_unsupported_timeframe_fails_before_persistence() -> None:
     runner, store, _ = setup_runner()
     with pytest.raises(ApplicationError) as captured:
         await runner.run(request(timeframe=MarketTimeframe.DAY_1))
-    assert captured.value.code == "STRATEGY_TIMEFRAME_UNSUPPORTED"
+    assert captured.value.code == "STRATEGY_TIMEFRAME_NOT_SUPPORTED"
     assert not store.runs
 
 

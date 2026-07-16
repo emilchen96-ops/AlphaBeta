@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-16：S01-A、S01-B、S01-C 功能开发已完成。S01 最终短审查和封板尚未完成；下一步先执行该审查，不直接进入 N01。
+
 > 2026-07-16：S01-B 已完成同步历史 StrategyRunner、StrategyRun/Signal 持久化、请求指纹幂等、失败回滚与只读完整性查询。S01-C 及 API、CLI、页面、调度、回测撮合、风控和交易执行均未开始。
 
 > 2026-07-16：S01-A 已完成纯 Python 策略契约；S01-B 已完成历史运行和 Signal 持久化。S01 整体仍未完成，当前没有 API、页面、完整回测、调度、Order 创建或交易执行能力。详见 [strategy_interface.md](strategy_interface.md) 与 [strategy_runner.md](strategy_runner.md)。

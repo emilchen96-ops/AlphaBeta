@@ -168,7 +168,23 @@ class SignalRepository(Protocol):
     async def append_many(self, entities: list[Signal]) -> None: ...
     async def get_by_id(self, entity_id: UUID) -> Signal | None: ...
     async def list_by_run(
-        self, run_id: UUID, offset: int, limit: int
+        self,
+        run_id: UUID,
+        offset: int,
+        limit: int,
+        signal_type: str | None = None,
+    ) -> tuple[list[Signal], int]: ...
+    async def list_filtered(
+        self,
+        *,
+        strategy_run_id: UUID | None,
+        strategy_key: str | None,
+        instrument_id: UUID | None,
+        signal_type: str | None,
+        generated_from: datetime | None,
+        generated_to: datetime | None,
+        offset: int,
+        limit: int,
     ) -> tuple[list[Signal], int]: ...
     async def count_by_run(self, run_id: UUID) -> int: ...
 
@@ -178,7 +194,17 @@ class StrategyRunRepository(Protocol):
     async def get_by_id(self, entity_id: UUID) -> StrategyRun | None: ...
     async def get_by_idempotency_key(self, key: str) -> StrategyRun | None: ...
     async def update(self, entity: StrategyRun) -> None: ...
-    async def list(self, offset: int, limit: int) -> tuple[list[StrategyRun], int]: ...
+    async def list(
+        self,
+        *,
+        strategy_key: str | None,
+        status: str | None,
+        instrument_id: UUID | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[StrategyRun], int]: ...
 
 
 class OrderRepository(Protocol):
