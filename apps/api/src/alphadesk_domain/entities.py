@@ -285,22 +285,70 @@ class Signal:
 
 @dataclass(slots=True, kw_only=True)
 class RiskDecision:
-    layer: RiskLayer
-    decision: RiskDecisionType
-    rule_code: str
+    idempotency_key: str
+    request_fingerprint: str
+    request_id: UUID
+    source_type: str
+    account_id: UUID
+    instrument_id: UUID
+    overall_decision: RiskDecisionType
     correlation_id: UUID
-    decided_at: datetime
+    evaluated_at: datetime
     id: UUID = field(default_factory=uuid4)
+    source_id: UUID | None = None
     signal_id: UUID | None = None
     order_id: UUID | None = None
-    reason: str | None = None
-    metrics: JsonObject = field(default_factory=dict)
+    estimated_notional: Decimal | None = None
+    projected_instrument_weight: Decimal | None = None
+    projected_total_exposure: Decimal | None = None
+    limits_snapshot: JsonObject = field(default_factory=dict)
+    account_snapshot: JsonObject = field(default_factory=dict)
+    instrument_snapshot: JsonObject = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+    layer: RiskLayer = RiskLayer.BACKEND
+    schema_version: int = 1
     created_at: datetime = field(default_factory=utc_now)
 
     def __post_init__(self) -> None:
-        if self.signal_id is None and self.order_id is None:
-            raise ValueError("risk decision requires signal_id or order_id")
-        self.decided_at = as_utc(self.decided_at, "decided_at")
+        self.idempotency_key = non_empty(self.idempotency_key, "idempotency_key")
+        self.request_fingerprint = non_empty(self.request_fingerprint, "request_fingerprint")
+        self.source_type = non_empty(self.source_type, "source_type")
+        if self.schema_version < 1:
+            raise ValueError("schema_version must be positive")
+        for name in (
+            "estimated_notional",
+            "projected_instrument_weight",
+            "projected_total_exposure",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                decimal_value(value, name)
+        self.evaluated_at = as_utc(self.evaluated_at, "evaluated_at")
+        self.created_at = as_utc(self.created_at, "created_at")
+
+
+@dataclass(slots=True, kw_only=True)
+class RiskRuleEvaluation:
+    risk_decision_id: UUID
+    seq: int
+    rule_key: str
+    decision: RiskDecisionType
+    reason_code: str
+    message: str
+    severity: str
+    evaluated_at: datetime
+    id: UUID = field(default_factory=uuid4)
+    observed_value: str | int | bool | None = None
+    limit_value: str | int | bool | None = None
+    metadata: JsonObject = field(default_factory=dict)
+    created_at: datetime = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        if self.seq < 1:
+            raise ValueError("risk rule sequence must be positive")
+        for name in ("rule_key", "reason_code", "message", "severity"):
+            setattr(self, name, non_empty(getattr(self, name), name))
+        self.evaluated_at = as_utc(self.evaluated_at, "evaluated_at")
         self.created_at = as_utc(self.created_at, "created_at")
 
 

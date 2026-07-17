@@ -30,6 +30,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRiskDecisionRepository,
+    SqlAlchemyRiskRuleEvaluationRepository,
     SqlAlchemySignalRepository,
     SqlAlchemyStrategyExperimentRepository,
     SqlAlchemyStrategyExperimentRunRepository,
@@ -76,6 +77,7 @@ class SqlAlchemyUnitOfWork:
         self.order_commands = SqlAlchemyOrderCommandRepository(session)
         self.fills = SqlAlchemyFillRepository(session)
         self.risk_decisions = SqlAlchemyRiskDecisionRepository(session)
+        self.risk_rule_evaluations = SqlAlchemyRiskRuleEvaluationRepository(session)
         self.events = SqlAlchemyDomainEventRepository(session)
         self.audit_logs = SqlAlchemyAuditLogRepository(session)
         self.outbox = SqlAlchemyOutboxRepository(session)

@@ -1,5 +1,6 @@
 """Type-safe application configuration."""
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import quote_plus
@@ -75,6 +76,14 @@ class Settings(BaseSettings):
     free_market_websocket_queue_size: int = Field(default=100, ge=10, le=1000)
     free_market_max_subscriptions_per_client: int = Field(default=200, ge=1, le=2000)
     strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
+    risk_max_order_notional: Decimal | None = Decimal("1000000")
+    risk_max_instrument_weight: Decimal | None = Decimal("1")
+    risk_max_total_exposure: Decimal | None = Decimal("1")
+    risk_max_orders_per_window: int | None = Field(default=20, ge=1)
+    risk_order_frequency_window_seconds: int = Field(default=60, ge=1)
+    risk_allow_market_orders: bool = False
+    risk_require_reference_price_for_market_order: bool = True
+    risk_kill_switch_enabled: bool = False
 
     @field_validator("api_prefix")
     @classmethod

@@ -27,6 +27,7 @@ from alphadesk_domain.entities import (
     OutboxMessage,
     Position,
     RiskDecision,
+    RiskRuleEvaluation,
     Signal,
     Strategy,
     StrategyVersion,
@@ -258,6 +259,10 @@ class OrderRepository(Protocol):
         created_to: datetime | None = None,
     ) -> tuple[builtins.list[Order], int]: ...
     async def list_expirable(self, now: datetime, limit: int) -> builtins.list[Order]: ...
+    async def list_recent_timestamps(
+        self, account_id: UUID, since: datetime
+    ) -> builtins.list[datetime]: ...
+    async def count_open(self, account_id: UUID) -> int: ...
     async def update_projection(self, entity: Order) -> None: ...
 
 
@@ -289,7 +294,26 @@ class FillRepository(Protocol):
 
 
 class RiskDecisionRepository(Protocol):
+    async def lock_idempotency_key(self, key: str) -> None: ...
     async def append(self, entity: RiskDecision) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> RiskDecision | None: ...
+    async def get_by_idempotency_key(self, key: str) -> RiskDecision | None: ...
+    async def list(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        account_id: UUID | None = None,
+        instrument_id: UUID | None = None,
+        source_type: str | None = None,
+        source_id: UUID | None = None,
+        decision: str | None = None,
+    ) -> tuple[builtins.list[RiskDecision], int]: ...
+
+
+class RiskRuleEvaluationRepository(Protocol):
+    async def append(self, entity: RiskRuleEvaluation) -> None: ...
+    async def list_by_decision(self, risk_decision_id: UUID) -> list[RiskRuleEvaluation]: ...
 
 
 class DomainEventRepository(Protocol):

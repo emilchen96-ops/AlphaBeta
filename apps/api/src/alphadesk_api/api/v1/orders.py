@@ -15,9 +15,9 @@ from alphadesk_api.application.orders import (
     CreateOrderRequest,
     OrderCancellationService,
     OrderConfirmationService,
-    OrderIntentService,
     OrderQueryService,
 )
+from alphadesk_api.application.risk import ConfiguredRiskLimitsProvider, RiskGatedOrderService
 from alphadesk_api.schemas.orders import (
     OrderActionBody,
     OrderCancelBody,
@@ -26,6 +26,7 @@ from alphadesk_api.schemas.orders import (
     OrderResponse,
     TimelineItemResponse,
 )
+from alphadesk_domain.enums import RiskDecisionType
 
 router = APIRouter(prefix="/orders", tags=["manual-orders"])
 
@@ -52,7 +53,9 @@ async def create_order(request: Request, body: OrderCreateBody) -> OrderResponse
     try:
         quantity = _decimal(body.requested_quantity, "quantity")
         assert quantity is not None
-        order = await OrderIntentService(uow_factory(request)).create(
+        outcome = await RiskGatedOrderService(
+            uow_factory(request), ConfiguredRiskLimitsProvider(request.app.state.settings)
+        ).create(
             CreateOrderRequest(
                 account_id=body.account_id,
                 instrument_id=body.instrument_id,
@@ -68,7 +71,23 @@ async def create_order(request: Request, body: OrderCreateBody) -> OrderResponse
                 occurred_at=datetime.now(UTC),
             )
         )
-        return await _detail(request, order.id)
+        if outcome.decision.overall_decision is RiskDecisionType.REJECT:
+            raise ApplicationError(
+                "RISK_ORDER_REJECTED",
+                "order intent was rejected by risk control",
+                details={"risk_decision_id": str(outcome.decision.id)},
+            )
+        if outcome.decision.overall_decision is RiskDecisionType.REQUIRE_CONFIRMATION:
+            raise ApplicationError(
+                "RISK_ORDER_REVIEW_REQUIRED",
+                "risk decision requires review and no order was created",
+                details={"risk_decision_id": str(outcome.decision.id)},
+            )
+        assert outcome.order is not None
+        detail = (await _detail(request, outcome.order.id)).model_dump()
+        detail["risk_decision_id"] = str(outcome.decision.id)
+        detail["risk_decision"] = "PASS"
+        return OrderResponse.model_validate(detail)
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
 

@@ -22,6 +22,7 @@ from alphadesk_api.application.orders import (
     OrderQueryService,
 )
 from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
+from alphadesk_domain.accounting import CashBalance
 from alphadesk_domain.entities import Instrument, TradingAccount
 from alphadesk_domain.enums import (
     AccountStatus,
@@ -38,7 +39,9 @@ def _factory(session_factory: async_sessionmaker[AsyncSession]):
     return lambda: SqlAlchemyUnitOfWork(session_factory)
 
 
-async def _seed(session_factory: async_sessionmaker[AsyncSession]):
+async def _seed(
+    session_factory: async_sessionmaker[AsyncSession], *, with_cash: bool = False
+):
     factory = _factory(session_factory)
     async with factory() as uow:
         account = TradingAccount(
@@ -63,6 +66,17 @@ async def _seed(session_factory: async_sessionmaker[AsyncSession]):
         )
         await uow.accounts.add(account)
         await uow.instruments.add(instrument)
+        if with_cash:
+            await uow.cash_balances.add(
+                CashBalance(
+                    account_id=account.id,
+                    currency="CNY",
+                    total_cash=Decimal("1000000"),
+                    available_cash=Decimal("1000000"),
+                    frozen_cash=Decimal("0"),
+                    as_of=datetime.now(UTC),
+                )
+            )
         await uow.commit()
     return account, instrument
 

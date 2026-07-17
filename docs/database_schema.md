@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> Migration `0009_r01` 扩展 `risk_decisions` 为可幂等查询的聚合决策事实，并新增只追加 `risk_rule_evaluations`。逐规则表约束 `(risk_decision_id, seq)` 与 `(risk_decision_id, rule_key)` 唯一；人工 PASS 的订单外键采用延迟校验，以支持与 M05 初始订单事实同事务提交。
+
 > S02-B1 新增 `strategy_experiments` 和只追加的 `strategy_experiment_runs`。前者保存
 > 规范参数网格、范围、状态和汇总；后者以唯一组合序号连接既有 `strategy_runs`，并对
 > `strategy_run_id` 与子幂等键建立唯一约束。结构由 Migration 0008 管理。

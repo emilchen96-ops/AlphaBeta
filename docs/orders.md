@@ -1,5 +1,7 @@
 # M05 订单事实管道
 
+> R01-B 起，公开 `POST /api/v1/orders` 只能经 `RiskGatedOrderService`。M05 的校验、状态机、两条初始 Transition、事件和审计仍由既有订单服务生成；风控未通过时不创建 Order。确认、取消及 Outbox 边界不变。
+
 M05 提供本地、人工确认、可审计的订单事实管道。它只接受 `SIMULATED + ACTIVE` 账户和有效 Instrument；不调用 Broker、执行器或 Redis，不创建 Fill，也不改变现金、持仓或账本。
 
 ## 创建契约

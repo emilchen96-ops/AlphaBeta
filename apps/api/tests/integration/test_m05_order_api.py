@@ -41,7 +41,7 @@ def _client() -> Iterator[tuple[TestClient, TradingAccount, Instrument]]:
     seed_sessions = async_sessionmaker(seed_engine, expire_on_commit=False)
 
     async def seed():
-        result = await _seed(seed_sessions)
+        result = await _seed(seed_sessions, with_cash=True)
         await seed_engine.dispose()
         return result
 

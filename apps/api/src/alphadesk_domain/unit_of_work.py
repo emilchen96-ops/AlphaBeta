@@ -27,6 +27,7 @@ from alphadesk_domain.repositories import (
     PositionLedgerRepository,
     PositionRepository,
     RiskDecisionRepository,
+    RiskRuleEvaluationRepository,
     SignalRepository,
     StrategyExperimentRepository,
     StrategyExperimentRunRepository,
@@ -61,6 +62,7 @@ class UnitOfWork(Protocol):
     order_commands: OrderCommandRepository
     fills: FillRepository
     risk_decisions: RiskDecisionRepository
+    risk_rule_evaluations: RiskRuleEvaluationRepository
     events: DomainEventRepository
     audit_logs: AuditLogRepository
     outbox: OutboxRepository

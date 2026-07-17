@@ -37,6 +37,7 @@ from alphadesk_api.infrastructure.models import (
     PositionLedgerEntryModel,
     PositionModel,
     RiskDecisionModel,
+    RiskRuleEvaluationModel,
     SignalModel,
     StrategyExperimentModel,
     StrategyExperimentRunModel,
@@ -69,6 +70,7 @@ from alphadesk_domain.entities import (
     OutboxMessage,
     Position,
     RiskDecision,
+    RiskRuleEvaluation,
     Signal,
     Strategy,
     StrategyVersion,
@@ -1112,6 +1114,37 @@ class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):
         )
         return [entity_from_model(Order, row) for row in rows]
 
+    async def list_recent_timestamps(
+        self, account_id: UUID, since: datetime
+    ) -> builtins.list[datetime]:
+        rows = await self._session.scalars(
+            select(OrderModel.created_at)
+            .where(OrderModel.account_id == account_id, OrderModel.created_at >= since)
+            .order_by(OrderModel.created_at)
+        )
+        return list(rows)
+
+    async def count_open(self, account_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(OrderModel)
+                .where(
+                    OrderModel.account_id == account_id,
+                    OrderModel.status.in_(
+                        (
+                            "CREATED",
+                            "WAITING_CONFIRMATION",
+                            "QUEUED",
+                            "SUBMITTED",
+                            "PARTIALLY_FILLED",
+                        )
+                    ),
+                )
+            )
+            or 0
+        )
+
     async def update_projection(self, entity: Order) -> None:
         await self._session.execute(
             update(OrderModel)
@@ -1253,8 +1286,76 @@ class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDe
     entity_type = RiskDecision
     model_type = RiskDecisionModel
 
+    async def lock_idempotency_key(self, key: str) -> None:
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(key, 0)))
+        )
+
     async def append(self, entity: RiskDecision) -> None:
         await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> RiskDecision | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> RiskDecision | None:
+        row = await self._session.scalar(
+            select(RiskDecisionModel).where(RiskDecisionModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(RiskDecision, row)
+
+    async def list(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        account_id: UUID | None = None,
+        instrument_id: UUID | None = None,
+        source_type: str | None = None,
+        source_id: UUID | None = None,
+        decision: str | None = None,
+    ) -> tuple[builtins.list[RiskDecision], int]:
+        filters = []
+        for column, value in (
+            (RiskDecisionModel.account_id, account_id),
+            (RiskDecisionModel.instrument_id, instrument_id),
+            (RiskDecisionModel.source_type, source_type),
+            (RiskDecisionModel.source_id, source_id),
+            (RiskDecisionModel.overall_decision, decision),
+        ):
+            if value is not None:
+                filters.append(column == value)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(RiskDecisionModel).where(*filters)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(RiskDecisionModel)
+            .where(*filters)
+            .order_by(RiskDecisionModel.evaluated_at.desc(), RiskDecisionModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(RiskDecision, row) for row in rows], total
+
+
+class SqlAlchemyRiskRuleEvaluationRepository(
+    SqlAlchemyRepository[RiskRuleEvaluation, RiskRuleEvaluationModel]
+):
+    entity_type = RiskRuleEvaluation
+    model_type = RiskRuleEvaluationModel
+
+    async def append(self, entity: RiskRuleEvaluation) -> None:
+        await self._add(entity)
+
+    async def list_by_decision(self, risk_decision_id: UUID) -> list[RiskRuleEvaluation]:
+        rows = await self._session.scalars(
+            select(RiskRuleEvaluationModel)
+            .where(RiskRuleEvaluationModel.risk_decision_id == risk_decision_id)
+            .order_by(RiskRuleEvaluationModel.seq)
+        )
+        return [entity_from_model(RiskRuleEvaluation, row) for row in rows]
 
 
 class SqlAlchemyDomainEventRepository(SqlAlchemyRepository[DomainEvent, DomainEventModel]):

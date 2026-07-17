@@ -77,6 +77,8 @@ class OrderResponse(BaseModel):
     commands: list[dict[str, Any]]
     outbox: list[dict[str, Any]]
     actions: list[dict[str, Any]] = Field(default_factory=list)
+    risk_decision_id: str | None = None
+    risk_decision: str | None = None
 
 
 class OrderPageResponse(BaseModel):

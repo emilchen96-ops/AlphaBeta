@@ -1043,32 +1043,88 @@ class FillModel(TimestampedModel, Base):
 class RiskDecisionModel(TimestampedModel, Base):
     __tablename__ = "risk_decisions"
     __table_args__ = (
-        CheckConstraint("signal_id IS NOT NULL OR order_id IS NOT NULL", name="target_required"),
         CheckConstraint(f"layer IN ({enum_values(RiskLayer)})", name="risk_layer_valid"),
         CheckConstraint(
-            f"decision IN ({enum_values(RiskDecisionType)})", name="risk_decision_valid"
+            f"overall_decision IN ({enum_values(RiskDecisionType)})", name="risk_decision_valid"
         ),
+        CheckConstraint("schema_version >= 1", name="schema_version_positive"),
+        UniqueConstraint("idempotency_key", name="uq_risk_decisions_idempotency_key"),
+        UniqueConstraint("request_id", name="uq_risk_decisions_request_id"),
         Index("ix_risk_decisions_signal", "signal_id"),
         Index("ix_risk_decisions_order", "order_id"),
+        Index("ix_risk_decisions_account_evaluated", "account_id", "evaluated_at"),
+        Index("ix_risk_decisions_instrument_evaluated", "instrument_id", "evaluated_at"),
+        Index("ix_risk_decisions_source", "source_type", "source_id"),
         Index("ix_risk_decisions_correlation", "correlation_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[UUID | None] = mapped_column(Uuid)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
     signal_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("signals.id", ondelete="RESTRICT")
     )
     order_id: Mapped[UUID | None] = mapped_column(
-        Uuid, ForeignKey("orders.id", ondelete="RESTRICT")
+        Uuid,
+        ForeignKey("orders.id", ondelete="RESTRICT", deferrable=True, initially="DEFERRED"),
     )
     layer: Mapped[str] = mapped_column(String(32), nullable=False)
-    decision: Mapped[str] = mapped_column(String(32), nullable=False)
-    rule_code: Mapped[str] = mapped_column(String(128), nullable=False)
-    reason: Mapped[str | None] = mapped_column(Text)
-    metrics: Mapped[dict[str, Any]] = mapped_column(
+    overall_decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    estimated_notional: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    projected_instrument_weight: Mapped[Decimal | None] = mapped_column(RATIO)
+    projected_total_exposure: Mapped[Decimal | None] = mapped_column(RATIO)
+    limits_snapshot: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+    account_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    instrument_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
-    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class RiskRuleEvaluationModel(TimestampedModel, Base):
+    __tablename__ = "risk_rule_evaluations"
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="seq_positive"),
+        CheckConstraint(f"decision IN ({enum_values(RiskDecisionType)})", name="decision_valid"),
+        UniqueConstraint("risk_decision_id", "seq", name="uq_risk_rule_evaluations_decision_seq"),
+        UniqueConstraint(
+            "risk_decision_id", "rule_key", name="uq_risk_rule_evaluations_decision_rule"
+        ),
+        Index("ix_risk_rule_evaluations_decision_seq", "risk_decision_id", "seq"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    risk_decision_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("risk_decisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    observed_value: Mapped[str | int | bool | None] = mapped_column(JSONB)
+    limit_value: Mapped[str | int | bool | None] = mapped_column(JSONB)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class DomainEventModel(TimestampedModel, Base):

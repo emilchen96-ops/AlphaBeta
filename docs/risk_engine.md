@@ -1,5 +1,7 @@
 # R01-A 轻量风控核心
 
+> R01-B 已完成持久化与订单安全门接线。R01-A 的纯评估器保持无框架依赖；应用层快照、幂等、事务和查询契约见 [risk_decision_pipeline.md](risk_decision_pipeline.md)。
+
 R01-A 建立纯 Python、确定性、可组合的轻量风控核心。输入是 `RiskRequest`、只读账户快照、只读标的快照与 `RiskLimits`，输出是 `RiskEvaluationResult`。本阶段只计算决策，不写数据库，不创建既有 `RiskDecision` 事实，也不接入 API、网页、订单管道、Redis、Broker 或 MiniQMT。
 
 ## 输入与快照
@@ -32,4 +34,4 @@ R01-A 建立纯 Python、确定性、可组合的轻量风控核心。输入是 
 
 `PassThroughRiskEvaluator` 仅允许 `test` 和 `development`，明确返回 `RISK_RULES_BYPASSED` 警告；production 构造会失败。策略不能自行选择该评估器，本阶段也没有把它接入任何应用服务。
 
-R01-A 不新增 Migration、ORM、RiskDecision 持久化、Order、OrderCommand、Outbox、Fill、资金或持仓变更。R01-B 尚未开始，R01 整体尚未完成。
+R01-A 本身不新增 Migration、ORM 或交易事实；上述持久化和订单接线由 R01-B 在应用层完成。

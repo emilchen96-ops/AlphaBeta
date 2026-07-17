@@ -189,10 +189,25 @@ async def _audit(
 class OrderIntentService:
     """Validate and atomically persist a manual order awaiting confirmation."""
 
-    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        failure_injector: Callable[[str], None] | None = None,
+    ) -> None:
         self._uow_factory = uow_factory
+        self._failure_injector = failure_injector or (lambda _stage: None)
 
     async def create(self, request: CreateOrderRequest) -> Order:
+        async with self._uow_factory() as uow:
+            order = await self.create_in_transaction(uow, request)
+            await uow.commit()
+            return order
+
+    async def create_in_transaction(
+        self, uow: UnitOfWork, request: CreateOrderRequest, *, order_id: UUID | None = None
+    ) -> Order:
+        """Create M05 initial facts in a caller-owned transaction."""
+
         occurred_at = _aware_time(request.occurred_at or utc_now(), "occurred_at")
         _validate_text(request.idempotency_key, "idempotency_key", 128)
         _validate_optional_text(request.note, "note", 1024)
@@ -209,108 +224,108 @@ class OrderIntentService:
             limit_price=request.limit_price,
             expires_at=request.expires_at,
         )
-        async with self._uow_factory() as uow:
-            existing = await uow.orders.get_by_idempotency_key(request.idempotency_key)
-            if existing is not None:
-                if existing.request_fingerprint == fingerprint:
-                    return existing
-                raise ApplicationError(
-                    "ORDER_IDEMPOTENCY_CONFLICT", "idempotency key has different input"
-                )
-            account = await uow.accounts.get_by_id(request.account_id)
-            if account is None:
-                raise ApplicationError("ORDER_ACCOUNT_NOT_FOUND", "trading account was not found")
-            if account.account_type is not AccountType.SIMULATED:
-                raise ApplicationError(
-                    "ORDER_ACCOUNT_TYPE_NOT_SUPPORTED", "only simulated accounts are supported"
-                )
-            if account.status is not AccountStatus.ACTIVE:
-                raise ApplicationError("ORDER_ACCOUNT_NOT_ACTIVE", "account is not active")
-            instrument = await uow.instruments.get_by_id(request.instrument_id)
-            if instrument is None or not instrument.is_active:
-                raise ApplicationError("ORDER_INSTRUMENT_NOT_ACTIVE", "instrument is not active")
-            self._validate_request(request, instrument.lot_size, instrument.price_tick, occurred_at)
-            order = Order(
-                account_id=request.account_id,
-                instrument_id=request.instrument_id,
-                side=OrderSide(request.side),
-                order_type=OrderType(request.order_type),
-                time_in_force=TimeInForce(request.time_in_force),
-                requested_quantity=request.quantity,
-                limit_price=request.limit_price,
-                expires_at=request.expires_at,
-                status=OrderStatus.CREATED,
-                idempotency_key=request.idempotency_key,
-                broker_type="LOCAL_PENDING",
-                correlation_id=request.correlation_id,
-                intent_source=OrderIntentSource.MANUAL,
-                request_fingerprint=fingerprint,
-                row_version=1,
-                confirmation_required=True,
-                created_by_actor_type=OrderActorType.LOCAL_USER,
-                created_by_actor_id=request.actor_id,
-                created_at=occurred_at,
-                updated_at=occurred_at,
+        existing = await uow.orders.get_by_idempotency_key(request.idempotency_key)
+        if existing is not None:
+            if existing.request_fingerprint == fingerprint:
+                return existing
+            raise ApplicationError(
+                "ORDER_IDEMPOTENCY_CONFLICT", "idempotency key has different input"
             )
-            await uow.orders.add(order)
-            await uow.order_state_transitions.append(
-                OrderStateTransition(
-                    order_id=order.id,
-                    from_status=None,
-                    to_status=OrderStatus.CREATED,
-                    actor_type=OrderActorType.LOCAL_USER,
-                    actor_id=request.actor_id,
-                    correlation_id=request.correlation_id,
-                    occurred_at=occurred_at,
-                    order_version=1,
-                )
+        account = await uow.accounts.get_by_id(request.account_id)
+        if account is None:
+            raise ApplicationError("ORDER_ACCOUNT_NOT_FOUND", "trading account was not found")
+        if account.account_type is not AccountType.SIMULATED:
+            raise ApplicationError(
+                "ORDER_ACCOUNT_TYPE_NOT_SUPPORTED", "only simulated accounts are supported"
             )
-            OrderStateMachine.require_transition(
-                OrderStatus.CREATED, OrderStatus.WAITING_CONFIRMATION
-            )
-            order.status = OrderStatus.WAITING_CONFIRMATION
-            order.row_version = 2
-            order.updated_at = occurred_at
-            await uow.orders.update_projection(order)
-            await uow.order_state_transitions.append(
-                OrderStateTransition(
-                    order_id=order.id,
-                    from_status=OrderStatus.CREATED,
-                    to_status=OrderStatus.WAITING_CONFIRMATION,
-                    actor_type=OrderActorType.SYSTEM,
-                    correlation_id=request.correlation_id,
-                    occurred_at=occurred_at,
-                    order_version=2,
-                )
-            )
-            for event_type in ("ORDER_CREATED", "ORDER_WAITING_CONFIRMATION"):
-                await uow.events.append(
-                    _event(
-                        event_type=event_type,
-                        order=order,
-                        correlation_id=request.correlation_id,
-                        occurred_at=occurred_at,
-                        payload={"order_id": str(order.id), "row_version": order.row_version},
-                    )
-                )
-            await _audit(
-                uow,
-                action="ORDER_CREATED",
-                order=order,
+        if account.status is not AccountStatus.ACTIVE:
+            raise ApplicationError("ORDER_ACCOUNT_NOT_ACTIVE", "account is not active")
+        instrument = await uow.instruments.get_by_id(request.instrument_id)
+        if instrument is None or not instrument.is_active:
+            raise ApplicationError("ORDER_INSTRUMENT_NOT_ACTIVE", "instrument is not active")
+        self._validate_request(request, instrument.lot_size, instrument.price_tick, occurred_at)
+        order = Order(
+            account_id=request.account_id,
+            instrument_id=request.instrument_id,
+            side=OrderSide(request.side),
+            order_type=OrderType(request.order_type),
+            time_in_force=TimeInForce(request.time_in_force),
+            requested_quantity=request.quantity,
+            limit_price=request.limit_price,
+            expires_at=request.expires_at,
+            status=OrderStatus.CREATED,
+            idempotency_key=request.idempotency_key,
+            broker_type="LOCAL_PENDING",
+            correlation_id=request.correlation_id,
+            intent_source=OrderIntentSource.MANUAL,
+            request_fingerprint=fingerprint,
+            row_version=1,
+            confirmation_required=True,
+            created_by_actor_type=OrderActorType.LOCAL_USER,
+            created_by_actor_id=request.actor_id,
+            created_at=occurred_at,
+            updated_at=occurred_at,
+            id=order_id or uuid4(),
+        )
+        await uow.orders.add(order)
+        self._failure_injector("after_order_insert")
+        await uow.order_state_transitions.append(
+            OrderStateTransition(
+                order_id=order.id,
+                from_status=None,
+                to_status=OrderStatus.CREATED,
+                actor_type=OrderActorType.LOCAL_USER,
+                actor_id=request.actor_id,
                 correlation_id=request.correlation_id,
                 occurred_at=occurred_at,
-                actor_id=request.actor_id,
-                details={
-                    "warnings": [
-                        "realtime market data is not used",
-                        "full risk control is not implemented",
-                        "no executor dispatch occurs",
-                        "no real trade occurs",
-                    ]
-                },
+                order_version=1,
             )
-            await uow.commit()
-            return order
+        )
+        self._failure_injector("after_created_transition")
+        OrderStateMachine.require_transition(OrderStatus.CREATED, OrderStatus.WAITING_CONFIRMATION)
+        order.status = OrderStatus.WAITING_CONFIRMATION
+        order.row_version = 2
+        order.updated_at = occurred_at
+        await uow.orders.update_projection(order)
+        await uow.order_state_transitions.append(
+            OrderStateTransition(
+                order_id=order.id,
+                from_status=OrderStatus.CREATED,
+                to_status=OrderStatus.WAITING_CONFIRMATION,
+                actor_type=OrderActorType.SYSTEM,
+                correlation_id=request.correlation_id,
+                occurred_at=occurred_at,
+                order_version=2,
+            )
+        )
+        self._failure_injector("after_waiting_transition")
+        for event_type in ("ORDER_CREATED", "ORDER_WAITING_CONFIRMATION"):
+            await uow.events.append(
+                _event(
+                    event_type=event_type,
+                    order=order,
+                    correlation_id=request.correlation_id,
+                    occurred_at=occurred_at,
+                    payload={"order_id": str(order.id), "row_version": order.row_version},
+                )
+            )
+        self._failure_injector("after_order_events")
+        await _audit(
+            uow,
+            action="ORDER_CREATED",
+            order=order,
+            correlation_id=request.correlation_id,
+            occurred_at=occurred_at,
+            actor_id=request.actor_id,
+            details={
+                "warnings": [
+                    "no executor dispatch occurs",
+                    "no real trade occurs",
+                ]
+            },
+        )
+        self._failure_injector("after_order_audit")
+        return order
 
     @staticmethod
     def _validate_request(
