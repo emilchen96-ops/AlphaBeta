@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前执行里程碑为 **B01-A 完成**：Broker 契约、市场/账户快照、费用、滑点、模拟成交、`FillDraft` 与执行指纹见 [simulated_broker.md](simulated_broker.md)。B01-B 尚未开始；系统仍未写数据库成交、未修改账本、未接执行器/MiniQMT，也无实盘能力。
+
 > 当前风险里程碑为 **R01 完成**：纯规则核心见 [risk_engine.md](risk_engine.md)，快照、持久化、幂等、查询和 M05 安全门见 [risk_decision_pipeline.md](risk_decision_pipeline.md)，只读页面和关联边界见 [risk_ui.md](risk_ui.md)。下一阶段为 B01 模拟 Broker；系统仍无执行器、MiniQMT 或实盘能力。
 
 
