@@ -28,6 +28,10 @@ export interface OrderFactSummary {
   actions: Array<Record<string, unknown>>;
   commands: Array<Record<string, unknown>>;
   outbox: Array<Record<string, unknown>>;
+  risk_decision_id: string | null;
+  risk_decision: string | null;
+  risk_evaluated_at: string | null;
+  risk_rule_summary: Array<Record<string, unknown>>;
 }
 
 export interface OrderPage {

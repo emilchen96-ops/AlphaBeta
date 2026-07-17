@@ -23,8 +23,10 @@ import {
   Typography,
 } from "antd";
 import { useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { getAccounts } from "../api/accounts";
+import { ApiError } from "../api/client";
 import { getInstruments } from "../api/market";
 import {
   cancelOrder,
@@ -35,6 +37,7 @@ import {
   getOrderTimeline,
 } from "../api/orders";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { getRiskDecision } from "../api/risk";
 import type { OrderFactSummary } from "../types/orders";
 
 const stateText: Record<string, string> = {
@@ -48,7 +51,14 @@ function idempotencyKey(prefix: string, orderId?: string) {
   return `${prefix}:${orderId ?? "new"}:${crypto.randomUUID()}`;
 }
 
+function riskReason(item: Record<string, unknown>, fallback: string) {
+  if (typeof item.message === "string") return item.message;
+  if (typeof item.reason_code === "string") return item.reason_code;
+  return fallback;
+}
+
 export function OrdersPage() {
+  const [searchParams] = useSearchParams();
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -58,7 +68,15 @@ export function OrdersPage() {
   const [instrumentSearch, setInstrumentSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [confirming, setConfirming] = useState<OrderFactSummary>();
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedId, setSelectedId] = useState<string | undefined>(
+    searchParams.get("order_id") ?? undefined,
+  );
+  const [riskOutcome, setRiskOutcome] = useState<{
+    kind: "PASS" | "REJECT" | "REVIEW";
+    decisionId: string;
+    orderId?: string;
+    reasons: string[];
+  }>();
   const [form] = Form.useForm();
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
@@ -96,6 +114,14 @@ export function OrdersPage() {
   const action = useMutation({
     mutationFn: (operation: () => Promise<OrderFactSummary>) => operation(),
     onSuccess: async (order) => {
+      if (createOpen && order.risk_decision_id) {
+        setRiskOutcome({
+          kind: "PASS",
+          decisionId: order.risk_decision_id,
+          orderId: order.id,
+          reasons: [],
+        });
+      }
       setSelectedId(order.id);
       setCreateOpen(false);
       setConfirming(undefined);
@@ -103,7 +129,26 @@ export function OrdersPage() {
       await refresh();
       void message.success("订单事实已更新");
     },
-    onError: (error: Error) => {
+    onError: async (error: Error) => {
+      if (
+        error instanceof ApiError &&
+        ["RISK_ORDER_REJECTED", "RISK_ORDER_REVIEW_REQUIRED"].includes(
+          error.code,
+        )
+      ) {
+        const details = error.details as { risk_decision_id?: string } | null;
+        if (details?.risk_decision_id) {
+          const decision = await getRiskDecision(details.risk_decision_id);
+          setRiskOutcome({
+            kind: error.code === "RISK_ORDER_REJECTED" ? "REJECT" : "REVIEW",
+            decisionId: decision.id,
+            reasons: decision.risk_rule_summary.map((item) =>
+              riskReason(item, "需要查看规则详情"),
+            ),
+          });
+          setCreateOpen(false);
+        }
+      }
       const conflict = error.message.includes("version")
         ? "订单版本已变化，请刷新后重试"
         : error.message;
@@ -144,9 +189,55 @@ export function OrdersPage() {
       <Alert
         showIcon
         type="warning"
-        title="当前没有交易级实时行情"
-        description="LIMIT 估算金额仅为数量 × 用户限价；MARKET 无法估算成交金额。当前仅完成结构校验，尚未完成资金与组合风控。确认后只创建本地数据库指令事实，尚未发送执行器，不会发送券商，也不会产生成交。"
+        title="订单创建必须通过服务端风控"
+        description="LIMIT 估算金额仅为数量 × 用户限价，MARKET 无法估算成交金额。PASS 只创建 WAITING_CONFIRMATION Order；REJECT 或 REVIEW 不创建 Order，也不会自动重试或绕过风控。"
       />
+      {riskOutcome ? (
+        <Alert
+          style={{ marginTop: 16 }}
+          showIcon
+          type={
+            riskOutcome.kind === "PASS"
+              ? "success"
+              : riskOutcome.kind === "REJECT"
+                ? "error"
+                : "warning"
+          }
+          title={
+            riskOutcome.kind === "PASS"
+              ? "风控通过"
+              : riskOutcome.kind === "REJECT"
+                ? "风控拒绝"
+                : "需要人工复核"
+          }
+          description={
+            <Space orientation="vertical">
+              <Typography.Text>
+                RiskDecision {riskOutcome.decisionId}
+                {riskOutcome.orderId
+                  ? `；Order ${riskOutcome.orderId} 已进入 WAITING_CONFIRMATION`
+                  : "；未创建 Order"}
+              </Typography.Text>
+              {riskOutcome.reasons.map((reason) => (
+                <Typography.Text key={reason}>{reason}</Typography.Text>
+              ))}
+              <Space>
+                <Link to={`/risk/decisions/${riskOutcome.decisionId}`}>
+                  查看风控详情
+                </Link>
+                {riskOutcome.orderId ? (
+                  <Button
+                    type="link"
+                    onClick={() => setSelectedId(riskOutcome.orderId)}
+                  >
+                    查看订单详情
+                  </Button>
+                ) : null}
+              </Space>
+            </Space>
+          }
+        />
+      ) : null}
       <Card style={{ marginTop: 16 }}>
         <Space wrap style={{ marginBottom: 16 }}>
           <Select<string>
@@ -433,8 +524,35 @@ export function OrdersPage() {
                   label: "Correlation ID",
                   children: detail.data.correlation_id,
                 },
+                {
+                  key: "risk",
+                  label: "风控结果",
+                  children: detail.data.risk_decision ?? "—",
+                },
+                {
+                  key: "risk-time",
+                  label: "风控评估时间",
+                  children: detail.data.risk_evaluated_at
+                    ? new Date(detail.data.risk_evaluated_at).toLocaleString()
+                    : "—",
+                },
               ]}
             />
+            <Typography.Title level={5}>RiskDecision</Typography.Title>
+            {detail.data.risk_decision_id ? (
+              <Space orientation="vertical">
+                <Link to={`/risk/decisions/${detail.data.risk_decision_id}`}>
+                  查看风控决策 {detail.data.risk_decision_id}
+                </Link>
+                {detail.data.risk_rule_summary.map((item, index) => (
+                  <Typography.Text key={index} type="warning">
+                    {riskReason(item, "风控规则提示")}
+                  </Typography.Text>
+                ))}
+              </Space>
+            ) : (
+              <Typography.Text type="secondary">无关联风控决策</Typography.Text>
+            )}
             <Typography.Title level={5}>OrderAction</Typography.Title>
             {detail.data.actions.length ? (
               detail.data.actions.map((item, index) => (

@@ -9,7 +9,11 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { OrdersPage } from "../pages/OrdersPage";
 import { PortfolioPage } from "../pages/PortfolioPage";
-import { RiskPage } from "../pages/RiskPage";
+import {
+  RiskDecisionDetailPage,
+  RiskDecisionsPage,
+  RiskLimitsPage,
+} from "../pages/RiskPages";
 import { SettingsPage } from "../pages/SettingsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
 import {
@@ -55,7 +59,13 @@ export const routes: RouteObject[] = [
       { path: "strategy-runs/:runId", element: <StrategyRunDetailPage /> },
       { path: "signals", element: <SignalsPage /> },
       { path: "orders", element: <OrdersPage /> },
-      { path: "risk", element: <RiskPage /> },
+      { path: "risk", element: <RiskDecisionsPage /> },
+      { path: "risk/decisions", element: <RiskDecisionsPage /> },
+      {
+        path: "risk/decisions/:decisionId",
+        element: <RiskDecisionDetailPage />,
+      },
+      { path: "risk/limits", element: <RiskLimitsPage /> },
       { path: "backtest", element: <BacktestPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "settings", element: <SettingsPage /> },

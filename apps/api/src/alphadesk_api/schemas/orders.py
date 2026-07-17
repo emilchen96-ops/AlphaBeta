@@ -79,6 +79,8 @@ class OrderResponse(BaseModel):
     actions: list[dict[str, Any]] = Field(default_factory=list)
     risk_decision_id: str | None = None
     risk_decision: str | None = None
+    risk_evaluated_at: datetime | None = None
+    risk_rule_summary: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class OrderPageResponse(BaseModel):

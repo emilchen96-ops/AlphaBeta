@@ -276,6 +276,17 @@ class RiskAssessmentService:
         limits_payload = _json(asdict(limits))
         assert isinstance(limits_payload, dict)
         limits_payload["version_marker"] = self._limits_provider.version_marker
+        snapshots.instrument_payload.update(
+            {
+                "side": request.side.value,
+                "order_type": request.order_type.value,
+                "quantity": str(request.quantity),
+                "limit_price": None if request.limit_price is None else str(request.limit_price),
+                "reference_price": (
+                    None if request.reference_price is None else str(request.reference_price)
+                ),
+            }
+        )
         decision = RiskDecision(
             idempotency_key=idempotency_key,
             request_fingerprint=fingerprint,
@@ -414,21 +425,33 @@ class SignalRiskAssessmentService:
         self._assessment = RiskAssessmentService(limits_provider)
 
     async def assess(
-        self, signal_id: UUID, idempotency_key: str, correlation_id: UUID
+        self,
+        signal_id: UUID,
+        account_id: UUID,
+        idempotency_key: str,
+        correlation_id: UUID,
+        *,
+        quantity: Decimal | None = None,
+        reference_price: Decimal | None = None,
     ) -> RiskAssessmentOutcome:
         async with self._uow_factory() as uow:
             signal = await uow.signals.get_by_id(signal_id)
-            if signal is None or signal.account_id is None:
+            if signal is None:
+                raise ApplicationError("RISK_SIGNAL_NOT_ELIGIBLE", "signal is unavailable")
+            if signal.account_id is not None and signal.account_id != account_id:
                 raise ApplicationError(
-                    "RISK_SIGNAL_NOT_ELIGIBLE", "signal or account is unavailable"
+                    "RISK_SIGNAL_ACCOUNT_CONFLICT", "signal is bound to another account"
                 )
-            if signal.target_quantity is None:
+            effective_quantity = signal.target_quantity or quantity
+            effective_reference_price = reference_price or signal.reference_price
+            if effective_quantity is None:
                 await uow.risk_decisions.lock_idempotency_key(idempotency_key)
                 fingerprint = payload_hash(
                     {
                         "schema_version": 1,
                         "source_type": "STRATEGY_SIGNAL",
                         "source_id": str(signal.id),
+                        "account_id": str(account_id),
                         "target_weight": (
                             None if signal.target_weight is None else str(signal.target_weight)
                         ),
@@ -451,11 +474,11 @@ class SignalRiskAssessmentService:
                     source_type="STRATEGY_SIGNAL",
                     source_id=signal.id,
                     signal_id=signal.id,
-                    account_id=signal.account_id,
+                    account_id=account_id,
                     instrument_id=signal.instrument_id,
                     overall_decision=RiskDecisionType.REQUIRE_CONFIRMATION,
                     limits_snapshot={"version_marker": self._limits_provider.version_marker},
-                    account_snapshot={"account_id": str(signal.account_id)},
+                    account_snapshot={"account_id": str(account_id)},
                     instrument_snapshot={"instrument_id": str(signal.instrument_id)},
                     warnings=["RISK_SIGNAL_TARGET_UNSUPPORTED"],
                     correlation_id=correlation_id,
@@ -512,12 +535,12 @@ class SignalRiskAssessmentService:
                 source_type=RiskRequestSource.STRATEGY_SIGNAL,
                 source_id=signal.id,
                 signal_id=signal.id,
-                account_id=signal.account_id,
+                account_id=account_id,
                 instrument_id=signal.instrument_id,
                 side=signal.side,
                 order_type=OrderType.MARKET,
-                quantity=signal.target_quantity,
-                reference_price=signal.reference_price,
+                quantity=effective_quantity,
+                reference_price=effective_reference_price,
                 strategy_key=signal.strategy_key,
                 requested_at=signal.generated_at,
             )
@@ -536,7 +559,7 @@ class RiskDecisionQueryService:
             if decision is None:
                 raise ApplicationError("RISK_DECISION_NOT_FOUND", "risk decision was not found")
             rules = await uow.risk_rule_evaluations.list_by_decision(decision.id)
-            return self._view(decision, rules)
+            return await self._view(uow, decision, rules)
 
     async def list(
         self,
@@ -548,6 +571,10 @@ class RiskDecisionQueryService:
         source_type: str | None = None,
         source_id: UUID | None = None,
         decision: str | None = None,
+        order_id: UUID | None = None,
+        has_order: bool | None = None,
+        evaluated_from: datetime | None = None,
+        evaluated_to: datetime | None = None,
     ) -> dict[str, object]:
         async with self._uow_factory() as uow:
             decisions, total = await uow.risk_decisions.list(
@@ -558,16 +585,20 @@ class RiskDecisionQueryService:
                 source_type=source_type,
                 source_id=source_id,
                 decision=decision,
+                order_id=order_id,
+                has_order=has_order,
+                evaluated_from=evaluated_from,
+                evaluated_to=evaluated_to,
             )
             items = []
             for stored_decision in decisions:
                 rules = await uow.risk_rule_evaluations.list_by_decision(stored_decision.id)
-                items.append(self._view(stored_decision, rules))
+                items.append(await self._view(uow, stored_decision, rules))
             return {"items": items, "page": page, "page_size": page_size, "total": total}
 
     @staticmethod
-    def _view(
-        decision: RiskDecision, rules: builtins.list[RiskRuleEvaluation]
+    async def _view(
+        uow: UnitOfWork, decision: RiskDecision, rules: builtins.list[RiskRuleEvaluation]
     ) -> dict[str, object]:
         value = _json(asdict(decision))
         assert isinstance(value, dict)
@@ -576,6 +607,38 @@ class RiskDecisionQueryService:
         rule_values = [_json(asdict(item)) for item in rules]
         assert all(isinstance(item, dict) for item in rule_values)
         value["rule_results"] = rule_values
+        account = await uow.accounts.get_by_id(decision.account_id)
+        instrument = await uow.instruments.get_by_id(decision.instrument_id)
+        value["account"] = {
+            "id": str(decision.account_id),
+            "code": None if account is None else account.account_code,
+            "name": None if account is None else account.name,
+        }
+        value["instrument"] = {
+            "id": str(decision.instrument_id),
+            "symbol": None if instrument is None else instrument.symbol,
+            "exchange": None if instrument is None else instrument.exchange,
+            "name": None if instrument is None else instrument.name,
+        }
+        snapshot = decision.instrument_snapshot
+        value["side"] = snapshot.get("side")
+        value["order_type"] = snapshot.get("order_type")
+        value["quantity"] = snapshot.get("quantity")
+        # Older R01-B snapshots do not carry request fields; derive them from the
+        # immutable rule observations where possible without changing stored facts.
+        for rule in rules:
+            if value["quantity"] is None and rule.rule_key == "quantity_lot":
+                value["quantity"] = rule.observed_value
+        value["risk_rule_summary"] = [
+            {
+                "rule_key": item.rule_key,
+                "decision": item.decision.value,
+                "reason_code": item.reason_code,
+                "message": item.message,
+            }
+            for item in rules
+            if item.decision is not RiskDecisionType.ALLOW
+        ]
         return value
 
 

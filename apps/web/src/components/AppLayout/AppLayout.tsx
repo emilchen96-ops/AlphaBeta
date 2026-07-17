@@ -36,7 +36,15 @@ const menuItems = [
   { key: "/strategy-runs", icon: <DatabaseOutlined />, label: "研究运行" },
   { key: "/signals", icon: <AuditOutlined />, label: "研究 Signal" },
   { key: "/orders", icon: <OrderedListOutlined />, label: "订单" },
-  { key: "/risk", icon: <SafetyCertificateOutlined />, label: "风控" },
+  {
+    key: "risk-group",
+    icon: <SafetyCertificateOutlined />,
+    label: "风控",
+    children: [
+      { key: "/risk/decisions", label: "风控决策" },
+      { key: "/risk/limits", label: "当前限制" },
+    ],
+  },
   { key: "/backtest", icon: <DatabaseOutlined />, label: "回测" },
   { key: "/audit", icon: <AuditOutlined />, label: "审计" },
   { key: "/settings", icon: <SettingOutlined />, label: "设置" },
@@ -57,10 +65,13 @@ export function AppLayout() {
   const navigate = useNavigate();
   const statusQuery = useQuery(systemStatusQueryOptions);
   const websocket = useSystemWebSocket();
-  const selectedKey =
-    menuItems.find(
-      (item) => location.pathname.startsWith(item.key) && item.key !== "/",
-    )?.key ?? (location.pathname === "/" ? "/" : "");
+  const selectedKey = location.pathname.startsWith("/risk/limits")
+    ? "/risk/limits"
+    : location.pathname.startsWith("/risk")
+      ? "/risk/decisions"
+      : (menuItems.find(
+          (item) => location.pathname.startsWith(item.key) && item.key !== "/",
+        )?.key ?? (location.pathname === "/" ? "/" : ""));
   const status = statusQuery.data;
 
   return (

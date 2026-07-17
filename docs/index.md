@@ -1,6 +1,6 @@
 # AlphaDesk 文档索引
 
-> 当前风险里程碑为 **R01-B 完成**：纯规则核心见 [risk_engine.md](risk_engine.md)，快照、持久化、幂等、查询和 M05 安全门见 [risk_decision_pipeline.md](risk_decision_pipeline.md)。R01-C 尚未开始；系统仍无 Broker、执行器或实盘能力。
+> 当前风险里程碑为 **R01 完成**：纯规则核心见 [risk_engine.md](risk_engine.md)，快照、持久化、幂等、查询和 M05 安全门见 [risk_decision_pipeline.md](risk_decision_pipeline.md)，只读页面和关联边界见 [risk_ui.md](risk_ui.md)。下一阶段为 B01 模拟 Broker；系统仍无执行器、MiniQMT 或实盘能力。
 
 
 > 当前策略里程碑为 **S02 完成**：S02-A 指标与策略库、S02-B1 批量研究后端和 S02-B2 批量研究页面均已完成。后端契约见 [strategy_experiments.md](strategy_experiments.md)，页面与边界见 [strategy_experiments_ui.md](strategy_experiments_ui.md)。下一阶段为 R01 轻量风控，尚未开始。

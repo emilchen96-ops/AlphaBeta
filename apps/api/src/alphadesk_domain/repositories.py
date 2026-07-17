@@ -308,6 +308,10 @@ class RiskDecisionRepository(Protocol):
         source_type: str | None = None,
         source_id: UUID | None = None,
         decision: str | None = None,
+        order_id: UUID | None = None,
+        has_order: bool | None = None,
+        evaluated_from: datetime | None = None,
+        evaluated_to: datetime | None = None,
     ) -> tuple[builtins.list[RiskDecision], int]: ...
 
 

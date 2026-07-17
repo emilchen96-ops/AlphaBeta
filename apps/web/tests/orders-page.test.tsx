@@ -59,6 +59,10 @@ const waitingOrder = {
   actions: [],
   commands: [],
   outbox: [],
+  risk_decision_id: "55555555-5555-4555-8555-555555555555",
+  risk_decision: "PASS",
+  risk_evaluated_at: "2026-07-16T00:00:00Z",
+  risk_rule_summary: [],
 };
 
 function installFetch() {
@@ -132,9 +136,7 @@ test("订单中心展示事实状态和安全边界", async () => {
     await screen.findByRole("heading", { name: "订单中心" }),
   ).toBeInTheDocument();
   expect(await screen.findByText(/等待.*人工.*确认/)).toBeInTheDocument();
-  expect(
-    screen.getByText(/不会连接执行器、券商或产生成交/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/REJECT 或 REVIEW 不创建 Order/)).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /实盘|强制成交|自动交易/ }),
   ).not.toBeInTheDocument();

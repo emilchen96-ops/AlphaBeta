@@ -1,4 +1,6 @@
-# R01-B 风控决策事实管道
+# R01 风控决策事实管道
+
+> R01-C 已完成查询 API、当前限制只读 API、风控页面、订单关联展示和 Signal 独立评估入口。网页边界见 [risk_ui.md](risk_ui.md)。
 
 R01-B 将 R01-A 的纯领域评估器接入 PostgreSQL，并把 `POST /api/v1/orders` 改为不可绕过的后端安全门。系统仍只支持模拟账户，不连接 Broker、执行器、Redis 订单流或 MiniQMT，也不会创建 Fill 或修改资金、持仓及账本。
 
@@ -23,7 +25,11 @@ Signal 只评估并持久化风控事实，永不创建 Order。仅有 `target_w
 
 ## 查询接口
 
-- `GET /api/v1/risk-decisions`
+- `GET /api/v1/risk-decisions`（分页及账户、标的、来源、决策、订单关联、时间筛选）
 - `GET /api/v1/risk-decisions/{id}`
+- `GET /api/v1/risk-limits/active`（服务端实际限制，只读）
+- `POST /api/v1/signals/{id}/risk-assessments`（只创建 RiskDecision）
 
 查询返回决策、逐规则事实、限制及账户/标的快照、warnings 和可空 order ID。订单创建通过时额外返回 `risk_decision_id` 与展示值 `PASS`；数据库继续复用既有枚举值 `ALLOW`。
+
+限制端点不返回环境变量名、文件路径或秘密，且不存在风险配置写接口。Signal 评估由服务端锁定 Signal 的标的与方向，客户端不能借此创建 Order。

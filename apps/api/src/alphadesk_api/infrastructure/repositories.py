@@ -1313,6 +1313,10 @@ class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDe
         source_type: str | None = None,
         source_id: UUID | None = None,
         decision: str | None = None,
+        order_id: UUID | None = None,
+        has_order: bool | None = None,
+        evaluated_from: datetime | None = None,
+        evaluated_to: datetime | None = None,
     ) -> tuple[builtins.list[RiskDecision], int]:
         filters = []
         for column, value in (
@@ -1321,9 +1325,20 @@ class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDe
             (RiskDecisionModel.source_type, source_type),
             (RiskDecisionModel.source_id, source_id),
             (RiskDecisionModel.overall_decision, decision),
+            (RiskDecisionModel.order_id, order_id),
         ):
             if value is not None:
                 filters.append(column == value)
+        if evaluated_from is not None:
+            filters.append(RiskDecisionModel.evaluated_at >= evaluated_from)
+        if evaluated_to is not None:
+            filters.append(RiskDecisionModel.evaluated_at <= evaluated_to)
+        if has_order is not None:
+            filters.append(
+                RiskDecisionModel.order_id.is_not(None)
+                if has_order
+                else RiskDecisionModel.order_id.is_(None)
+            )
         total = int(
             await self._session.scalar(
                 select(func.count()).select_from(RiskDecisionModel).where(*filters)
@@ -1333,7 +1348,7 @@ class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDe
         rows = await self._session.scalars(
             select(RiskDecisionModel)
             .where(*filters)
-            .order_by(RiskDecisionModel.evaluated_at.desc(), RiskDecisionModel.id)
+            .order_by(RiskDecisionModel.evaluated_at.desc(), RiskDecisionModel.id.desc())
             .offset(offset)
             .limit(limit)
         )

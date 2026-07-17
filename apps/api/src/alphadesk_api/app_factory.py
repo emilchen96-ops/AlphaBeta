@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Protocol
 
 from fastapi import FastAPI
@@ -81,6 +82,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved_settings
+    app.state.started_at = datetime.now(UTC)
     app.state.database = database_service
     app.state.redis = resolved_redis_service
     app.state.market_ws_hub = None

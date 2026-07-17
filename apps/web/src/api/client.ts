@@ -11,6 +11,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     public readonly correlationId: string | null,
+    public readonly details: unknown = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -52,6 +53,7 @@ export async function apiRequest<T>(
         response.status,
         envelope?.error.code ?? "HTTP_ERROR",
         envelope?.error.correlation_id ?? correlationId,
+        envelope?.error.details ?? null,
       );
     }
     if (response.status === 204) {

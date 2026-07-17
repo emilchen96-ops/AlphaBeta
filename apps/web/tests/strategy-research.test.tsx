@@ -172,7 +172,7 @@ test("Signal页面展示Decimal字符串与研究原因", async () => {
   expect(await screen.findByText("12.34000000")).toBeInTheDocument();
   expect(screen.getByText("SMA crossover")).toBeInTheDocument();
   expect(
-    screen.getByText(/页面不提供买入、卖出、转订单或自动交易操作/),
+    screen.getByText(/只创建 RiskDecision，不创建订单/),
   ).toBeInTheDocument();
 });
 

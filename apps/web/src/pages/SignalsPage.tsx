@@ -1,8 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
-import { Alert, Card, Empty, Input, Select, Space, Table, Tag } from "antd";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  Alert,
+  Button,
+  Card,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
+import { getAccounts } from "../api/accounts";
+import { assessSignalRisk } from "../api/risk";
 import { getSignals, getStrategyCatalog } from "../api/strategies";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { StrategySignal } from "../types/strategies";
@@ -16,6 +31,11 @@ export function SignalsPage() {
   const [instrumentId, setInstrumentId] = useState("");
   const [generatedFrom, setGeneratedFrom] = useState("");
   const [generatedTo, setGeneratedTo] = useState("");
+  const [selectedSignal, setSelectedSignal] = useState<StrategySignal>();
+  const [assessmentId, setAssessmentId] = useState<string>();
+  const [assessmentDecision, setAssessmentDecision] = useState<string>();
+  const [form] = Form.useForm();
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
     queryFn: getStrategyCatalog,
@@ -47,6 +67,24 @@ export function SignalsPage() {
           : undefined,
       }),
   });
+  const assessment = useMutation({
+    mutationFn: async (values: Record<string, string>) => {
+      if (!selectedSignal) throw new Error("未选择 Signal");
+      return assessSignalRisk(selectedSignal.signal_id, {
+        account_id: values.account_id,
+        quantity: selectedSignal.quantity ?? values.quantity ?? null,
+        reference_price:
+          values.reference_price || selectedSignal.reference_price,
+        idempotency_key: `signal-risk:${selectedSignal.signal_id}:${crypto.randomUUID()}`,
+      });
+    },
+    onSuccess: (result) => {
+      setAssessmentId(result.id);
+      setAssessmentDecision(result.overall_decision);
+      setSelectedSignal(undefined);
+      form.resetFields();
+    },
+  });
   return (
     <section>
       <PageHeader
@@ -57,8 +95,36 @@ export function SignalsPage() {
         showIcon
         type="warning"
         title="Signal 是研究事实，不是买卖指令"
-        description="页面不提供买入、卖出、转订单或自动交易操作。reference_price 不是成交价；不会调用风控、Broker 或修改账户。"
+        description="可发起一次独立的研究风控评估，但只创建 RiskDecision，不创建订单，不发送 Broker，也不会修改现金、持仓或账本。"
       />
+      {assessmentId ? (
+        <Alert
+          style={{ marginTop: 16 }}
+          showIcon
+          type={
+            assessmentDecision === "ALLOW"
+              ? "success"
+              : assessmentDecision === "REJECT"
+                ? "error"
+                : "warning"
+          }
+          title={
+            assessmentDecision === "ALLOW"
+              ? "风控通过"
+              : assessmentDecision === "REJECT"
+                ? "风控拒绝"
+                : "需要人工复核"
+          }
+          description={
+            <Space>
+              <Typography.Text>研究评估完成，未创建 Order。</Typography.Text>
+              <Link to={`/risk/decisions/${assessmentId}`}>
+                查看 RiskDecision
+              </Link>
+            </Space>
+          }
+        />
+      ) : null}
       <Card style={{ marginTop: 16 }}>
         <Space wrap style={{ marginBottom: 16 }}>
           <Input
@@ -168,9 +234,81 @@ export function SignalsPage() {
             { title: "参考价", dataIndex: "reference_price" },
             { title: "置信度", dataIndex: "confidence" },
             { title: "原因", dataIndex: "reason" },
+            {
+              title: "风控研究",
+              render: (_, item) => (
+                <Button size="small" onClick={() => setSelectedSignal(item)}>
+                  独立风险评估
+                </Button>
+              ),
+            },
           ]}
         />
       </Card>
+      <Modal
+        title="Signal 独立风控评估"
+        open={Boolean(selectedSignal)}
+        confirmLoading={assessment.isPending}
+        okText="仅评估风险"
+        onCancel={() => setSelectedSignal(undefined)}
+        onOk={() =>
+          void form
+            .validateFields()
+            .then((values: Record<string, string>) => assessment.mutate(values))
+        }
+      >
+        <Alert
+          showIcon
+          type="warning"
+          title="研究评估，不是下单"
+          description="不会自动转订单，不会发送 Broker 或 MiniQMT，不会修改现金和持仓。标的与方向由 Signal 决定，浏览器不能更改。"
+        />
+        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="account_id"
+            label="模拟账户"
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={(accounts.data?.items ?? []).map((item) => ({
+                value: item.id,
+                label: `${item.account_code} · ${item.name}`,
+              }))}
+            />
+          </Form.Item>
+          {!selectedSignal?.quantity ? (
+            <Form.Item
+              name="quantity"
+              label="评估数量"
+              rules={[{ required: !selectedSignal?.target_weight }]}
+            >
+              <Input
+                inputMode="decimal"
+                placeholder={
+                  selectedSignal?.target_weight
+                    ? "可选；不填写将进入人工复核"
+                    : "请输入数量"
+                }
+              />
+            </Form.Item>
+          ) : null}
+          <Form.Item name="reference_price" label="参考价（可选）">
+            <Input
+              inputMode="decimal"
+              placeholder={
+                selectedSignal?.reference_price ?? "请输入服务端评估参考价"
+              }
+            />
+          </Form.Item>
+        </Form>
+        {assessment.isError ? (
+          <Alert
+            type="error"
+            title="评估失败"
+            description={assessment.error.message}
+          />
+        ) : null}
+      </Modal>
     </section>
   );
 }

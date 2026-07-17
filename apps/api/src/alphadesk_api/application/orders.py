@@ -40,6 +40,7 @@ from alphadesk_domain.enums import (
     OrderStatus,
     OrderType,
     OutboxStatus,
+    RiskDecisionType,
     TimeInForce,
 )
 from alphadesk_domain.order_workflow import OrderStateMachine
@@ -883,6 +884,13 @@ class OrderQueryService:
         instrument = await uow.instruments.get_by_id(order.instrument_id)
         commands = await uow.order_commands.list_by_order(order.id)
         outbox = await uow.outbox.list_by_aggregate("ORDER", order.id)
+        decisions, _ = await uow.risk_decisions.list(offset=0, limit=1, order_id=order.id)
+        risk_decision = decisions[0] if decisions else None
+        risk_rules = (
+            []
+            if risk_decision is None
+            else await uow.risk_rule_evaluations.list_by_decision(risk_decision.id)
+        )
         estimated_notional = (
             (order.requested_quantity * order.limit_price).quantize(Decimal("0.01"))
             if order.order_type is OrderType.LIMIT and order.limit_price is not None
@@ -917,6 +925,25 @@ class OrderQueryService:
             "warnings": list(ORDER_WARNINGS),
             "commands": [_command_summary(command) for command in commands],
             "outbox": [_outbox_summary(message) for message in outbox],
+            "risk_decision_id": None if risk_decision is None else str(risk_decision.id),
+            "risk_decision": None
+            if risk_decision is None
+            else (
+                "PASS"
+                if risk_decision.overall_decision is RiskDecisionType.ALLOW
+                else risk_decision.overall_decision.value
+            ),
+            "risk_evaluated_at": None if risk_decision is None else risk_decision.evaluated_at,
+            "risk_rule_summary": [
+                {
+                    "rule_key": rule.rule_key,
+                    "decision": rule.decision.value,
+                    "reason_code": rule.reason_code,
+                    "message": rule.message,
+                }
+                for rule in risk_rules
+                if rule.decision is not RiskDecisionType.ALLOW
+            ],
         }
 
 
