@@ -1,5 +1,24 @@
 # 架构总览
 
+> BT01 增量：同步日线回测在 FastAPI 模块化单体内运行，只读取 PostgreSQL 历史 MarketBar。BacktestClock 驱动 Strategy -> Signal -> R01 -> M05 -> B01 -> M04；每个 run 使用独立模拟账户。回测命令 Outbox 明确 SUPPRESSED/BACKTEST_ENGINE，不进入 Redis 或外部执行器。详见 [daily_backtest.md](daily_backtest.md) 与 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。
+
+## BT01 确定性日线链路
+
+```mermaid
+flowchart LR
+  Bar["PostgreSQL MarketBar"] --> Clock["BacktestClock"]
+  Clock --> Strategy
+  Strategy --> Signal
+  Signal --> Risk["R01 RiskDecision"]
+  Risk --> Order["M05 Order + suppressed Outbox"]
+  Order --> Broker["B01 simulated broker"]
+  Broker --> Fill
+  Fill --> Ledger["M04 isolated ledger"]
+  Ledger --> Result["Equity / Metrics / Integrity"]
+```
+
+这个链路不是 Redis 实时链路，也不是未来 Windows Agent/Broker 链路。T 日 close 产生 Signal；下一根可用日线 open 才能执行。
+
 > M05 状态：Web/FastAPI 已具备本地手工订单事实管道。确认事务只写 PostgreSQL 的 Action、Transition、Command、Event、Audit 与 PENDING Outbox；没有 Publisher、Redis 订单流、执行器、Broker、Fill 或实盘。QUEUED 不等于已发送。
 
 > The real-time market provider is currently `disabled`; historical prices cannot act as real-time prices. MiniQMT can only arrive through a Windows Agent after M06. There is no real-trading capability and this system must not be publicly deployed.

@@ -1,5 +1,7 @@
 # S01 统一策略接口
 
+> BT01 复用同一 StrategyRegistry、StrategyContext、参数校验和 SignalDraft 映射。BACKTEST StrategyRun 与 RESEARCH 运行隔离；initialize/finalize 各调用一次，on_bar 按 instrument_id 稳定顺序调用。Context.current_time 来自 BacktestClock，策略只接收截至当前的 bar，只能生成 SignalDraft，不能直接创建 Order 或访问账本。详见 [backtest_time_model.md](backtest_time_model.md)。
+
 > S02-A 已在本契约之上完成 Decimal 增量指标与 `volume_breakout`、
 > `trend_pullback`、`atr_channel` 基础策略；计算定义和边界见
 > [strategy_library.md](strategy_library.md)。S02-B 尚未开始。

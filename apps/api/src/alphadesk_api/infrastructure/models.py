@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphadesk_api.infrastructure.database import Base
+from alphadesk_domain.backtest import BacktestEventType, BacktestRunStatus
 from alphadesk_domain.broker import BrokerExecutionMode, BrokerExecutionStatus
 from alphadesk_domain.enums import (
     AccountStatus,
@@ -1595,3 +1596,181 @@ class MarketRealtimeRunModel(MutableTimestampedModel, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+
+
+class BacktestRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "backtest_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_backtest_runs_idempotency_key"),
+        UniqueConstraint("strategy_run_id", name="uq_backtest_runs_strategy_run"),
+        UniqueConstraint("account_id", name="uq_backtest_runs_account"),
+        CheckConstraint(
+            f"status IN ({enum_values(BacktestRunStatus)})", name="backtest_run_status_valid"
+        ),
+        CheckConstraint(
+            "bars_processed >= 0 AND sessions_processed >= 0 AND signals_generated >= 0 "
+            "AND risk_passed >= 0 AND risk_rejected >= 0 AND risk_reviewed >= 0 "
+            "AND orders_created >= 0 AND fills_generated >= 0",
+            name="backtest_run_counters_non_negative",
+        ),
+        CheckConstraint("length(request_fingerprint) = 64", name="backtest_fingerprint_length"),
+        Index("ix_backtest_runs_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    strategy_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_runs.id", ondelete="RESTRICT")
+    )
+    account_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    bars_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sessions_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signals_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    risk_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    risk_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    risk_reviewed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    orders_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fills_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class BacktestEquityPointModel(TimestampedModel, Base):
+    __tablename__ = "backtest_equity_points"
+    __table_args__ = (
+        UniqueConstraint("run_id", "timestamp", name="uq_backtest_equity_run_timestamp"),
+        CheckConstraint("positions_count >= 0", name="backtest_equity_positions_non_negative"),
+        CheckConstraint(
+            "cash >= 0 AND market_value >= 0 AND gross_exposure >= 0",
+            name="backtest_equity_values_non_negative",
+        ),
+        CheckConstraint(
+            "total_equity = cash + market_value", name="backtest_equity_total_balances"
+        ),
+        CheckConstraint("drawdown <= 0", name="backtest_equity_drawdown_non_positive"),
+        Index("ix_backtest_equity_run_timestamp", "run_id", "timestamp"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    market_value: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_equity: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    gross_exposure: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    net_exposure: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    daily_return: Mapped[Decimal | None] = mapped_column(RATIO)
+    cumulative_return: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    drawdown: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    positions_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class BacktestMetricModel(TimestampedModel, Base):
+    __tablename__ = "backtest_metrics"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_backtest_metrics_run"),
+        CheckConstraint(
+            "trading_sessions > 0 AND fill_count >= 0 AND buy_fill_count >= 0 "
+            "AND sell_fill_count >= 0 AND buy_fill_count + sell_fill_count = fill_count",
+            name="backtest_metric_counts_valid",
+        ),
+        CheckConstraint(
+            "initial_equity > 0 AND final_equity >= 0 AND total_turnover >= 0 "
+            "AND total_commission >= 0 AND total_stamp_duty >= 0 "
+            "AND total_transfer_fee >= 0 AND total_other_fee >= 0 AND total_fees >= 0",
+            name="backtest_metric_amounts_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    initial_equity: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    final_equity: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_return: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    annualized_return: Mapped[Decimal | None] = mapped_column(RATIO)
+    maximum_drawdown: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    annualized_volatility: Mapped[Decimal | None] = mapped_column(RATIO)
+    sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    trading_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    fill_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    buy_fill_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    sell_fill_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_turnover: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_commission: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_stamp_duty: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_transfer_fee: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_other_fee: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_fees: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    win_rate: Mapped[Decimal | None] = mapped_column(RATIO)
+    loss_rate: Mapped[Decimal | None] = mapped_column(RATIO)
+    profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(24, 12))
+    average_win: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    average_loss: Mapped[Decimal | None] = mapped_column(AMOUNT)
+    average_exposure: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    maximum_exposure: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+
+
+class BacktestTradeSummaryModel(Base):
+    __tablename__ = "backtest_trade_summaries"
+    __table_args__ = (
+        CheckConstraint(
+            "quantity > 0 AND entry_price > 0 AND exit_price > 0 AND fees >= 0",
+            name="backtest_trade_values_valid",
+        ),
+        CheckConstraint("closed_at >= opened_at", name="backtest_trade_time_valid"),
+        CheckConstraint("net_pnl = gross_pnl - fees", name="backtest_trade_pnl_balances"),
+        Index("ix_backtest_trades_run_closed", "run_id", "closed_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    exit_price: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    gross_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    fees: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    net_pnl: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+
+
+class BacktestEventModel(Base):
+    __tablename__ = "backtest_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence_number", name="uq_backtest_events_run_sequence"),
+        CheckConstraint(
+            f"event_type IN ({enum_values(BacktestEventType)})", name="backtest_event_type_valid"
+        ),
+        CheckConstraint("sequence_number >= 1", name="backtest_event_sequence_positive"),
+        Index("ix_backtest_events_run_sequence", "run_id", "sequence_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(String(256), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

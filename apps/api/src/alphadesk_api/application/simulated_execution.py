@@ -61,6 +61,7 @@ from alphadesk_domain.values import as_utc
 ZERO = Decimal("0")
 LOCAL_CONSUMER = "LOCAL_SIMULATED_BROKER"
 LOCAL_SUPPRESSION_REASON = "LOCAL_SIMULATED_EXECUTION"
+BACKTEST_SUPPRESSION_REASON = "BACKTEST_ENGINE"
 EXECUTABLE_STATUSES = frozenset(
     {OrderStatus.QUEUED, OrderStatus.BROKER_ACCEPTED, OrderStatus.PARTIALLY_FILLED}
 )
@@ -398,6 +399,7 @@ class SimulatedBrokerExecutionService:
                 },
                 source="ALPHADESK_B01",
                 actor_type=OrderActorType.BROKER,
+                occurred_at=requested_at,
             )
             self._failure_injector("after_execution_attempt")
 
@@ -483,6 +485,7 @@ class SimulatedBrokerExecutionService:
                     uow=uow,
                     account_id=account.id,
                     correlation_id=request.correlation_id,
+                    occurred_at=requested_at,
                 )
                 if reconciliation.run.status is not ReconciliationStatus.MATCHED:
                     raise ApplicationError(
@@ -512,6 +515,7 @@ class SimulatedBrokerExecutionService:
                     },
                     source="ALPHADESK_B01",
                     actor_type=OrderActorType.BROKER,
+                    occurred_at=requested_at,
                 )
             self._failure_injector("after_command_consumed")
             outbox_suppressed_now = outbox.status is OutboxStatus.PENDING
@@ -536,6 +540,7 @@ class SimulatedBrokerExecutionService:
                     },
                     source="ALPHADESK_B01",
                     actor_type=OrderActorType.BROKER,
+                    occurred_at=requested_at,
                 )
             self._failure_injector("after_outbox_suppressed")
             self._failure_injector("before_commit")
@@ -558,16 +563,24 @@ class SimulatedBrokerExecutionService:
                 raise ApplicationError(
                     "BROKER_COMMAND_ALREADY_CONSUMED", "submit command is not pending"
                 )
-            if outbox.status is not OutboxStatus.PENDING:
-                raise ApplicationError("BROKER_OUTBOX_NOT_PENDING", "submit outbox is not pending")
+            if not (
+                outbox.status is OutboxStatus.PENDING
+                or (
+                    outbox.status is OutboxStatus.SUPPRESSED
+                    and outbox.suppression_reason == BACKTEST_SUPPRESSION_REASON
+                )
+            ):
+                raise ApplicationError(
+                    "BROKER_OUTBOX_NOT_PENDING", "submit outbox is not locally executable"
+                )
             return
         if command.status is not CommandStatus.CONSUMED or command.consumed_by != LOCAL_CONSUMER:
             raise ApplicationError(
                 "BROKER_COMMAND_ALREADY_CONSUMED", "command was consumed by another mode"
             )
-        if (
-            outbox.status is not OutboxStatus.SUPPRESSED
-            or outbox.suppression_reason != LOCAL_SUPPRESSION_REASON
+        if outbox.status is not OutboxStatus.SUPPRESSED or outbox.suppression_reason not in (
+            LOCAL_SUPPRESSION_REASON,
+            BACKTEST_SUPPRESSION_REASON,
         ):
             raise ApplicationError(
                 "BROKER_OUTBOX_NOT_SUPPRESSED", "local submit outbox is not suppressed"
@@ -807,6 +820,7 @@ class SimulatedBrokerExecutionService:
             },
             source="ALPHADESK_B01",
             actor_type=OrderActorType.BROKER,
+            occurred_at=occurred_at,
         )
 
     @staticmethod
@@ -840,6 +854,7 @@ class SimulatedBrokerExecutionService:
                 unpriced_position_count=len(open_positions),
                 correlation_id=correlation_id,
                 metadata={"scope": "B01-B", "valuation": "not_requested"},
+                created_at=occurred_at,
             )
         )
 

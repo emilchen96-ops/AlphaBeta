@@ -1,5 +1,7 @@
 # AlphaDesk
 
+> BT01 日线回测已实现：本地历史 `MarketBar` 由确定性时钟驱动，策略 Signal 复用 R01 风控、M05 订单、B01 模拟成交与 M04 独立账本，并提供指标、Integrity、API、CLI 和 React 页面。T 日收盘信号最早在下一根可用日线 open 执行。它不读取实时行情、不发布 Redis 订单、不连接 MiniQMT/券商，也不会产生真实交易。详见 [BT01 日线回测](docs/daily_backtest.md)。下一阶段仅为 RT01 历史回放模拟运行。
+
 > M05 已完成本地订单事实管道：模拟账户手工创建、人工确认、取消、过期、查询/Timeline、`SUBMIT_ORDER/PENDING` 与 Transactional Outbox 原子写入，以及 `/orders` 网页。QUEUED 不是已发送，Outbox PENDING 不是已发布；没有 Broker、Executor、Fill、资金/组合风控或实盘。详见 [订单](docs/orders.md)、[人工确认](docs/order_confirmation.md) 与 [Outbox](docs/transactional_outbox.md)。
 
 > M04.1A 已加入默认禁用的免费真实行情基础设施：BaoStock 历史行情、AKShare/EastMoney 快照与近期 1 分钟线、独立单 Leader Worker、Redis 最新报价、版本化 WebSocket 和只读盘中估值。全部免费数据仅供研究、非交易级；没有新增下单、撮合、Broker 或实盘能力。

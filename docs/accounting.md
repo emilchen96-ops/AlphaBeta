@@ -1,5 +1,7 @@
 # 模拟账户与只追加账本
 
+> BT01 每个 BacktestRun 创建唯一 SIMULATED 账户，初始现金通过 M04 合法初始化服务入账，不直接修改 CashBalance。每个 Fill 继续由 FillAccountingService 原子写入现金/持仓账本、投影、快照和 Reconciliation。日终估值只使用截至当前已知 close；缺 bar 时沿用此前价格并标记 STALE_VALUATION。
+
 > B01-C 的网页和 API 只展示 M04 权威投影；模拟成交后会刷新现金、持仓、快照与核对，但前端不自行计算或修改账本。
 
 > B01-B 复用 `FillAccountingService.apply_in_uow`，把模拟 Fill 与 M04 资金、持仓、两类账本、快照和

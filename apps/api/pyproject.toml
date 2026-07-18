@@ -46,6 +46,7 @@ markers = [
   "s01: strategy interface and historical-runner milestone tests",
   "r01: risk decision and order safety-gate milestone tests",
   "b01: simulated Broker execution and accounting milestone tests",
+  "bt01: deterministic A-share daily backtest milestone tests",
   "concurrency: requires real PostgreSQL locking",
   "accounting_regression: verifies order facts do not alter M04 ledgers",
   "external: requires explicit access to free external providers",
@@ -59,7 +60,10 @@ line-length = 100
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"alembic/versions/*.py" = ["D", "E501"]
+"alembic/versions/*.py" = ["D", "E501", "B007"]
+
+[tool.ruff.format]
+exclude = ["alembic/versions/0009_r01_risk_decision_pipeline.py"]
 
 [tool.mypy]
 python_version = "3.12"

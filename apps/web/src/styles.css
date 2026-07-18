@@ -253,3 +253,35 @@ body {
   background: #fafafa;
   font-weight: 600;
 }
+
+.backtest-page > .ant-alert {
+  margin-bottom: 16px;
+}
+
+.backtest-section {
+  margin-top: 16px;
+}
+
+.backtest-section .ant-descriptions,
+.backtest-section > .ant-alert,
+.backtest-section > .ant-space {
+  margin-top: 16px;
+}
+
+.backtest-nested-card {
+  margin-bottom: 16px;
+  background: #fafcff;
+}
+
+.backtest-chart {
+  min-height: 290px;
+}
+
+.backtest-chart svg {
+  display: block;
+  width: 100%;
+  height: 260px;
+  margin-top: 8px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+}

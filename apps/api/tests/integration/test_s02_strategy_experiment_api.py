@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from alphadesk_api.app_factory import create_app
 from alphadesk_api.core.config import Settings
+from tests.helpers import require_test_database_url
 
 
 class Probe:
@@ -32,6 +33,7 @@ def payload(key: str) -> dict[str, object]:
 @pytest.mark.integration
 @pytest.mark.s01
 def test_strategy_experiment_api_end_to_end() -> None:
+    require_test_database_url()
     settings = Settings(
         environment="test",
         postgres_host="postgres_test",
@@ -90,6 +92,7 @@ def test_strategy_experiment_api_end_to_end() -> None:
 @pytest.mark.integration
 @pytest.mark.s01
 def test_strategy_experiment_api_validation_and_not_found() -> None:
+    require_test_database_url()
     settings = Settings(
         environment="test",
         postgres_host="postgres_test",

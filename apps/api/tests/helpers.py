@@ -32,3 +32,9 @@ def require_b01_test_database_url() -> URL:
     if os.getenv("ALPHADESK_RUN_B01_INTEGRATION", "false").lower() != "true":
         pytest.skip("B01 PostgreSQL integration tests require explicit opt-in")
     return require_test_database_url()
+
+
+def require_bt01_test_database_url() -> URL:
+    if os.getenv("ALPHADESK_RUN_BT01_INTEGRATION", "false").lower() != "true":
+        pytest.skip("BT01 PostgreSQL integration tests require explicit opt-in")
+    return require_test_database_url()

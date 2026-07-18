@@ -1,5 +1,7 @@
 # M05 订单事实管道
 
+> BT01 订单来源固定为 STRATEGY，source_id 是 Signal ID，actor 是 SYSTEM/BACKTEST_ENGINE。内部自动确认只允许当前 BACKTEST 独立账户且已有 PASS RiskDecision；仍复用 WAITING_CONFIRMATION -> QUEUED 的 M05 Action/Transition/Command/Event/Audit。Outbox 写为 SUPPRESSED，suppression_reason=BACKTEST_ENGINE，不发布 Redis。T 日 close 创建的订单不能在 T 日成交。
+
 > B01-C 只允许 `QUEUED`、`BROKER_ACCEPTED`、`PARTIALLY_FILLED` 订单进入本地模拟执行；入口、结果与只读 Fill 查询见 [simulated_broker_ui.md](simulated_broker_ui.md)。
 
 > B01-B 已在 M05 封板边界之外增加本地模拟执行消费者：只有受控服务可锁定 QUEUED Command、推进

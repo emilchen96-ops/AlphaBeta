@@ -63,8 +63,8 @@ class StrategyRun:
         self.request_fingerprint = non_empty(self.request_fingerprint, "request_fingerprint")
         self.strategy_key = non_empty(self.strategy_key, "strategy_key")
         self.strategy_version = non_empty(self.strategy_version, "strategy_version")
-        if self.environment is not StrategyEnvironment.RESEARCH:
-            raise ValueError("S01-B strategy runs only support RESEARCH")
+        if self.environment not in (StrategyEnvironment.RESEARCH, StrategyEnvironment.BACKTEST):
+            raise ValueError("historical strategy runs only support RESEARCH or BACKTEST")
         self.start_at = as_utc(self.start_at, "start_at")
         self.end_at = as_utc(self.end_at, "end_at")
         if self.start_at >= self.end_at:

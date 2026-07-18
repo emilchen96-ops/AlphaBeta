@@ -1,5 +1,7 @@
 # 架构决策记录（ADR）索引
 
+> BT01 新增：[ADR 0017](0017-deterministic-daily-backtest-pipeline.md)。
+
 > M05 新增：[ADR 0015](0015-order-state-machine-and-manual-confirmation.md) 与 [ADR 0016](0016-transactional-outbox-command-boundary.md)。
 
 > M04.1A 新增：[ADR 0012](0012-free-provider-boundary.md)、[ADR 0013](0013-independent-market-worker.md)、[ADR 0014](0014-ephemeral-quote-push.md)。
@@ -20,5 +22,8 @@
 | [0012](0012-free-provider-boundary.md) | 免费行情采用显式能力与用途边界 |
 | [0013](0013-independent-market-worker.md) | 免费行情抓取使用独立单 Leader Worker |
 | [0014](0014-ephemeral-quote-push.md) | 最新报价和网页推送使用可重建 Redis 临时链路 |
+| [0015](0015-order-state-machine-and-manual-confirmation.md) | 订单状态机与人工确认边界 |
+| [0016](0016-transactional-outbox-command-boundary.md) | 订单命令与 Transactional Outbox 边界 |
+| [0017](0017-deterministic-daily-backtest-pipeline.md) | 确定性日线回测复用 R01/M05/B01/M04 事实管道 |
 
 除非有新的 ADR 替代，以下决策均为 `Accepted` 并对后续实现有效。

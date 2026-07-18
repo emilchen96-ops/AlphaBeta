@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> Migration `0011_bt01_daily_backtest.py` 新增 `backtest_runs`、`backtest_equity_points`、`backtest_metrics`、`backtest_trade_summaries` 和 `backtest_events`。run 通过 strategy_run_id、account_id、correlation_id 追踪既有 Signal/RiskDecision/Order/Fill，不复制交易事实表。idempotency_key 唯一；equity 的 `(run_id,timestamp)` 唯一；每个 run 只有一份 metrics；时间为 TIMESTAMPTZ，金额与比例为 NUMERIC。Migration 可完整降级至 `0010_b01_simulated_execution`。
+
 > B01-B Migration `0010_b01` 新增只追加 `broker_execution_attempts`，并扩展 Fill 的 Attempt、
 > Command、连续序号和稳定执行引用。Command 新增明确的本地 `CONSUMED` 事实；Outbox 新增
 > `SUPPRESSED` 及固定抑制原因，避免本地模拟成交命令未来被 Publisher 外发。Attempt、Fill、M04

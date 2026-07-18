@@ -15,7 +15,7 @@ from alphadesk_api.application.order_contracts import payload_hash
 from alphadesk_api.application.orders import CreateOrderRequest, OrderIntentService
 from alphadesk_api.core.config import Settings
 from alphadesk_domain.entities import AuditLog, DomainEvent, Order, RiskDecision, RiskRuleEvaluation
-from alphadesk_domain.enums import OrderSide, OrderType, RiskDecisionType
+from alphadesk_domain.enums import OrderIntentSource, OrderSide, OrderType, RiskDecisionType
 from alphadesk_domain.risk import (
     RiskAccountSnapshot,
     RiskEvaluationResult,
@@ -389,13 +389,25 @@ class RiskGatedOrderService:
         request = RiskRequest(
             request_id=uuid4(),
             correlation_id=order_request.correlation_id,
-            source_type=RiskRequestSource.MANUAL_ORDER,
+            source_type=(
+                RiskRequestSource.STRATEGY_SIGNAL
+                if order_request.intent_source == OrderIntentSource.STRATEGY
+                else RiskRequestSource.MANUAL_ORDER
+            ),
+            source_id=order_request.source_id,
+            signal_id=(
+                order_request.source_id
+                if order_request.intent_source == OrderIntentSource.STRATEGY
+                else None
+            ),
+            strategy_key=order_request.strategy_key,
             account_id=order_request.account_id,
             instrument_id=order_request.instrument_id,
             side=OrderSide(order_request.side),
             order_type=OrderType(order_request.order_type),
             quantity=order_request.quantity,
             limit_price=order_request.limit_price,
+            reference_price=order_request.reference_price,
             requested_at=requested_at,
         )
         order_id = uuid4()

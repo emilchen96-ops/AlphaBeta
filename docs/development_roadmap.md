@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-18：BT01 A 股日线回测功能已实现，包含确定性时间、独立账户、完整事实管道、绩效、API/CLI/UI 和 0011 Migration。最终封板仍以本任务真实执行的全量、PostgreSQL Migration/Demo 和浏览器验收结果为准。下一阶段仅为 RT01 历史回放模拟运行，尚未实施。
+
 > 当前进度：B01-A 与 B01-B 已完成开发。系统具备纯领域模拟 Broker、追加式执行尝试、持久化
 > Fill、M05 状态推进、M04 原子记账、Command 本地消费和 Outbox 抑制。B01-C 尚未开始，B01 整体
 > 尚未完成；当前没有 API、前端、Windows 执行器、MiniQMT、外部 Broker 或实盘能力。详见

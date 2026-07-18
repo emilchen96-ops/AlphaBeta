@@ -1,5 +1,7 @@
 # B01-A 模拟 Broker 领域核心
 
+> BT01 在下一根可用日线的 SESSION_OPEN 构造快照：open/last/bid/ask 均为 bar.open，不使用当日 high/low/close 决定成交。最大可成交量受 bar.volume、participation rate 和 lot size 限制。执行继续使用 B01 的费用、滑点、Attempt、Fill 和状态机；DAY 剩余量在该执行日合法过期。
+
 > B01-C 已通过本地 API、CLI 和网页复用本契约，操作说明见
 > [模拟执行 API、CLI 与网页](simulated_broker_ui.md)。所有入口仍只支持本地模拟账户。
 

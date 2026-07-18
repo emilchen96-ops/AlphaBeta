@@ -1,5 +1,7 @@
 # R01-A 轻量风控核心
 
+> BT01 的 quantity Signal 通过现有 R01 引擎形成持久化 RiskDecision。只有 PASS 才能创建 M05 Order；REJECT/REVIEW 不创建订单，target_weight 不被引擎猜测换算。回测不绕过现金、可卖数量、价格和限额规则；R01 PASS 也不保证 B01 一定成交。
+
 > R01-A/B/C 已完成。纯评估器保持无框架依赖；持久化、订单安全门和查询契约见 [risk_decision_pipeline.md](risk_decision_pipeline.md)，只读页面见 [risk_ui.md](risk_ui.md)。
 
 R01-A 建立纯 Python、确定性、可组合的轻量风控核心。输入是 `RiskRequest`、只读账户快照、只读标的快照与 `RiskLimits`，输出是 `RiskEvaluationResult`。本阶段只计算决策，不写数据库，不创建既有 `RiskDecision` 事实，也不接入 API、网页、订单管道、Redis、Broker 或 MiniQMT。

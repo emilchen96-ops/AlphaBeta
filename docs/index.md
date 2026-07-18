@@ -1,5 +1,9 @@
 # AlphaDesk 文档索引
 
+> 当前里程碑：**BT01 A 股日线回测已实现，正在执行最终环境验收**。核心说明见 [日线回测](daily_backtest.md)、[时间模型](backtest_time_model.md)、[绩效指标](backtest_metrics.md)、[网页界面](backtest_ui.md) 与 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。下一阶段仅为 RT01 历史回放模拟运行，尚未实施。
+
+BT01 开发必读：`daily_backtest.md`、`backtest_time_model.md`、`strategy_interface.md`、`risk_engine.md`、`orders.md`、`simulated_broker.md`、`accounting.md`、`database_schema.md` 和 ADR 0017。
+
 > 当前执行里程碑为 **B01 完成开发，等待最终环境验收**：B01-A Broker 契约与确定性计算见
 > [simulated_broker.md](simulated_broker.md)；B01-B Attempt、Fill、M04 原子记账、Command 消费和
 > Outbox 抑制见 [simulated_execution_pipeline.md](simulated_execution_pipeline.md)；B01-C API、CLI、Demo

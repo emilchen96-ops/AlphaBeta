@@ -42,8 +42,9 @@ async def append_event_and_audit(
     details: dict[str, object] | None = None,
     source: str = "ALPHADESK_M03",
     actor_type: str = "LOCAL_USER",
+    occurred_at: datetime | None = None,
 ) -> None:
-    now = datetime.now(UTC)
+    now = occurred_at or datetime.now(UTC)
     await uow.events.append(
         DomainEvent(
             event_id=uuid4(),
