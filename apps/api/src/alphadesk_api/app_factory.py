@@ -74,8 +74,8 @@ def create_app(
             "Local-development market-data, watchlist and simulated-account ledger endpoints. "
             "Strategy Signal endpoints expose historical research output only: Signal is not an "
             "Order and never invokes risk, broker, fills, cash, or positions. "
-            "No broker integration "
-            "or real-trading capability exists."
+            "Only deterministic local simulated execution is available; no external broker "
+            "integration or real-trading capability exists."
         ),
         version=resolved_settings.app_version,
         debug=resolved_settings.debug,

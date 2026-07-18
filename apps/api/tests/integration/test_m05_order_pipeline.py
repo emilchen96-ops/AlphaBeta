@@ -39,9 +39,7 @@ def _factory(session_factory: async_sessionmaker[AsyncSession]):
     return lambda: SqlAlchemyUnitOfWork(session_factory)
 
 
-async def _seed(
-    session_factory: async_sessionmaker[AsyncSession], *, with_cash: bool = False
-):
+async def _seed(session_factory: async_sessionmaker[AsyncSession], *, with_cash: bool = False):
     factory = _factory(session_factory)
     async with factory() as uow:
         account = TradingAccount(

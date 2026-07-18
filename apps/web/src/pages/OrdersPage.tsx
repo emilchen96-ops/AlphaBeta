@@ -33,10 +33,14 @@ import {
   confirmOrder,
   createOrder,
   getOrder,
+  getExecutionIntegrity,
+  getOrderExecutionAttempts,
+  getOrderFills,
   getOrders,
   getOrderTimeline,
 } from "../api/orders";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { SimulatedExecutionModal } from "../components/SimulatedExecutionModal/SimulatedExecutionModal";
 import { getRiskDecision } from "../api/risk";
 import type { OrderFactSummary } from "../types/orders";
 
@@ -45,7 +49,18 @@ const stateText: Record<string, string> = {
   QUEUED: "本地指令事实已创建，等待未来投递",
   CANCELLED: "已取消",
   EXPIRED: "已过期",
+  BROKER_ACCEPTED: "模拟 Broker 已接受",
+  PARTIALLY_FILLED: "模拟部分成交",
+  FILLED: "模拟全部成交",
+  EXECUTOR_REJECTED: "模拟执行拒绝",
+  FAILED: "模拟 Broker 拒绝",
 };
+
+const executableStatuses = new Set([
+  "QUEUED",
+  "BROKER_ACCEPTED",
+  "PARTIALLY_FILLED",
+]);
 
 function idempotencyKey(prefix: string, orderId?: string) {
   return `${prefix}:${orderId ?? "new"}:${crypto.randomUUID()}`;
@@ -55,6 +70,10 @@ function riskReason(item: Record<string, unknown>, fallback: string) {
   if (typeof item.message === "string") return item.message;
   if (typeof item.reason_code === "string") return item.reason_code;
   return fallback;
+}
+
+function factStatus(item: Record<string, unknown> | undefined) {
+  return typeof item?.status === "string" ? item.status : "UNKNOWN";
 }
 
 export function OrdersPage() {
@@ -68,6 +87,7 @@ export function OrdersPage() {
   const [instrumentSearch, setInstrumentSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [confirming, setConfirming] = useState<OrderFactSummary>();
+  const [executing, setExecuting] = useState<OrderFactSummary>();
   const [selectedId, setSelectedId] = useState<string | undefined>(
     searchParams.get("order_id") ?? undefined,
   );
@@ -105,11 +125,33 @@ export function OrdersPage() {
     queryFn: () => getOrderTimeline(selectedId ?? ""),
     enabled: Boolean(selectedId),
   });
+  const attempts = useQuery({
+    queryKey: ["order-execution-attempts", selectedId],
+    queryFn: () => getOrderExecutionAttempts(selectedId ?? ""),
+    enabled: Boolean(selectedId),
+  });
+  const fills = useQuery({
+    queryKey: ["order-fills", selectedId],
+    queryFn: () => getOrderFills(selectedId ?? ""),
+    enabled: Boolean(selectedId),
+  });
+  const integrity = useQuery({
+    queryKey: ["order-execution-integrity", selectedId],
+    queryFn: () => getExecutionIntegrity(selectedId ?? ""),
+    enabled: Boolean(selectedId) && (attempts.data?.total ?? 0) > 0,
+  });
 
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["orders"] });
-    await queryClient.invalidateQueries({ queryKey: ["order"] });
-    await queryClient.invalidateQueries({ queryKey: ["order-timeline"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["orders"] }),
+      queryClient.invalidateQueries({ queryKey: ["order"] }),
+      queryClient.invalidateQueries({ queryKey: ["order-timeline"] }),
+      queryClient.invalidateQueries({ queryKey: ["order-execution-attempts"] }),
+      queryClient.invalidateQueries({ queryKey: ["order-fills"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["order-execution-integrity"],
+      }),
+    ]);
   };
   const action = useMutation({
     mutationFn: (operation: () => Promise<OrderFactSummary>) => operation(),
@@ -179,7 +221,7 @@ export function OrdersPage() {
     <section>
       <PageHeader
         title="订单中心"
-        description="M05 只创建可审计的本地订单与待发布指令事实，不会连接执行器、券商或产生成交。"
+        description="人工订单先经过 R01 风控和 M05 确认；仅可使用手工快照执行本地模拟成交，不连接真实券商。"
         action={
           <Button icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
             创建订单
@@ -348,6 +390,11 @@ export function OrdersPage() {
                       }
                     >
                       取消
+                    </Button>
+                  ) : null}
+                  {executableStatuses.has(item.status) ? (
+                    <Button size="small" onClick={() => setExecuting(item)}>
+                      模拟执行
                     </Button>
                   ) : null}
                 </Space>
@@ -567,8 +614,8 @@ export function OrdersPage() {
                 icon={<CheckCircleOutlined />}
                 showIcon
                 type="info"
-                title="指令待发布"
-                description="OrderCommand PENDING：仅存在于本地数据库。"
+                title={`指令状态：${factStatus(detail.data.commands[0])}`}
+                description="本地模拟执行后 Command 会变为 CONSUMED，不会发送到外部执行器。"
               />
             ) : (
               <Empty description="尚未创建指令" />
@@ -579,8 +626,8 @@ export function OrdersPage() {
                 icon={<CloseCircleOutlined />}
                 showIcon
                 type="warning"
-                title="消息尚未发布"
-                description="Outbox PENDING：未写入 Redis。"
+                title={`Outbox 状态：${factStatus(detail.data.outbox[0])}`}
+                description="本地模拟执行后 Outbox 会被 SUPPRESSED；SUPPRESSED 不等于 PUBLISHED。"
               />
             ) : (
               <Empty description="尚无 Outbox" />
@@ -602,9 +649,119 @@ export function OrdersPage() {
                 })) ?? []
               }
             />
+            <Typography.Title level={5}>模拟执行</Typography.Title>
+            <Alert
+              showIcon
+              type="warning"
+              title="本地模拟成交记录"
+              description="显式市场快照不连接真实行情或券商；Fill 会修改模拟账户账本。"
+              action={
+                executableStatuses.has(detail.data.status) ? (
+                  <Button
+                    size="small"
+                    onClick={() => setExecuting(detail.data)}
+                  >
+                    模拟执行
+                  </Button>
+                ) : undefined
+              }
+            />
+            <Table
+              rowKey="id"
+              size="small"
+              loading={attempts.isLoading}
+              pagination={false}
+              dataSource={attempts.data?.items ?? []}
+              locale={{ emptyText: "暂无模拟执行记录" }}
+              columns={[
+                { title: "#", dataIndex: "attempt_number" },
+                { title: "输入状态", dataIndex: "input_order_status" },
+                { title: "结果", dataIndex: "result_status" },
+                { title: "尝试数量", dataIndex: "attempted_quantity" },
+                { title: "成交数量", dataIndex: "filled_quantity" },
+                { title: "剩余数量", dataIndex: "remaining_quantity" },
+                {
+                  title: "均价",
+                  dataIndex: "average_fill_price",
+                  render: (value: string | null) => value ?? "—",
+                },
+                {
+                  title: "时间",
+                  dataIndex: "completed_at",
+                  render: (value: string) => new Date(value).toLocaleString(),
+                },
+              ]}
+            />
+            <Typography.Title level={5}>Fill 与账本影响</Typography.Title>
+            <Table
+              rowKey="fill_id"
+              size="small"
+              loading={fills.isLoading}
+              pagination={false}
+              dataSource={fills.data?.items ?? []}
+              locale={{ emptyText: "暂无成交" }}
+              columns={[
+                { title: "方向", dataIndex: "side" },
+                { title: "数量", dataIndex: "quantity" },
+                { title: "价格", dataIndex: "price" },
+                { title: "成交额", dataIndex: "gross_amount" },
+                { title: "总费用", dataIndex: "total_fee" },
+                { title: "现金影响", dataIndex: "net_cash_effect" },
+                {
+                  title: "执行引用",
+                  dataIndex: "execution_reference",
+                  ellipsis: true,
+                },
+              ]}
+            />
+            {integrity.data ? (
+              <Alert
+                style={{ marginTop: 12 }}
+                showIcon
+                type={integrity.data.valid ? "success" : "error"}
+                title={
+                  integrity.data.valid
+                    ? "模拟执行完整性检查通过"
+                    : "模拟执行存在差异"
+                }
+                description={
+                  integrity.data.valid
+                    ? "Attempt、Fill、账本与订单状态一致。"
+                    : integrity.data.issues
+                        .map((item) => `${item.code}: ${item.message}`)
+                        .join("；")
+                }
+              />
+            ) : null}
           </>
         ) : null}
       </Drawer>
+      {executing ? (
+        <SimulatedExecutionModal
+          order={executing}
+          open
+          onClose={() => setExecuting(undefined)}
+          onSuccess={async (result) => {
+            setSelectedId(result.order_id);
+            await refresh();
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ["account-summary"] }),
+              queryClient.invalidateQueries({
+                queryKey: ["account-live-summary"],
+              }),
+              queryClient.invalidateQueries({ queryKey: ["cash-ledger"] }),
+              queryClient.invalidateQueries({ queryKey: ["position-ledger"] }),
+              queryClient.invalidateQueries({
+                queryKey: ["account-snapshots"],
+              }),
+              queryClient.invalidateQueries({
+                queryKey: ["account-reconciliations"],
+              }),
+              queryClient.invalidateQueries({ queryKey: ["fills"] }),
+            ]);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

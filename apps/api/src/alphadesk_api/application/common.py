@@ -41,6 +41,7 @@ async def append_event_and_audit(
     outcome: str = "SUCCESS",
     details: dict[str, object] | None = None,
     source: str = "ALPHADESK_M03",
+    actor_type: str = "LOCAL_USER",
 ) -> None:
     now = datetime.now(UTC)
     await uow.events.append(
@@ -59,7 +60,7 @@ async def append_event_and_audit(
     )
     await uow.audit_logs.append(
         AuditLog(
-            actor_type="LOCAL_USER",
+            actor_type=actor_type,
             action=action or event_type,
             resource_type=entity_type,
             resource_id=entity_id,

@@ -491,6 +491,8 @@ class OrderCommand:
     payload: JsonObject = field(default_factory=dict)
     signature_reference: str | None = None
     acknowledged_at: datetime | None = None
+    consumed_at: datetime | None = None
+    consumed_by: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -503,6 +505,14 @@ class OrderCommand:
             raise ValueError("expires_at must be later than created_at")
         if self.acknowledged_at is not None:
             self.acknowledged_at = as_utc(self.acknowledged_at, "acknowledged_at")
+        if self.consumed_at is not None:
+            self.consumed_at = as_utc(self.consumed_at, "consumed_at")
+        if (self.consumed_at is None) != (self.consumed_by is None):
+            raise ValueError("consumed_at and consumed_by must be supplied together")
+        if (self.status is CommandStatus.CONSUMED) != (self.consumed_at is not None):
+            raise ValueError("CONSUMED status must match consumption fields")
+        if self.consumed_by is not None:
+            self.consumed_by = non_empty(self.consumed_by, "consumed_by")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 
 
@@ -524,6 +534,10 @@ class Fill:
     correlation_id: UUID
     id: UUID = field(default_factory=uuid4)
     broker_fill_id: str | None = None
+    execution_attempt_id: UUID | None = None
+    command_id: UUID | None = None
+    sequence_number: int | None = None
+    execution_reference: str | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
 
@@ -543,6 +557,20 @@ class Fill:
             raise ValueError("fill quantity and price must be positive")
         if any(value < 0 for value in (self.commission, self.tax, self.other_fee)):
             raise ValueError("fill fees must be non-negative")
+        if self.sequence_number is not None and self.sequence_number < 1:
+            raise ValueError("fill sequence_number must be positive")
+        execution_links = (
+            self.execution_attempt_id,
+            self.command_id,
+            self.sequence_number,
+            self.execution_reference,
+        )
+        if any(item is not None for item in execution_links) and any(
+            item is None for item in execution_links
+        ):
+            raise ValueError("fill execution link fields must be supplied together")
+        if self.execution_reference is not None:
+            self.execution_reference = non_empty(self.execution_reference, "execution_reference")
         self.executed_at = as_utc(self.executed_at, "executed_at")
         self.received_at = as_utc(self.received_at, "received_at")
         self.created_at = as_utc(self.created_at, "created_at")
@@ -608,6 +636,8 @@ class OutboxMessage:
     headers: JsonObject = field(default_factory=dict)
     attempts: int = 0
     published_at: datetime | None = None
+    suppressed_at: datetime | None = None
+    suppression_reason: str | None = None
     last_error: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -618,6 +648,14 @@ class OutboxMessage:
         self.available_at = as_utc(self.available_at, "available_at")
         if self.published_at is not None:
             self.published_at = as_utc(self.published_at, "published_at")
+        if self.suppressed_at is not None:
+            self.suppressed_at = as_utc(self.suppressed_at, "suppressed_at")
+        if (self.suppressed_at is None) != (self.suppression_reason is None):
+            raise ValueError("suppressed_at and suppression_reason must be supplied together")
+        if (self.status is OutboxStatus.SUPPRESSED) != (self.suppressed_at is not None):
+            raise ValueError("SUPPRESSED status must match suppression fields")
+        if self.suppression_reason is not None:
+            self.suppression_reason = non_empty(self.suppression_reason, "suppression_reason")
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 

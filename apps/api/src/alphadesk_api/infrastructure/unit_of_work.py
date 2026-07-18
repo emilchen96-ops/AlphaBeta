@@ -9,6 +9,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyAccountReconciliationRepository,
     SqlAlchemyAccountSnapshotRepository,
     SqlAlchemyAuditLogRepository,
+    SqlAlchemyBrokerExecutionAttemptRepository,
     SqlAlchemyCashBalanceRepository,
     SqlAlchemyCashLedgerRepository,
     SqlAlchemyDomainEventRepository,
@@ -76,6 +77,7 @@ class SqlAlchemyUnitOfWork:
         self.order_state_transitions = SqlAlchemyOrderStateTransitionRepository(session)
         self.order_commands = SqlAlchemyOrderCommandRepository(session)
         self.fills = SqlAlchemyFillRepository(session)
+        self.broker_execution_attempts = SqlAlchemyBrokerExecutionAttemptRepository(session)
         self.risk_decisions = SqlAlchemyRiskDecisionRepository(session)
         self.risk_rule_evaluations = SqlAlchemyRiskRuleEvaluationRepository(session)
         self.events = SqlAlchemyDomainEventRepository(session)

@@ -1,5 +1,11 @@
 # M05 订单事实管道
 
+> B01-C 只允许 `QUEUED`、`BROKER_ACCEPTED`、`PARTIALLY_FILLED` 订单进入本地模拟执行；入口、结果与只读 Fill 查询见 [simulated_broker_ui.md](simulated_broker_ui.md)。
+
+> B01-B 已在 M05 封板边界之外增加本地模拟执行消费者：只有受控服务可锁定 QUEUED Command、推进
+> 既有状态机、创建 Fill，并将 Outbox 明确抑制为 `SUPPRESSED`。M05 的创建、确认和取消语义不变。
+> 详见 [模拟执行事实管道](simulated_execution_pipeline.md)。
+
 > R01-B 起，公开 `POST /api/v1/orders` 只能经 `RiskGatedOrderService`。R01-C 已在创建响应和订单详情中展示关联 RiskDecision、评估时间与主要规则摘要，并提供双向跳转。风控未通过时不创建 Order。确认、取消及 Outbox 边界不变。
 
 M05 提供本地、人工确认、可审计的订单事实管道。它只接受 `SIMULATED + ACTIVE` 账户和有效 Instrument；不调用 Broker、执行器或 Redis，不创建 Fill，也不改变现金、持仓或账本。
@@ -24,4 +30,5 @@ M05 提供本地、人工确认、可审计的订单事实管道。它只接受 
 
 ## 能力限制
 
-当前没有交易级实时行情、资金与组合风控、身份认证、Broker、Outbox Publisher 或实盘能力。应用只能在本地可信网络开发，不得部署公网。
+当前没有交易级实时行情、身份认证、外部 Broker、Outbox Publisher 或实盘能力。B01-B 仅提供本地
+确定性模拟成交，应用仍只能在本地可信网络开发，不得部署公网。

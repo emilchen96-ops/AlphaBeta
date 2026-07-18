@@ -17,6 +17,7 @@ from alphadesk_api.infrastructure.models import (
     AccountReconciliationRunModel,
     AccountSnapshotModel,
     AuditLogModel,
+    BrokerExecutionAttemptModel,
     CashLedgerEntryModel,
     DomainEventModel,
     ExecutorDeviceAccountModel,
@@ -95,6 +96,7 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import StrategyRun
@@ -307,6 +309,12 @@ class SqlAlchemyTradingAccountRepository(SqlAlchemyRepository[TradingAccount, Tr
 
     async def get_by_id(self, entity_id: UUID) -> TradingAccount | None:
         return await self._get_by_id(entity_id)
+
+    async def get_for_update(self, entity_id: UUID) -> TradingAccount | None:
+        row = await self._session.scalar(
+            select(TradingAccountModel).where(TradingAccountModel.id == entity_id).with_for_update()
+        )
+        return None if row is None else entity_from_model(TradingAccount, row)
 
     async def get_by_business_key(self, account_code: str) -> TradingAccount | None:
         row = await self._session.scalar(
@@ -1249,6 +1257,17 @@ class SqlAlchemyOrderCommandRepository(SqlAlchemyRepository[OrderCommand, OrderC
         )
         return None if row is None else entity_from_model(OrderCommand, row)
 
+    async def get_submit_command_for_update(self, order_id: UUID) -> OrderCommand | None:
+        row = await self._session.scalar(
+            select(OrderCommandModel)
+            .where(
+                OrderCommandModel.order_id == order_id,
+                OrderCommandModel.command_type == CommandType.SUBMIT_ORDER.value,
+            )
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(OrderCommand, row)
+
     async def list_by_order(self, order_id: UUID) -> list[OrderCommand]:
         rows = await self._session.scalars(
             select(OrderCommandModel)
@@ -1270,6 +1289,20 @@ class SqlAlchemyOrderCommandRepository(SqlAlchemyRepository[OrderCommand, OrderC
             or 0
         )
 
+    async def update(self, entity: OrderCommand) -> None:
+        await self._session.execute(
+            update(OrderCommandModel)
+            .where(OrderCommandModel.id == entity.id)
+            .values(
+                status=entity.status.value,
+                acknowledged_at=entity.acknowledged_at,
+                consumed_at=entity.consumed_at,
+                consumed_by=entity.consumed_by,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
 
 class SqlAlchemyFillRepository(SqlAlchemyRepository[Fill, FillModel]):
     entity_type = Fill
@@ -1280,6 +1313,123 @@ class SqlAlchemyFillRepository(SqlAlchemyRepository[Fill, FillModel]):
 
     async def get_by_id(self, entity_id: UUID) -> Fill | None:
         return await self._get_by_id(entity_id)
+
+    async def list_by_order(self, order_id: UUID) -> list[Fill]:
+        rows = await self._session.scalars(
+            select(FillModel)
+            .where(FillModel.order_id == order_id)
+            .order_by(FillModel.executed_at, FillModel.sequence_number, FillModel.id)
+        )
+        return [entity_from_model(Fill, row) for row in rows]
+
+    async def list_by_execution_attempt(self, attempt_id: UUID) -> list[Fill]:
+        rows = await self._session.scalars(
+            select(FillModel)
+            .where(FillModel.execution_attempt_id == attempt_id)
+            .order_by(FillModel.sequence_number, FillModel.id)
+        )
+        return [entity_from_model(Fill, row) for row in rows]
+
+    async def list(
+        self,
+        *,
+        offset: int,
+        limit: int,
+        account_id: UUID | None = None,
+        instrument_id: UUID | None = None,
+        order_id: UUID | None = None,
+        side: str | None = None,
+        executed_from: datetime | None = None,
+        executed_to: datetime | None = None,
+    ) -> tuple[builtins.list[Fill], int]:
+        conditions = []
+        if account_id is not None:
+            conditions.append(FillModel.account_id == account_id)
+        if instrument_id is not None:
+            conditions.append(FillModel.instrument_id == instrument_id)
+        if order_id is not None:
+            conditions.append(FillModel.order_id == order_id)
+        if side is not None:
+            conditions.append(OrderModel.side == side)
+        if executed_from is not None:
+            conditions.append(FillModel.executed_at >= executed_from)
+        if executed_to is not None:
+            conditions.append(FillModel.executed_at <= executed_to)
+        base = select(FillModel).join(OrderModel, OrderModel.id == FillModel.order_id)
+        count_query = (
+            select(func.count(FillModel.id))
+            .select_from(FillModel)
+            .join(OrderModel, OrderModel.id == FillModel.order_id)
+        )
+        if conditions:
+            base = base.where(*conditions)
+            count_query = count_query.where(*conditions)
+        total = int(await self._session.scalar(count_query) or 0)
+        rows = await self._session.scalars(
+            base.order_by(FillModel.executed_at.desc(), FillModel.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(Fill, row) for row in rows], total
+
+
+class SqlAlchemyBrokerExecutionAttemptRepository(
+    SqlAlchemyRepository[BrokerExecutionAttempt, BrokerExecutionAttemptModel]
+):
+    entity_type = BrokerExecutionAttempt
+    model_type = BrokerExecutionAttemptModel
+
+    async def lock_idempotency_key(self, key: str) -> None:
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"b01:{key}", 0)))
+        )
+
+    async def add(self, entity: BrokerExecutionAttempt) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> BrokerExecutionAttempt | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> BrokerExecutionAttempt | None:
+        row = await self._session.scalar(
+            select(BrokerExecutionAttemptModel).where(
+                BrokerExecutionAttemptModel.idempotency_key == key
+            )
+        )
+        return None if row is None else entity_from_model(BrokerExecutionAttempt, row)
+
+    async def get_for_update(self, entity_id: UUID) -> BrokerExecutionAttempt | None:
+        row = await self._session.scalar(
+            select(BrokerExecutionAttemptModel)
+            .where(BrokerExecutionAttemptModel.id == entity_id)
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(BrokerExecutionAttempt, row)
+
+    async def list_by_order(self, order_id: UUID) -> list[BrokerExecutionAttempt]:
+        rows = await self._session.scalars(
+            select(BrokerExecutionAttemptModel)
+            .where(BrokerExecutionAttemptModel.order_id == order_id)
+            .order_by(BrokerExecutionAttemptModel.attempt_number)
+        )
+        return [entity_from_model(BrokerExecutionAttempt, row) for row in rows]
+
+    async def get_latest_by_order(self, order_id: UUID) -> BrokerExecutionAttempt | None:
+        row = await self._session.scalar(
+            select(BrokerExecutionAttemptModel)
+            .where(BrokerExecutionAttemptModel.order_id == order_id)
+            .order_by(BrokerExecutionAttemptModel.attempt_number.desc())
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(BrokerExecutionAttempt, row)
+
+    async def next_attempt_number(self, order_id: UUID) -> int:
+        latest = await self._session.scalar(
+            select(func.max(BrokerExecutionAttemptModel.attempt_number)).where(
+                BrokerExecutionAttemptModel.order_id == order_id
+            )
+        )
+        return int(latest or 0) + 1
 
 
 class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDecisionModel]):
@@ -1431,6 +1581,33 @@ class SqlAlchemyOutboxRepository(SqlAlchemyRepository[OutboxMessage, OutboxMessa
             )
         )
         return None if row is None else entity_from_model(OutboxMessage, row)
+
+    async def get_submit_for_order_for_update(self, order_id: UUID) -> OutboxMessage | None:
+        row = await self._session.scalar(
+            select(OutboxMessageModel)
+            .where(
+                OutboxMessageModel.aggregate_type == "ORDER",
+                OutboxMessageModel.aggregate_id == order_id,
+                OutboxMessageModel.topic == "order.commands.submit.v1",
+            )
+            .with_for_update()
+        )
+        return None if row is None else entity_from_model(OutboxMessage, row)
+
+    async def update(self, entity: OutboxMessage) -> None:
+        await self._session.execute(
+            update(OutboxMessageModel)
+            .where(OutboxMessageModel.id == entity.id)
+            .values(
+                status=entity.status.value,
+                suppressed_at=entity.suppressed_at,
+                suppression_reason=entity.suppression_reason,
+                published_at=entity.published_at,
+                last_error=entity.last_error,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
 
     async def list_pending(self, limit: int) -> list[OutboxMessage]:
         rows = await self._session.scalars(

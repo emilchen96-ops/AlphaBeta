@@ -1,8 +1,14 @@
 import { apiRequest } from "./client";
 import type {
+  CreateSimulatedExecutionRequest,
+  ExecutionAttemptPage,
+  ExecutionIntegrityReport,
+  FillDetail,
+  FillPage,
   OrderFactSummary,
   OrderPage,
   OrderTimelineItem,
+  SimulatedExecutionResult,
 } from "../types/orders";
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -71,4 +77,64 @@ export function cancelOrder(id: string, version: number, key: string) {
       reason: "用户从订单中心取消",
     }),
   });
+}
+
+export function executeSimulatedOrder(
+  orderId: string,
+  input: CreateSimulatedExecutionRequest,
+) {
+  return apiRequest<SimulatedExecutionResult>(
+    `/api/v1/orders/${orderId}/simulated-executions`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input),
+    },
+    15_000,
+  );
+}
+
+export function getOrderExecutionAttempts(orderId: string) {
+  return apiRequest<ExecutionAttemptPage>(
+    `/api/v1/orders/${orderId}/execution-attempts?page=1&page_size=100`,
+  );
+}
+
+export function getFills(input: {
+  page: number;
+  pageSize: number;
+  accountId?: string;
+  instrumentId?: string;
+  orderId?: string;
+  side?: string;
+  executedFrom?: string;
+  executedTo?: string;
+}) {
+  const query = new URLSearchParams({
+    page: String(input.page),
+    page_size: String(input.pageSize),
+  });
+  if (input.accountId) query.set("account_id", input.accountId);
+  if (input.instrumentId) query.set("instrument_id", input.instrumentId);
+  if (input.orderId) query.set("order_id", input.orderId);
+  if (input.side) query.set("side", input.side);
+  if (input.executedFrom) query.set("executed_from", input.executedFrom);
+  if (input.executedTo) query.set("executed_to", input.executedTo);
+  return apiRequest<FillPage>(`/api/v1/fills?${query}`);
+}
+
+export function getOrderFills(orderId: string) {
+  return apiRequest<FillPage>(
+    `/api/v1/orders/${orderId}/fills?page=1&page_size=100`,
+  );
+}
+
+export function getFill(fillId: string) {
+  return apiRequest<FillDetail>(`/api/v1/fills/${fillId}`);
+}
+
+export function getExecutionIntegrity(orderId: string) {
+  return apiRequest<ExecutionIntegrityReport>(
+    `/api/v1/orders/${orderId}/simulated-execution-integrity`,
+  );
 }

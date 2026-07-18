@@ -1,5 +1,9 @@
 # 订单状态机
 
+> B01-B 已实现本地模拟执行路径：首次从 `QUEUED` 逐级进入 Broker 生命周期，再根据确定性结果进入
+> `BROKER_ACCEPTED`、`PARTIALLY_FILLED`、`FILLED`、`EXECUTOR_REJECTED`、`FAILED` 或 `EXPIRED`。
+> 后续部分成交不追加同状态虚拟迁移；进度由 Attempt、Fill 和事件记录。
+
 > M05 已实现：`START -> CREATED -> WAITING_CONFIRMATION`，人工确认后 `-> QUEUED`；CREATED/WAITING_CONFIRMATION 可取消或过期。QUEUED 表示本地命令事实存在，不表示已发送；终态禁止继续迁移，RECONCILIATION_REQUIRED 不是终态。详见 ADR 0015。
 
 > M05-A订单领域模型、状态机和持久化基础已完成；M05应用服务、Transactional Outbox、API、前端和并发验收尚未完成。

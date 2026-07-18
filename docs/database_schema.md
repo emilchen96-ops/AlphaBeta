@@ -1,5 +1,10 @@
 # PostgreSQL 持久化模型
 
+> B01-B Migration `0010_b01` 新增只追加 `broker_execution_attempts`，并扩展 Fill 的 Attempt、
+> Command、连续序号和稳定执行引用。Command 新增明确的本地 `CONSUMED` 事实；Outbox 新增
+> `SUPPRESSED` 及固定抑制原因，避免本地模拟成交命令未来被 Publisher 外发。Attempt、Fill、M04
+> 账本、Order/Transition、事件、审计、Command 和 Outbox 在同一事务提交。
+
 > Migration `0009_r01` 扩展 `risk_decisions` 为可幂等查询的聚合决策事实，并新增只追加 `risk_rule_evaluations`。逐规则表约束 `(risk_decision_id, seq)` 与 `(risk_decision_id, rule_key)` 唯一；人工 PASS 的订单外键采用延迟校验，以支持与 M05 初始订单事实同事务提交。
 
 > S02-B1 新增 `strategy_experiments` 和只追加的 `strategy_experiment_runs`。前者保存
@@ -71,7 +76,8 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `orders` | 订单聚合当前状态 | `idempotency_key` 唯一；数量、成交量、限价订单价格和状态受约束；按账户、状态、关联 ID 检索 |
 | `order_state_transitions` | 订单状态迁移历史 | append-only；起止状态受约束；按订单发生时间及关联 ID 检索 |
 | `order_commands` | 待交付执行器的命令事实 | `command_id` 唯一；序号非负、有效期晚于创建时间；按订单序号和目标设备/状态检索 |
-| `fills` | Broker 成交事实 | `(broker_type, broker_fill_id)` 唯一；数量/价格为正、费用非负；按订单时间及账户标的检索 |
+| `broker_execution_attempts` | 本地模拟 Broker 的追加式执行尝试 | 幂等键、订单/命令尝试序号唯一；数量守恒；按账户、结果、关联 ID 检索 |
+| `fills` | Broker 成交事实 | Broker 引用、Attempt 序号和执行引用唯一；数量/价格为正、费用非负；按订单时间及账户标的检索 |
 | `risk_decisions` | 风控判定事实 | Signal 或 Order 至少关联一个；层级和决定类型受约束；按目标与关联 ID 检索 |
 | `domain_events` | 统一领域事件日志 | `event_id` 主键；schema 版本为正；按实体序列、事件时间和关联 ID 检索 |
 | `audit_logs` | 关键操作审计日志 | append-only；记录 actor、动作、原因、前后值与结果；按资源时间和关联 ID 检索 |
@@ -90,6 +96,9 @@ erDiagram
   INSTRUMENTS ||--o{ ORDERS : trades
   ORDERS ||--o{ ORDER_STATE_TRANSITIONS : transitions
   ORDERS ||--o{ ORDER_COMMANDS : commands
+  ORDERS ||--o{ BROKER_EXECUTION_ATTEMPTS : attempts
+  ORDER_COMMANDS ||--o{ BROKER_EXECUTION_ATTEMPTS : consumed_by
+  BROKER_EXECUTION_ATTEMPTS ||--o{ FILLS : produces
   ORDERS ||--o{ FILLS : fills
   SIGNALS ||--o{ RISK_DECISIONS : evaluated
   ORDERS ||--o{ RISK_DECISIONS : evaluated
@@ -100,10 +109,15 @@ erDiagram
 
 ## 可变状态与追加事实
 
-`order_state_transitions`、`fills`、`risk_decisions`、`domain_events` 和 `audit_logs` 只允许追加，不提供仓储级更新/删除方法。`outbox_messages` 需要更新投递状态、尝试次数和错误，但其业务载荷及关联事件身份不应原地改写。`orders`、`positions` 等当前状态表可以在受控应用服务事务中更新，同时写入对应历史、事件和审计事实。
+`order_state_transitions`、`broker_execution_attempts`、`fills`、`risk_decisions`、`domain_events` 和
+`audit_logs` 只允许追加，不提供仓储级更新/删除方法。`outbox_messages` 只在受控服务中更新投递或
+抑制状态，其业务载荷及关联事件身份不应原地改写。`orders`、`positions` 等当前状态表可以在受控
+应用服务事务中更新，同时写入对应历史、事件和审计事实。
 
 ## 事务边界
 
-应用服务通过一个 Unit of Work 共享同一异步 Session。仓储只 `flush`，不得自行 `commit`。订单当前状态、状态迁移、领域事件、审计和 Outbox 记录必须能够在一个 PostgreSQL 事务中原子提交；任一步失败则整体回滚，回滚后的 Session 不可继续复用。
+应用服务通过一个 Unit of Work 共享同一异步 Session。仓储只 `flush`，不得自行 `commit`。B01-B
+外层服务统一提交 Attempt、订单状态/迁移、Fill、M04 投影与账本、快照、核对、领域事件、审计、
+Command 消费和 Outbox 抑制；任一步失败则整体回滚。回滚后的新事务必须仍可正常使用。
 
 M02 只建立模型、持久化和事务能力。Outbox 发布、Redis Streams、订单状态机服务、风控执行、Broker/执行器通信以及业务 API 均属于后续里程碑。

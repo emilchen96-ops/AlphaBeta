@@ -1,5 +1,6 @@
 """M04 simulated-account, ledger, valuation and reconciliation services."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -376,64 +377,73 @@ class CashFundingService:
 
 
 class FillAccountingService:
-    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        failure_injector: Callable[[str], None] | None = None,
+    ) -> None:
         self._uow_factory = uow_factory
+        self._failure_injector = failure_injector or (lambda _: None)
 
     async def apply(self, *, fill_id: UUID) -> FillAccountingResult:
         async with self._uow_factory() as uow:
-            fill = await uow.fills.get_by_id(fill_id)
-            if fill is None:
-                raise ApplicationError("FILL_NOT_FOUND", "成交事实不存在")
-            order = await uow.orders.get_by_id(fill.order_id)
-            if order is None:
-                raise ApplicationError("ORDER_NOT_FOUND", "成交关联订单不存在")
-            if order.account_id != fill.account_id or order.instrument_id != fill.instrument_id:
-                raise ApplicationError("FILL_INTEGRITY_ERROR", "成交与订单归属不一致")
-            existing = await uow.ledger_transactions.get_by_fill_id(fill.id)
-            if existing is not None:
-                return await self._existing_result(uow, fill, existing)
-            account = await _require_account(uow, fill.account_id)
-            if account.status is not AccountStatus.ACTIVE:
-                raise ApplicationError("ACCOUNT_DISABLED", "模拟账户已停用")
-            calculated = calculate_fill_amounts(
-                quantity=fill.quantity,
-                price=fill.price,
-                commission=fill.commission,
-                tax=fill.tax,
-                other_fee=fill.other_fee,
-                is_buy=order.side is OrderSide.BUY,
-            )
-            try:
-                assert_fill_amounts(
-                    calculated=calculated,
-                    stored_gross=fill.gross_amount,
-                    stored_net=fill.net_amount,
-                    tolerance=AMOUNT_TOLERANCE,
-                )
-            except ValueError as exc:
-                raise ApplicationError("FILL_AMOUNT_MISMATCH", str(exc)) from exc
-            cash = await uow.cash_balances.get_for_update(account.id, account.base_currency)
-            if cash is None:
-                raise ApplicationError("CASH_BALANCE_NOT_FOUND", "账户资金余额不存在")
-            existing = await uow.ledger_transactions.get_by_fill_id(fill.id)
-            if existing is not None:
-                return await self._existing_result(uow, fill, existing)
-            position = await uow.positions.get_for_update(account.id, fill.instrument_id)
-            now = fill.executed_at
-            if order.side is OrderSide.BUY:
-                if cash.available_cash < calculated.net_amount:
-                    raise ApplicationError("INSUFFICIENT_CASH", "买入成交所需可用资金不足")
-                result = await self._apply_buy(
-                    uow, account, cash, position, fill, calculated.net_amount, now
-                )
-            else:
-                if position is None or position.available_quantity < fill.quantity:
-                    raise ApplicationError("INSUFFICIENT_POSITION", "卖出成交所需可用持仓不足")
-                result = await self._apply_sell(
-                    uow, account, cash, position, fill, calculated.net_amount, now
-                )
+            result = await self.apply_in_uow(uow=uow, fill_id=fill_id)
             await uow.commit()
             return result
+
+    async def apply_in_uow(self, *, uow: UnitOfWork, fill_id: UUID) -> FillAccountingResult:
+        """Post one Fill using the caller's transaction without committing it."""
+
+        fill = await uow.fills.get_by_id(fill_id)
+        if fill is None:
+            raise ApplicationError("FILL_NOT_FOUND", "成交事实不存在")
+        order = await uow.orders.get_by_id(fill.order_id)
+        if order is None:
+            raise ApplicationError("ORDER_NOT_FOUND", "成交关联订单不存在")
+        if order.account_id != fill.account_id or order.instrument_id != fill.instrument_id:
+            raise ApplicationError("FILL_INTEGRITY_ERROR", "成交与订单归属不一致")
+        existing = await uow.ledger_transactions.get_by_fill_id(fill.id)
+        if existing is not None:
+            return await self._existing_result(uow, fill, existing)
+        account = await _require_account(uow, fill.account_id)
+        if account.status is not AccountStatus.ACTIVE:
+            raise ApplicationError("ACCOUNT_DISABLED", "模拟账户已停用")
+        calculated = calculate_fill_amounts(
+            quantity=fill.quantity,
+            price=fill.price,
+            commission=fill.commission,
+            tax=fill.tax,
+            other_fee=fill.other_fee,
+            is_buy=order.side is OrderSide.BUY,
+        )
+        try:
+            assert_fill_amounts(
+                calculated=calculated,
+                stored_gross=fill.gross_amount,
+                stored_net=fill.net_amount,
+                tolerance=AMOUNT_TOLERANCE,
+            )
+        except ValueError as exc:
+            raise ApplicationError("FILL_AMOUNT_MISMATCH", str(exc)) from exc
+        cash = await uow.cash_balances.get_for_update(account.id, account.base_currency)
+        if cash is None:
+            raise ApplicationError("CASH_BALANCE_NOT_FOUND", "账户资金余额不存在")
+        existing = await uow.ledger_transactions.get_by_fill_id(fill.id)
+        if existing is not None:
+            return await self._existing_result(uow, fill, existing)
+        position = await uow.positions.get_for_update(account.id, fill.instrument_id)
+        now = fill.executed_at
+        if order.side is OrderSide.BUY:
+            if cash.available_cash < calculated.net_amount:
+                raise ApplicationError("INSUFFICIENT_CASH", "买入成交所需可用资金不足")
+            return await self._apply_buy(
+                uow, account, cash, position, fill, calculated.net_amount, now
+            )
+        if position is None or position.available_quantity < fill.quantity:
+            raise ApplicationError("INSUFFICIENT_POSITION", "卖出成交所需可用持仓不足")
+        return await self._apply_sell(
+            uow, account, cash, position, fill, calculated.net_amount, now
+        )
 
     async def _apply_buy(
         self,
@@ -629,6 +639,7 @@ class FillAccountingService:
                 metadata={"net_cash_entry": True},
             )
         )
+        self._failure_injector("after_cash_ledger")
         quantity_delta = (
             fill.quantity if position_entry_type is PositionLedgerEntryType.BUY else -fill.quantity
         )
@@ -656,6 +667,7 @@ class FillAccountingService:
             metadata={"scope": "M04"},
         )
         await uow.position_ledger.append(position_entry)
+        self._failure_injector("after_position_ledger")
         await append_event_and_audit(
             uow,
             event_type="FILL_ACCOUNTING_POSTED",
@@ -851,79 +863,85 @@ class AccountReconciliationService:
         self._uow_factory = uow_factory
 
     async def run(self, *, account_id: UUID, correlation_id: UUID) -> AccountReconciliationResult:
-        started = _now()
         async with self._uow_factory() as uow:
-            await _require_account(uow, account_id)
-            balances = await uow.cash_balances.list_for_account(account_id)
-            positions = await uow.positions.list_for_account(account_id)
-            cash_entries = await uow.cash_ledger.list_all_for_account(account_id)
-            position_entries = await uow.position_ledger.list_all_for_account(account_id)
-            expected_cash: dict[str, str] = {}
-            for cash_entry in cash_entries:
-                expected_cash[cash_entry.currency] = str(
-                    Decimal(expected_cash.get(cash_entry.currency, "0")) + cash_entry.total_delta
-                )
-            actual_cash = {item.currency: str(item.total_cash) for item in balances}
-            expected_positions: dict[str, str] = {}
-            for position_entry in position_entries:
-                key = str(position_entry.instrument_id)
-                expected_positions[key] = str(
-                    Decimal(expected_positions.get(key, "0")) + position_entry.quantity_delta
-                )
-            actual_positions = {
-                str(item.instrument_id): str(item.total_quantity) for item in positions
-            }
-            discrepancies: list[dict[str, object]] = []
-            for key in sorted(set(expected_cash) | set(actual_cash)):
-                if Decimal(expected_cash.get(key, "0")) != Decimal(actual_cash.get(key, "0")):
-                    discrepancies.append(
-                        {
-                            "kind": "CASH",
-                            "key": key,
-                            "expected": expected_cash.get(key, "0"),
-                            "actual": actual_cash.get(key, "0"),
-                        }
-                    )
-            for key in sorted(set(expected_positions) | set(actual_positions)):
-                if Decimal(expected_positions.get(key, "0")) != Decimal(
-                    actual_positions.get(key, "0")
-                ):
-                    discrepancies.append(
-                        {
-                            "kind": "POSITION",
-                            "key": key,
-                            "expected": expected_positions.get(key, "0"),
-                            "actual": actual_positions.get(key, "0"),
-                        }
-                    )
-            discrepancies = discrepancies[:100]
-            completed = _now()
-            run = AccountReconciliationRun(
-                account_id=account_id,
-                status=(
-                    ReconciliationStatus.MATCHED
-                    if not discrepancies
-                    else ReconciliationStatus.MISMATCHED
-                ),
-                started_at=started,
-                completed_at=completed,
-                expected_cash=expected_cash,
-                actual_cash=actual_cash,
-                expected_positions=expected_positions,
-                actual_positions=actual_positions,
-                discrepancy_count=len(discrepancies),
-                discrepancies=discrepancies,
-                correlation_id=correlation_id,
-            )
-            await uow.account_reconciliations.append(run)
-            await append_event_and_audit(
-                uow,
-                event_type="ACCOUNT_RECONCILIATION_COMPLETED",
-                entity_type="TRADING_ACCOUNT",
-                entity_id=account_id,
-                correlation_id=correlation_id,
-                payload={"status": run.status.value, "count": run.discrepancy_count},
-                source="ALPHADESK_M04",
+            result = await self.run_in_uow(
+                uow=uow, account_id=account_id, correlation_id=correlation_id
             )
             await uow.commit()
-            return AccountReconciliationResult(run=run)
+            return result
+
+    async def run_in_uow(
+        self, *, uow: UnitOfWork, account_id: UUID, correlation_id: UUID
+    ) -> AccountReconciliationResult:
+        """Reconcile projections in the caller's transaction without committing."""
+
+        started = _now()
+        await _require_account(uow, account_id)
+        balances = await uow.cash_balances.list_for_account(account_id)
+        positions = await uow.positions.list_for_account(account_id)
+        cash_entries = await uow.cash_ledger.list_all_for_account(account_id)
+        position_entries = await uow.position_ledger.list_all_for_account(account_id)
+        expected_cash: dict[str, str] = {}
+        for cash_entry in cash_entries:
+            expected_cash[cash_entry.currency] = str(
+                Decimal(expected_cash.get(cash_entry.currency, "0")) + cash_entry.total_delta
+            )
+        actual_cash = {item.currency: str(item.total_cash) for item in balances}
+        expected_positions: dict[str, str] = {}
+        for position_entry in position_entries:
+            key = str(position_entry.instrument_id)
+            expected_positions[key] = str(
+                Decimal(expected_positions.get(key, "0")) + position_entry.quantity_delta
+            )
+        actual_positions = {str(item.instrument_id): str(item.total_quantity) for item in positions}
+        discrepancies: list[dict[str, object]] = []
+        for key in sorted(set(expected_cash) | set(actual_cash)):
+            if Decimal(expected_cash.get(key, "0")) != Decimal(actual_cash.get(key, "0")):
+                discrepancies.append(
+                    {
+                        "kind": "CASH",
+                        "key": key,
+                        "expected": expected_cash.get(key, "0"),
+                        "actual": actual_cash.get(key, "0"),
+                    }
+                )
+        for key in sorted(set(expected_positions) | set(actual_positions)):
+            if Decimal(expected_positions.get(key, "0")) != Decimal(actual_positions.get(key, "0")):
+                discrepancies.append(
+                    {
+                        "kind": "POSITION",
+                        "key": key,
+                        "expected": expected_positions.get(key, "0"),
+                        "actual": actual_positions.get(key, "0"),
+                    }
+                )
+        discrepancies = discrepancies[:100]
+        completed = _now()
+        run = AccountReconciliationRun(
+            account_id=account_id,
+            status=(
+                ReconciliationStatus.MATCHED
+                if not discrepancies
+                else ReconciliationStatus.MISMATCHED
+            ),
+            started_at=started,
+            completed_at=completed,
+            expected_cash=expected_cash,
+            actual_cash=actual_cash,
+            expected_positions=expected_positions,
+            actual_positions=actual_positions,
+            discrepancy_count=len(discrepancies),
+            discrepancies=discrepancies,
+            correlation_id=correlation_id,
+        )
+        await uow.account_reconciliations.append(run)
+        await append_event_and_audit(
+            uow,
+            event_type="ACCOUNT_RECONCILIATION_COMPLETED",
+            entity_type="TRADING_ACCOUNT",
+            entity_id=account_id,
+            correlation_id=correlation_id,
+            payload={"status": run.status.value, "count": run.discrepancy_count},
+            source="ALPHADESK_M04",
+        )
+        return AccountReconciliationResult(run=run)

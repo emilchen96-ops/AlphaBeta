@@ -7,6 +7,7 @@ from alphadesk_domain.repositories import (
     AccountReconciliationRepository,
     AccountSnapshotRepository,
     AuditLogRepository,
+    BrokerExecutionAttemptRepository,
     CashBalanceRepository,
     CashLedgerRepository,
     DomainEventRepository,
@@ -61,6 +62,7 @@ class UnitOfWork(Protocol):
     order_state_transitions: OrderStateTransitionRepository
     order_commands: OrderCommandRepository
     fills: FillRepository
+    broker_execution_attempts: BrokerExecutionAttemptRepository
     risk_decisions: RiskDecisionRepository
     risk_rule_evaluations: RiskRuleEvaluationRepository
     events: DomainEventRepository

@@ -179,6 +179,7 @@ class CommandStatus(StrEnum):
     PENDING = "PENDING"
     QUEUED = "QUEUED"
     ACKNOWLEDGED = "ACKNOWLEDGED"
+    CONSUMED = "CONSUMED"
     EXPIRED = "EXPIRED"
     FAILED = "FAILED"
 
@@ -186,6 +187,7 @@ class CommandStatus(StrEnum):
 class OutboxStatus(StrEnum):
     PENDING = "PENDING"
     PUBLISHED = "PUBLISHED"
+    SUPPRESSED = "SUPPRESSED"
     FAILED = "FAILED"
 
 

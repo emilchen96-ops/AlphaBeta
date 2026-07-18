@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphadesk_api.infrastructure.database import Base
+from alphadesk_domain.broker import BrokerExecutionMode, BrokerExecutionStatus
 from alphadesk_domain.enums import (
     AccountStatus,
     AccountType,
@@ -970,6 +971,14 @@ class OrderCommandModel(MutableTimestampedModel, Base):
         CheckConstraint(f"status IN ({enum_values(CommandStatus)})", name="command_status_valid"),
         CheckConstraint("sequence_number >= 0", name="sequence_number_non_negative"),
         CheckConstraint("expires_at > created_at", name="expiry_after_creation"),
+        CheckConstraint(
+            "(consumed_at IS NULL) = (consumed_by IS NULL)",
+            name="consumption_pair",
+        ),
+        CheckConstraint(
+            "(status = 'CONSUMED') = (consumed_at IS NOT NULL)",
+            name="consumed_status_matches_fields",
+        ),
         Index("ix_order_commands_order_sequence", "order_id", "sequence_number"),
         Index(
             "uq_order_commands_submit_per_order",
@@ -998,17 +1007,36 @@ class OrderCommandModel(MutableTimestampedModel, Base):
     signature_reference: Mapped[str | None] = mapped_column(String(256))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_by: Mapped[str | None] = mapped_column(String(64))
 
 
 class FillModel(TimestampedModel, Base):
     __tablename__ = "fills"
     __table_args__ = (
         UniqueConstraint("broker_type", "broker_fill_id", name="uq_fills_broker_fill"),
+        UniqueConstraint(
+            "execution_attempt_id",
+            "sequence_number",
+            name="uq_fills_execution_attempt_sequence",
+        ),
+        UniqueConstraint("execution_reference", name="uq_fills_execution_reference"),
         CheckConstraint("quantity > 0", name="quantity_positive"),
         CheckConstraint("price > 0", name="price_positive"),
         CheckConstraint("commission >= 0", name="commission_non_negative"),
         CheckConstraint("tax >= 0", name="tax_non_negative"),
         CheckConstraint("other_fee >= 0", name="other_fee_non_negative"),
+        CheckConstraint(
+            "sequence_number IS NULL OR sequence_number >= 1",
+            name="sequence_number_positive",
+        ),
+        CheckConstraint(
+            "(execution_attempt_id IS NULL AND command_id IS NULL "
+            "AND sequence_number IS NULL AND execution_reference IS NULL) OR "
+            "(execution_attempt_id IS NOT NULL AND command_id IS NOT NULL "
+            "AND sequence_number IS NOT NULL AND execution_reference IS NOT NULL)",
+            name="execution_link_fields_complete",
+        ),
         Index("ix_fills_order_executed", "order_id", "executed_at"),
         Index("ix_fills_account_instrument", "account_id", "instrument_id"),
     )
@@ -1025,6 +1053,16 @@ class FillModel(TimestampedModel, Base):
     )
     broker_type: Mapped[str] = mapped_column(String(64), nullable=False)
     broker_fill_id: Mapped[str | None] = mapped_column(String(128))
+    execution_attempt_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("broker_execution_attempts.id", ondelete="RESTRICT"),
+    )
+    command_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("order_commands.command_id", ondelete="RESTRICT"),
+    )
+    sequence_number: Mapped[int | None] = mapped_column(Integer)
+    execution_reference: Mapped[str | None] = mapped_column(String(160))
     quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
     price: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
     gross_amount: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
@@ -1038,6 +1076,96 @@ class FillModel(TimestampedModel, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+
+
+class BrokerExecutionAttemptModel(TimestampedModel, Base):
+    __tablename__ = "broker_execution_attempts"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_broker_execution_attempts_idempotency"),
+        UniqueConstraint(
+            "order_id", "attempt_number", name="uq_broker_execution_attempts_order_attempt"
+        ),
+        UniqueConstraint(
+            "command_id", "attempt_number", name="uq_broker_execution_attempts_command_attempt"
+        ),
+        CheckConstraint(
+            f"execution_mode IN ({enum_values(BrokerExecutionMode)})",
+            name="execution_mode_valid",
+        ),
+        CheckConstraint(
+            f"result_status IN ({enum_values(BrokerExecutionStatus)})",
+            name="result_status_valid",
+        ),
+        CheckConstraint(
+            f"input_order_status IN ({enum_values(OrderStatus)})",
+            name="input_order_status_valid",
+        ),
+        CheckConstraint("attempt_number >= 1", name="attempt_number_positive"),
+        CheckConstraint(
+            "requested_quantity > 0 AND previously_filled_quantity >= 0 "
+            "AND attempted_quantity > 0 AND filled_quantity >= 0 "
+            "AND remaining_quantity >= 0",
+            name="quantities_non_negative",
+        ),
+        CheckConstraint(
+            "previously_filled_quantity + attempted_quantity = requested_quantity",
+            name="attempted_quantity_balances",
+        ),
+        CheckConstraint(
+            "previously_filled_quantity + filled_quantity + remaining_quantity "
+            "= requested_quantity",
+            name="result_quantities_balance",
+        ),
+        CheckConstraint("filled_quantity <= attempted_quantity", name="filled_within_attempted"),
+        CheckConstraint(
+            "(filled_quantity = 0 AND average_fill_price IS NULL) OR "
+            "(filled_quantity > 0 AND average_fill_price > 0)",
+            name="average_price_matches_fill",
+        ),
+        CheckConstraint("completed_at >= started_at", name="completion_after_start"),
+        CheckConstraint("length(request_fingerprint) = 64", name="fingerprint_length"),
+        Index("ix_broker_execution_attempts_command", "command_id"),
+        Index("ix_broker_execution_attempts_account_created", "account_id", "created_at"),
+        Index("ix_broker_execution_attempts_result_created", "result_status", "created_at"),
+        Index("ix_broker_execution_attempts_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    broker_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    broker_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    order_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False
+    )
+    command_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("order_commands.command_id", ondelete="RESTRICT"), nullable=False
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_order_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    result_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    requested_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    previously_filled_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    attempted_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    filled_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    remaining_quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    average_fill_price: Mapped[Decimal | None] = mapped_column(PRICE)
+    rejection_code: Mapped[str | None] = mapped_column(String(128))
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    market_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    account_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    fee_model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    slippage_model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class RiskDecisionModel(TimestampedModel, Base):
@@ -1181,6 +1309,14 @@ class OutboxMessageModel(MutableTimestampedModel, Base):
         UniqueConstraint("event_id", "topic", name="uq_outbox_messages_event_topic"),
         CheckConstraint(f"status IN ({enum_values(OutboxStatus)})", name="outbox_status_valid"),
         CheckConstraint("attempts >= 0", name="attempts_non_negative"),
+        CheckConstraint(
+            "(suppressed_at IS NULL) = (suppression_reason IS NULL)",
+            name="suppression_pair",
+        ),
+        CheckConstraint(
+            "(status = 'SUPPRESSED') = (suppressed_at IS NOT NULL)",
+            name="suppressed_status_matches_fields",
+        ),
         Index(
             "ix_outbox_messages_pending_available",
             "available_at",
@@ -1204,6 +1340,8 @@ class OutboxMessageModel(MutableTimestampedModel, Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suppressed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suppression_reason: Mapped[str | None] = mapped_column(String(64))
     last_error: Mapped[str | None] = mapped_column(Text)
 
 

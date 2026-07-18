@@ -1,5 +1,11 @@
 # B01-A 模拟 Broker 领域核心
 
+> B01-C 已通过本地 API、CLI 和网页复用本契约，操作说明见
+> [模拟执行 API、CLI 与网页](simulated_broker_ui.md)。所有入口仍只支持本地模拟账户。
+
+> B01-B 已在独立应用服务中把本契约接入持久化 Fill、M05 状态机与 M04 原子账本；详见
+> [模拟执行事实管道](simulated_execution_pipeline.md)。本文件仍只定义 B01-A 纯计算边界。
+
 > B01-A 只提供纯 Python、确定性的模拟执行计算。它不读取或写入数据库，不创建持久化
 > `Fill`，不修改订单、资金、持仓或账本，也不调用 Redis、MiniQMT 或任何外部 Broker。
 
@@ -74,8 +80,8 @@ BUY 在生成草稿前重新检查现金是否覆盖成交金额和全部费用�
 - BUY 的 `net_cash_effect` 为负，SELL 为正；
 - 成交标识和执行引用由执行指纹确定，不使用随机结果。
 
-未来 B01-B 才能在受控应用服务中把执行结果接入 M05 状态机与 M04
-`FillAccountingService`。B01-A 不执行这些动作。
+B01-B 通过受控应用服务把执行结果接入 M05 状态机与 M04 `FillAccountingService`；B01-A 本身仍不
+执行这些动作。
 
 ## 结果与确定性
 

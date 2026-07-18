@@ -1,6 +1,10 @@
 # AlphaDesk 文档索引
 
-> 当前执行里程碑为 **B01-A 完成**：Broker 契约、市场/账户快照、费用、滑点、模拟成交、`FillDraft` 与执行指纹见 [simulated_broker.md](simulated_broker.md)。B01-B 尚未开始；系统仍未写数据库成交、未修改账本、未接执行器/MiniQMT，也无实盘能力。
+> 当前执行里程碑为 **B01 完成开发，等待最终环境验收**：B01-A Broker 契约与确定性计算见
+> [simulated_broker.md](simulated_broker.md)；B01-B Attempt、Fill、M04 原子记账、Command 消费和
+> Outbox 抑制见 [simulated_execution_pipeline.md](simulated_execution_pipeline.md)；B01-C API、CLI、Demo
+> 与网页见 [simulated_broker_ui.md](simulated_broker_ui.md)。系统仍无 Windows 执行器、MiniQMT、外部
+> Broker 或实盘能力；下一阶段仅规划 BT01 日线回测。
 
 > 当前风险里程碑为 **R01 完成**：纯规则核心见 [risk_engine.md](risk_engine.md)，快照、持久化、幂等、查询和 M05 安全门见 [risk_decision_pipeline.md](risk_decision_pipeline.md)，只读页面和关联边界见 [risk_ui.md](risk_ui.md)。下一阶段为 B01 模拟 Broker；系统仍无执行器、MiniQMT 或实盘能力。
 
@@ -49,6 +53,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
 | M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016            |
+| B01 模拟 Broker 与执行事实 | `simulated_broker.md`、`simulated_execution_pipeline.md`、`accounting.md`、`order_state_machine.md` |
 | 数据库、事件、审计              | `database_schema.md`、`event_model.md`、`reliable_messaging.md`、ADR 0002、0004、0007     |
 | Redis、队列、推送               | `reliable_messaging.md`、ADR 0003、0004                                                   |
 | Web 或 API                      | `architecture.md`、`security.md`、`coding_standards.md`                                   |

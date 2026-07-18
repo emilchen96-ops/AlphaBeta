@@ -32,6 +32,12 @@ const MarketPage = lazy(() =>
   })),
 );
 
+const FillsPage = lazy(() =>
+  import("../pages/FillsPage").then((module) => ({
+    default: module.FillsPage,
+  })),
+);
+
 export const routes: RouteObject[] = [
   {
     path: "/",
@@ -59,6 +65,16 @@ export const routes: RouteObject[] = [
       { path: "strategy-runs/:runId", element: <StrategyRunDetailPage /> },
       { path: "signals", element: <SignalsPage /> },
       { path: "orders", element: <OrdersPage /> },
+      {
+        path: "fills",
+        element: (
+          <Suspense
+            fallback={<div aria-label="成交页面加载中">加载成交记录…</div>}
+          >
+            <FillsPage />
+          </Suspense>
+        ),
+      },
       { path: "risk", element: <RiskDecisionsPage /> },
       { path: "risk/decisions", element: <RiskDecisionsPage /> },
       {

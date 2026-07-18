@@ -36,6 +36,7 @@ const menuItems = [
   { key: "/strategy-runs", icon: <DatabaseOutlined />, label: "研究运行" },
   { key: "/signals", icon: <AuditOutlined />, label: "研究 Signal" },
   { key: "/orders", icon: <OrderedListOutlined />, label: "订单" },
+  { key: "/fills", icon: <DatabaseOutlined />, label: "成交记录" },
   {
     key: "risk-group",
     icon: <SafetyCertificateOutlined />,

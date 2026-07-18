@@ -1,6 +1,13 @@
 # 开发路线图
 
-> 当前进度：B01-A 模拟 Broker 纯领域核心已完成，提供不可变执行契约、确定性模拟成交、费用、滑点、部分成交和执行指纹。B01-B 尚未开始；当前没有数据库接线、持久化 Fill、执行器、MiniQMT 或实盘能力。详见 [simulated_broker.md](simulated_broker.md)。
+> 当前进度：B01-A 与 B01-B 已完成开发。系统具备纯领域模拟 Broker、追加式执行尝试、持久化
+> Fill、M05 状态推进、M04 原子记账、Command 本地消费和 Outbox 抑制。B01-C 尚未开始，B01 整体
+> 尚未完成；当前没有 API、前端、Windows 执行器、MiniQMT、外部 Broker 或实盘能力。详见
+> [simulated_broker.md](simulated_broker.md) 与
+> [simulated_execution_pipeline.md](simulated_execution_pipeline.md)。
+
+> 2026-07-17：B01-B 完成后端模拟执行事实管道。真实 PostgreSQL/Alembic 集成与并发测试必须在
+> 显式启用的独立测试库执行；非数据库单元与静态检查不能替代该验收门槛。
 
 > 2026-07-17：B01-A 完成。模拟 Broker 只根据调用方显式传入的市场/账户快照计算 `FillDraft` 和执行结果，不修改 M04/M05/R01 事实；R01 PASS 不代表一定成交。
 
@@ -29,6 +36,8 @@
 > M04.1A 已完成免费行情工程实现：AKShare/EastMoney 负责全市场快照与重点标的近期分钟线，BaoStock 负责历史日线/分钟线补充；独立 Worker、Redis 临时 Quote、WebSocket 和盘中估值预览均保持 Best-Effort、非交易级。真实来源连接与交易时段 10 分钟验收必须独立记录，未通过时不得宣称行情已接通。
 
 > M04 已实现模拟账户、资金与持仓账本、成交记账、估值、核对和持仓网页；订单状态机、撮合、Broker 与实盘仍属于后续里程碑。
+
+> B01-A、B01-B、B01-C 已完成代码开发：本地确定性模拟 Broker、原子 Fill/账本执行、API、CLI、Demo、订单入口和只读成交页面均已实现。B01 只有在真实 PostgreSQL 并发、在线 Migration、Demo 和浏览器验收通过后才能最终封板。系统未连接真实 Broker、MiniQMT 或实盘；下一阶段仅为 BT01 日线回测。
 
 > 2026-07-15 经 M03 任务明确修订：M03 为“行情基础数据、行情适配器与自选股业务闭环”，现已完成。下一个 M04 只允许“账户、资金、持仓与账本”，不得接入 Broker、订单、策略、风控或实盘。本说明取代下方早期表格中 M03/M04 的旧名称；其余远期阶段仍需在进入时重新评审。
 
