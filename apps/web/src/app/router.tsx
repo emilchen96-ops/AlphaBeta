@@ -13,6 +13,12 @@ import {
   MarketEventsPage,
 } from "../pages/InformationPages";
 import { OrdersPage } from "../pages/OrdersPage";
+import {
+  AIAnalysisDetailPage,
+  AIResearchPage,
+  ResearchInsightDetailPage,
+  ResearchInsightsPage,
+} from "../pages/AIResearchPages";
 import { PortfolioPage } from "../pages/PortfolioPage";
 import {
   RiskDecisionDetailPage,
@@ -71,6 +77,13 @@ export const routes: RouteObject[] = [
       {
         path: "market-events/:eventId",
         element: <InformationDetailPage eventMode />,
+      },
+      { path: "ai-research", element: <AIResearchPage /> },
+      { path: "ai-analyses/:analysisId", element: <AIAnalysisDetailPage /> },
+      { path: "research-insights", element: <ResearchInsightsPage /> },
+      {
+        path: "research-insights/:insightId",
+        element: <ResearchInsightDetailPage />,
       },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "strategy-experiments", element: <StrategyExperimentsPage /> },

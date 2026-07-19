@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphadesk_api.infrastructure.database import Base
+from alphadesk_domain.ai_research import AIAnalysisStatus, AIAnalysisType, AIImpactDirection
 from alphadesk_domain.broker import BrokerExecutionMode, BrokerExecutionStatus
 from alphadesk_domain.enums import (
     AccountStatus,
@@ -1610,9 +1611,7 @@ class ScanRunModel(MutableTimestampedModel, Base):
     __tablename__ = "scan_runs"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_scan_runs_idempotency_key"),
-        CheckConstraint(
-            f"status IN ({enum_values(ScanRunStatus)})", name="scan_run_status_valid"
-        ),
+        CheckConstraint(f"status IN ({enum_values(ScanRunStatus)})", name="scan_run_status_valid"),
         CheckConstraint("timeframe = 'DAY_1'", name="scan_run_timeframe_daily"),
         CheckConstraint(
             "instruments_scanned >= 0 AND matches_found >= 0 "
@@ -1649,9 +1648,7 @@ class ScanRunModel(MutableTimestampedModel, Base):
 class ScanResultModel(TimestampedModel, Base):
     __tablename__ = "scan_results"
     __table_args__ = (
-        UniqueConstraint(
-            "scan_run_id", "instrument_id", name="uq_scan_results_run_instrument"
-        ),
+        UniqueConstraint("scan_run_id", "instrument_id", name="uq_scan_results_run_instrument"),
         UniqueConstraint("scan_run_id", "rank", name="uq_scan_results_run_rank"),
         CheckConstraint("rank >= 1", name="scan_result_rank_positive"),
         CheckConstraint("score >= 0", name="scan_result_score_non_negative"),
@@ -1734,9 +1731,7 @@ class InformationIngestionRunModel(MutableTimestampedModel, Base):
 class RawDocumentModel(TimestampedModel, Base):
     __tablename__ = "raw_documents"
     __table_args__ = (
-        UniqueConstraint(
-            "source_id", "external_id", name="uq_raw_documents_source_external_id"
-        ),
+        UniqueConstraint("source_id", "external_id", name="uq_raw_documents_source_external_id"),
         UniqueConstraint("content_hash", name="uq_raw_documents_content_hash"),
         CheckConstraint("length(content_hash) = 64", name="raw_document_hash_sha256"),
         Index("ix_raw_documents_source_received", "source_id", "received_at"),
@@ -1857,3 +1852,120 @@ class EventThemeLinkModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=UTC_NOW
     )
+
+
+class AIAnalysisRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "ai_analysis_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_ai_analysis_runs_idempotency_key"),
+        CheckConstraint(
+            f"analysis_type IN ({enum_values(AIAnalysisType)})", name="ai_analysis_type_valid"
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(AIAnalysisStatus)})", name="ai_analysis_status_valid"
+        ),
+        CheckConstraint("length(request_fingerprint) = 64", name="ai_analysis_fingerprint_sha256"),
+        CheckConstraint(
+            "input_token_count IS NULL OR input_token_count >= 0",
+            name="ai_analysis_input_tokens_non_negative",
+        ),
+        CheckConstraint(
+            "output_token_count IS NULL OR output_token_count >= 0",
+            name="ai_analysis_output_tokens_non_negative",
+        ),
+        CheckConstraint(
+            "estimated_cost IS NULL OR estimated_cost >= 0",
+            name="ai_analysis_cost_non_negative",
+        ),
+        Index("ix_ai_analysis_type_created", "analysis_type", "created_at"),
+        Index("ix_ai_analysis_status_created", "status", "created_at"),
+        Index("ix_ai_analysis_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    analysis_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_template_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_document_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    input_event_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    user_question: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    input_token_count: Mapped[int | None] = mapped_column(Integer)
+    output_token_count: Mapped[int | None] = mapped_column(Integer)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(20, 8))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ResearchInsightModel(TimestampedModel, Base):
+    __tablename__ = "research_insights"
+    __table_args__ = (
+        UniqueConstraint("analysis_run_id", name="uq_research_insights_analysis_run"),
+        CheckConstraint(
+            f"impact_direction IN ({enum_values(AIImpactDirection)})",
+            name="research_insight_direction_valid",
+        ),
+        CheckConstraint(
+            "importance_score >= 0 AND importance_score <= 100",
+            name="research_insight_importance_range",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1", name="research_insight_confidence_range"
+        ),
+        CheckConstraint("schema_version >= 1", name="research_insight_schema_positive"),
+        Index("ix_research_insights_type_created", "insight_type", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    analysis_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ai_analysis_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    insight_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    impact_direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    importance_score: Mapped[Decimal] = mapped_column(Numeric(7, 4), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4), nullable=False)
+    time_horizon: Mapped[str | None] = mapped_column(String(128))
+    key_facts: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    uncertainties: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    research_questions: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    structured_output: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class ResearchEvidenceModel(TimestampedModel, Base):
+    __tablename__ = "research_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "(information_item_id IS NOT NULL)::integer + "
+            "(market_event_id IS NOT NULL)::integer = 1",
+            name="research_evidence_exactly_one_source",
+        ),
+        CheckConstraint("length(evidence_text) <= 2000", name="research_evidence_text_length"),
+        Index("ix_research_evidence_insight", "insight_id", "created_at"),
+        Index("ix_research_evidence_item", "information_item_id"),
+        Index("ix_research_evidence_event", "market_event_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    insight_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("research_insights.id", ondelete="RESTRICT"), nullable=False
+    )
+    information_item_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("information_items.id", ondelete="RESTRICT")
+    )
+    market_event_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("market_events.id", ondelete="RESTRICT")
+    )
+    evidence_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    evidence_location: Mapped[str | None] = mapped_column(String(512))

@@ -48,6 +48,7 @@ markers = [
   "b01: simulated Broker execution and accounting milestone tests",
   "sc01: deterministic historical market scanner milestone tests",
   "n01: information source and market-event center milestone tests",
+  "a01: grounded AI research assistant milestone tests",
   "concurrency: requires real PostgreSQL locking",
   "accounting_regression: verifies order facts do not alter M04 ledgers",
   "external: requires explicit access to free external providers",

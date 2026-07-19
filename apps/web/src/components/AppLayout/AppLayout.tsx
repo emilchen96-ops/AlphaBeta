@@ -10,6 +10,7 @@ import {
   NotificationOutlined,
   OrderedListOutlined,
   PieChartOutlined,
+  RobotOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
@@ -33,6 +34,7 @@ const menuItems = [
   { key: "/scan-runs", icon: <DatabaseOutlined />, label: "扫描运行" },
   { key: "/information", icon: <NotificationOutlined />, label: "资讯中心" },
   { key: "/market-events", icon: <AuditOutlined />, label: "市场事件" },
+  { key: "/ai-research", icon: <RobotOutlined />, label: "AI 研究" },
   { key: "/strategies", icon: <ExperimentOutlined />, label: "策略" },
   {
     key: "/strategy-experiments",

@@ -95,6 +95,9 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `market_events` | 确定性或用户指定事件 | InformationItem 一对一；类型、方向、重要度和 schema 版本受约束 |
 | `event_instrument_links` | 事件标的关联 | 事件/Instrument 复合主键；Decimal confidence 0–1 |
 | `event_theme_links` | 事件主题关联 | 事件/theme key 复合主键；按主题检索 |
+| `ai_analysis_runs` | AI 研究运行与审计状态 | `idempotency_key` 唯一；请求指纹、状态、Prompt 版本、Token/成本和输入 ID 受约束 |
+| `research_insights` | 追加式结构化 AI 研究输出 | 每个 AnalysisRun 至多一个；重要度 0–100、置信度 0–1、schema 版本受约束 |
+| `research_evidence` | Insight 的来源证据 | 每条证据只能关联 InformationItem 或 MarketEvent 之一；证据文本长度受限 |
 
 ## 关系概览
 
@@ -126,6 +129,10 @@ erDiagram
   MARKET_EVENTS ||--o{ EVENT_INSTRUMENT_LINKS : links
   INSTRUMENTS ||--o{ EVENT_INSTRUMENT_LINKS : referenced
   MARKET_EVENTS ||--o{ EVENT_THEME_LINKS : tags
+  AI_ANALYSIS_RUNS ||--o| RESEARCH_INSIGHTS : produces
+  RESEARCH_INSIGHTS ||--o{ RESEARCH_EVIDENCE : cites
+  INFORMATION_ITEMS ||--o{ RESEARCH_EVIDENCE : supports
+  MARKET_EVENTS ||--o{ RESEARCH_EVIDENCE : supports
 ```
 
 ## 可变状态与追加事实

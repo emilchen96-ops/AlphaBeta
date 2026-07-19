@@ -20,6 +20,7 @@ from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.core.middleware import CorrelationIdMiddleware
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
+from alphadesk_domain.ai_research import DisabledAIResearchProvider, FakeAIResearchProvider
 from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_examples import register_builtin_strategies
@@ -47,6 +48,11 @@ def create_app(
     register_builtin_strategies(strategy_registry)
     scanner_registry = ScannerRegistry()
     register_builtin_scanners(scanner_registry)
+    ai_provider = (
+        FakeAIResearchProvider()
+        if resolved_settings.ai_research_provider == "fake"
+        else DisabledAIResearchProvider()
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -91,6 +97,7 @@ def create_app(
     app.state.market_ws_hub = None
     app.state.strategy_registry = strategy_registry
     app.state.scanner_registry = scanner_registry
+    app.state.ai_research_provider = ai_provider
 
     app.add_middleware(
         CORSMiddleware,

@@ -6,6 +6,7 @@ from typing import Protocol, Self
 from alphadesk_domain.repositories import (
     AccountReconciliationRepository,
     AccountSnapshotRepository,
+    AIAnalysisRunRepository,
     AuditLogRepository,
     BrokerExecutionAttemptRepository,
     CashBalanceRepository,
@@ -34,6 +35,8 @@ from alphadesk_domain.repositories import (
     PositionLedgerRepository,
     PositionRepository,
     RawDocumentRepository,
+    ResearchEvidenceRepository,
+    ResearchInsightRepository,
     RiskDecisionRepository,
     RiskRuleEvaluationRepository,
     ScanResultRepository,
@@ -74,6 +77,9 @@ class UnitOfWork(Protocol):
     event_instrument_links: EventInstrumentLinkRepository
     event_theme_links: EventThemeLinkRepository
     information_ingestion_runs: InformationIngestionRunRepository
+    ai_analysis_runs: AIAnalysisRunRepository
+    research_insights: ResearchInsightRepository
+    research_evidence: ResearchEvidenceRepository
     historical_bars: HistoricalBarProvider
     orders: OrderRepository
     order_actions: OrderActionRepository

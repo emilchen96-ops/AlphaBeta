@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 当前研究里程碑为 **A01 完成**：版本化 Prompt、Disabled/Fake Provider、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和页面见 [ai_research_assistant.md](ai_research_assistant.md)。真实 Provider 当前不可用且默认禁用；AI 输出仅供研究，不创建 Signal 或订单。SC01 与 N01 均已完成，BT01 仍为部分完成，下一步仅为 BT01 补全与封板；RT01 尚未开始。
+
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
 > 当前研究工具里程碑为 **SC01 完成**：统一 Scanner、两个 A 股历史日线规则、ScanRun/ScanResult、API、CLI 和页面见 [scanners.md](scanners.md)。结果仅为历史规则筛选，不代表投资建议，不是实时扫描，不创建 Signal 或订单。
@@ -57,6 +59,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
+| A01 AI 研究助手                 | `ai_research_assistant.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
 | M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016            |
 | B01 模拟 Broker 与执行事实 | `simulated_broker.md`、`simulated_execution_pipeline.md`、`accounting.md`、`order_state_machine.md` |

@@ -16,6 +16,7 @@ from alphadesk_api.infrastructure.models import (
     AccountCashBalanceModel,
     AccountReconciliationRunModel,
     AccountSnapshotModel,
+    AIAnalysisRunModel,
     AuditLogModel,
     BrokerExecutionAttemptModel,
     CashLedgerEntryModel,
@@ -44,6 +45,8 @@ from alphadesk_api.infrastructure.models import (
     PositionLedgerEntryModel,
     PositionModel,
     RawDocumentModel,
+    ResearchEvidenceModel,
+    ResearchInsightModel,
     RiskDecisionModel,
     RiskRuleEvaluationModel,
     ScanResultModel,
@@ -66,6 +69,7 @@ from alphadesk_domain.accounting import (
     LedgerTransaction,
     PositionLedgerEntry,
 )
+from alphadesk_domain.ai_research import AIAnalysisRun, ResearchEvidence, ResearchInsight
 from alphadesk_domain.entities import (
     AuditLog,
     DomainEvent,
@@ -1016,9 +1020,7 @@ class SqlAlchemyRawDocumentRepository(SqlAlchemyRepository[RawDocument, RawDocum
     async def get_by_id(self, entity_id: UUID) -> RawDocument | None:
         return await self._get_by_id(entity_id)
 
-    async def get_by_source_external(
-        self, source_id: UUID, external_id: str
-    ) -> RawDocument | None:
+    async def get_by_source_external(self, source_id: UUID, external_id: str) -> RawDocument | None:
         row = await self._session.scalar(
             select(RawDocumentModel).where(
                 RawDocumentModel.source_id == source_id,
@@ -1098,17 +1100,13 @@ class SqlAlchemyInformationItemRepository(
         total = int(
             await self._session.scalar(
                 select(func.count()).select_from(
-                    statement.with_only_columns(InformationItemModel.id)
-                    .order_by(None)
-                    .subquery()
+                    statement.with_only_columns(InformationItemModel.id).order_by(None).subquery()
                 )
             )
             or 0
         )
         rows = await self._session.scalars(
-            statement.order_by(
-                InformationItemModel.published_at.desc(), InformationItemModel.id
-            )
+            statement.order_by(InformationItemModel.published_at.desc(), InformationItemModel.id)
             .offset(offset)
             .limit(limit)
         )
@@ -1235,6 +1233,107 @@ class SqlAlchemyInformationIngestionRunRepository(
 
     async def get_by_id(self, entity_id: UUID) -> InformationIngestionRun | None:
         return await self._get_by_id(entity_id)
+
+
+class SqlAlchemyAIAnalysisRunRepository(SqlAlchemyRepository[AIAnalysisRun, AIAnalysisRunModel]):
+    entity_type = AIAnalysisRun
+    model_type = AIAnalysisRunModel
+
+    async def add(self, entity: AIAnalysisRun) -> None:
+        await self._add(entity)
+
+    async def update(self, entity: AIAnalysisRun) -> None:
+        values = model_values(model_from_entity(AIAnalysisRunModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(AIAnalysisRunModel).where(AIAnalysisRunModel.id == entity.id).values(**values)
+        )
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> AIAnalysisRun | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> AIAnalysisRun | None:
+        row = await self._session.scalar(
+            select(AIAnalysisRunModel).where(AIAnalysisRunModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(AIAnalysisRun, row)
+
+    async def list(
+        self,
+        *,
+        analysis_type: str | None,
+        status: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[AIAnalysisRun], int]:
+        conditions = []
+        if analysis_type is not None:
+            conditions.append(AIAnalysisRunModel.analysis_type == analysis_type)
+        if status is not None:
+            conditions.append(AIAnalysisRunModel.status == status)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(AIAnalysisRunModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(AIAnalysisRunModel)
+            .where(*conditions)
+            .order_by(AIAnalysisRunModel.created_at.desc(), AIAnalysisRunModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(AIAnalysisRun, row) for row in rows], total
+
+
+class SqlAlchemyResearchInsightRepository(
+    SqlAlchemyRepository[ResearchInsight, ResearchInsightModel]
+):
+    entity_type = ResearchInsight
+    model_type = ResearchInsightModel
+
+    async def append(self, entity: ResearchInsight) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> ResearchInsight | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_run(self, run_id: UUID) -> ResearchInsight | None:
+        row = await self._session.scalar(
+            select(ResearchInsightModel).where(ResearchInsightModel.analysis_run_id == run_id)
+        )
+        return None if row is None else entity_from_model(ResearchInsight, row)
+
+    async def list(self, *, offset: int, limit: int) -> tuple[list[ResearchInsight], int]:
+        total = int(
+            await self._session.scalar(select(func.count()).select_from(ResearchInsightModel)) or 0
+        )
+        rows = await self._session.scalars(
+            select(ResearchInsightModel)
+            .order_by(ResearchInsightModel.created_at.desc(), ResearchInsightModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(ResearchInsight, row) for row in rows], total
+
+
+class SqlAlchemyResearchEvidenceRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append_many(self, entities: list[ResearchEvidence]) -> None:
+        self._session.add_all([model_from_entity(ResearchEvidenceModel, item) for item in entities])
+        await self._session.flush()
+
+    async def list_by_insight(self, insight_id: UUID) -> list[ResearchEvidence]:
+        rows = await self._session.scalars(
+            select(ResearchEvidenceModel)
+            .where(ResearchEvidenceModel.insight_id == insight_id)
+            .order_by(ResearchEvidenceModel.created_at, ResearchEvidenceModel.id)
+        )
+        return [entity_from_model(ResearchEvidence, row) for row in rows]
 
 
 class SqlAlchemyStrategyExperimentRepository(

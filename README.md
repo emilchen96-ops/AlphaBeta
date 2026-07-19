@@ -1,5 +1,9 @@
 # AlphaDesk
 
+> **2026-07-19：SC01、N01、A01 已完成。** A01 以 N01 的 InformationItem/MarketEvent 为唯一输入边界，保存版本化 AIAnalysisRun、ResearchInsight 与 Evidence，并提供 API、CLI 和 React 研究页面。默认真实 Provider 禁用，测试/演示使用 Fake Provider；所有 AI 输出仅供研究，不创建 Signal、Order、Fill 或账本记录。BT01 仍为部分完成，下一步仅为 BT01 补全与封板；RT01 尚未开始。
+
+> A01 文档：[AI 研究助手](docs/ai_research_assistant.md)；N01 文档：[资讯事件中心](docs/information_event_center.md)；SC01 文档：[历史条件扫描器](docs/scanners.md)。
+
 > N01 已实现 AI 之前的资讯事实层：手工文本、RSS/Atom Adapter、RawDocument 原文保留、Hash/external ID 去重、InformationItem、MarketEvent、Instrument/主题关联、API、CLI 和资讯页面。系统尚未进行 AI 分析，不验证全部外部事实，也不会创建订单。详见 [N01 资讯事件中心](docs/information_center.md)。
 
 > SC01 已实现 A 股历史日线条件扫描器：统一纯 Python Scanner 契约、成交量异常与涨停后回踩近似规则、ScanRun/ScanResult 持久化、API、CLI 和 `/scanners`、`/scan-runs` 页面。扫描结果仅是历史规则筛选，不代表投资建议，不是实时扫描，也不会创建 Signal 或订单。详见 [SC01 扫描器](docs/scanners.md)。

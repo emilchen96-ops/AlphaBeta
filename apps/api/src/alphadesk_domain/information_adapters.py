@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Protocol
+from typing import Protocol, cast
 from urllib.parse import urlparse
 
 from alphadesk_domain.information import (
@@ -142,7 +142,7 @@ async def _fetch_url(url: str, timeout_seconds: float, max_bytes: int) -> bytes:
     def read() -> bytes:
         request = urllib.request.Request(url, headers={"User-Agent": "AlphaDesk-N01/1.0"})
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            payload = response.read(max_bytes + 1)
+            payload = cast(bytes, response.read(max_bytes + 1))
         if len(payload) > max_bytes:
             raise InformationError("INFORMATION_RSS_TOO_LARGE", "RSS payload is too large")
         return payload

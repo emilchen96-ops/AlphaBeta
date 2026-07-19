@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-19：A01 已完成，包含安全 Provider 端口、版本化 Prompt、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和 React 页面。默认真实 Provider 禁用，Fake Provider 仅用于测试/本地演示；AI 不创建 Signal、Order、Fill 或账本记录。SC01、N01、A01 均已完成。BT01 仍为部分完成，下一步仅为 **BT01 补全与封板**；RT01 尚未开始。
+
 > 2026-07-19：N01 已完成，包含手工/RSS输入、原始事实保留、去重、资讯与市场事件、Instrument/主题关联、API、CLI 和页面。N01 不使用 AI，不创建 Signal、订单或账本记录。
 
 > 2026-07-19：SC01 已完成，包含统一 Scanner、两个历史日线规则、持久化、API、CLI 和 React 页面。扫描不会创建 Signal、Order、Fill、RiskDecision 或账本记录。

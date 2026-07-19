@@ -1,5 +1,17 @@
 # 架构总览
 
+> A01 增量：FastAPI 只把用户选定的 N01 InformationItem/MarketEvent 交给配置驱动的 `AIResearchProvider`。版本化 Prompt 将外部文本视为不可信数据，结构化输出必须引用本次输入 Evidence；PostgreSQL 保存 AIAnalysisRun、ResearchInsight 和 ResearchEvidence。默认 Provider 为 disabled，Fake 仅用于测试/本地演示，当前没有真实 Provider。A01 不调用 Scanner、Risk、Broker 或 MiniQMT，不创建 Signal、Order、Fill，也不修改资金和持仓。详见 [ai_research_assistant.md](ai_research_assistant.md)。
+
+```mermaid
+flowchart LR
+  Facts[InformationItem / MarketEvent] --> Run[AIAnalysisRun]
+  Run --> Provider[Disabled / Fake AIResearchProvider]
+  Provider --> Validate[版本化结构与 Evidence 校验]
+  Validate --> Insight[ResearchInsight + ResearchEvidence]
+  Insight --> UI[只读研究页面]
+  Insight -.禁止.-> Trade[Signal / Risk / Order / Fill / Broker / MiniQMT]
+```
+
 > N01 增量：手工输入或 RSS/Atom Adapter 只产生来源、原始文档、规范资讯、市场事件和关联事实；PostgreSQL 是唯一事实来源。N01 不调用 AI、Scanner、Strategy、Risk 或 Broker，不创建 Signal/Order，也不写账本。详见 [information_center.md](information_center.md)。
 
 ```mermaid

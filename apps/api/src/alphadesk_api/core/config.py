@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     risk_allow_market_orders: bool = False
     risk_require_reference_price_for_market_order: bool = True
     risk_kill_switch_enabled: bool = False
+    ai_research_provider: Literal["disabled", "fake"] = "disabled"
 
     @field_validator("api_prefix")
     @classmethod

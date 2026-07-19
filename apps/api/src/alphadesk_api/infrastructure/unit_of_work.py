@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyAccountReconciliationRepository,
     SqlAlchemyAccountSnapshotRepository,
+    SqlAlchemyAIAnalysisRunRepository,
     SqlAlchemyAuditLogRepository,
     SqlAlchemyBrokerExecutionAttemptRepository,
     SqlAlchemyCashBalanceRepository,
@@ -37,6 +38,8 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRawDocumentRepository,
+    SqlAlchemyResearchEvidenceRepository,
+    SqlAlchemyResearchInsightRepository,
     SqlAlchemyRiskDecisionRepository,
     SqlAlchemyRiskRuleEvaluationRepository,
     SqlAlchemyScanResultRepository,
@@ -89,6 +92,9 @@ class SqlAlchemyUnitOfWork:
         self.event_instrument_links = SqlAlchemyEventInstrumentLinkRepository(session)
         self.event_theme_links = SqlAlchemyEventThemeLinkRepository(session)
         self.information_ingestion_runs = SqlAlchemyInformationIngestionRunRepository(session)
+        self.ai_analysis_runs = SqlAlchemyAIAnalysisRunRepository(session)
+        self.research_insights = SqlAlchemyResearchInsightRepository(session)
+        self.research_evidence = SqlAlchemyResearchEvidenceRepository(session)
         self.historical_bars = SqlAlchemyHistoricalBarProvider(session)
         self.orders = SqlAlchemyOrderRepository(session)
         self.order_actions = SqlAlchemyOrderActionRepository(session)
