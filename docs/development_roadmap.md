@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-19：D01-A/B 已完成。系统可幂等同步 BaoStock A 股 Instrument，复用 Watchlist 管理最多 500 只研究池，并以串行、逐标的短事务补充未复权历史日线。D01-C 每日增量、D01-D 完整质量中心、D01-E 前端状态页均未开始；下一阶段仅为 D01-C/D/E。
+
 > 2026-07-19：I01 V0.1 集成基线已完成。系统已建立统一功能、动作、API、数据与配置盘点，以及只读 capability 接口；SC01、N01、A01 已完成。BT01 独立提交因 Migration/共享代码冲突未安全并入，保持 PARTIAL。下一步唯一主线是 **D01 历史行情数据中心**，其后才允许 BT01-R。
 
 > 2026-07-19：A01 已完成，包含安全 Provider 端口、版本化 Prompt、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和 React 页面。默认真实 Provider 禁用，Fake Provider 仅用于测试/本地演示；AI 不创建 Signal、Order、Fill 或账本记录。

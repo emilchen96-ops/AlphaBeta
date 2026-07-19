@@ -484,6 +484,7 @@ class MarketSyncRunRepository(Protocol):
         total_updated: int,
         total_rejected: int,
         error_summary: str | None,
+        metadata: dict[str, object] | None = None,
     ) -> None: ...
 
 

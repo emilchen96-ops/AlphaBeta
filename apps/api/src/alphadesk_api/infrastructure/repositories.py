@@ -2400,20 +2400,22 @@ class SqlAlchemyMarketSyncRunRepository(SqlAlchemyRepository[MarketSyncRun, Mark
         total_updated: int,
         total_rejected: int,
         error_summary: str | None,
+        metadata: dict[str, object] | None = None,
     ) -> None:
+        values: dict[str, object] = {
+            "status": status.value,
+            "completed_at": completed_at,
+            "total_received": total_received,
+            "total_inserted": total_inserted,
+            "total_updated": total_updated,
+            "total_rejected": total_rejected,
+            "error_summary": error_summary,
+            "updated_at": completed_at,
+        }
+        if metadata is not None:
+            values["metadata_json"] = metadata
         await self._session.execute(
-            update(MarketSyncRunModel)
-            .where(MarketSyncRunModel.id == entity_id)
-            .values(
-                status=status.value,
-                completed_at=completed_at,
-                total_received=total_received,
-                total_inserted=total_inserted,
-                total_updated=total_updated,
-                total_rejected=total_rejected,
-                error_summary=error_summary,
-                updated_at=completed_at,
-            )
+            update(MarketSyncRunModel).where(MarketSyncRunModel.id == entity_id).values(**values)
         )
 
 

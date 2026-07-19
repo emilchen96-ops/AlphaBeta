@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from alphadesk_domain.enums import AdjustmentType, MarketDataSourceStatus, MarketTimeframe
 
@@ -42,6 +42,8 @@ class ExternalInstrument:
     lot_size: str
     price_tick: str
     timezone: str
+    is_active: bool = True
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -58,6 +60,7 @@ class ExternalMarketBar:
     vwap: str | None = None
     open_interest: str | None = None
     source_updated_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

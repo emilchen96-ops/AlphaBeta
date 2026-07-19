@@ -3,13 +3,19 @@
 import argparse
 import asyncio
 import json
-from datetime import UTC, datetime
+import sys
+from dataclasses import asdict
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import NoReturn, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alphadesk_api.application.catalog import InstrumentCatalogService
-from alphadesk_api.application.common import UnitOfWorkFactory
+from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
+from alphadesk_api.application.historical_market_data import (
+    HistoricalMarketDataBackfillService,
+    InstrumentUniverseSyncService,
+)
 from alphadesk_api.application.market_data import (
     MarketDataIngestionService,
     MarketDataQueryService,
@@ -39,8 +45,8 @@ from alphadesk_domain.enums import (
     MarketTimeframe,
     SyncTriggerType,
 )
-from alphadesk_domain.market import InstrumentMapping
-from alphadesk_domain.market_adapters import MarketDataAdapter
+from alphadesk_domain.market import InstrumentMapping, MarketSyncRun
+from alphadesk_domain.market_adapters import MarketDataAdapter, MarketDataAdapterError
 
 
 def aware_datetime(value: str) -> datetime:
@@ -48,6 +54,55 @@ def aware_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise argparse.ArgumentTypeError("datetime must include a UTC offset")
     return parsed.astimezone(UTC)
+
+
+def date_or_datetime(value: str) -> datetime:
+    try:
+        return datetime.combine(date.fromisoformat(value), datetime.min.time(), tzinfo=UTC)
+    except ValueError:
+        return aware_datetime(value)
+
+
+def daily_timeframe(value: str) -> MarketTimeframe:
+    normalized = "DAY_1" if value.upper() == "DAY" else value.upper()
+    if normalized != MarketTimeframe.DAY_1.value:
+        raise argparse.ArgumentTypeError("timeframe must be DAY or DAY_1")
+    return MarketTimeframe.DAY_1
+
+
+def read_symbol_file(path_value: str | None) -> set[str] | None:
+    if path_value is None:
+        return None
+    path = Path(path_value)
+    if not path.is_file():
+        raise ValueError("codes file does not exist")
+    if path.stat().st_size > 1_000_000:
+        raise ValueError("codes file exceeds 1 MB")
+    values = {
+        item.strip()
+        for line in path.read_text(encoding="utf-8-sig").splitlines()
+        for item in line.replace(",", " ").split()
+        if item.strip()
+    }
+    if not values or len(values) > 10_000:
+        raise ValueError("codes file must contain 1 to 10000 symbols")
+    return values
+
+
+def serialize_sync_run(run: MarketSyncRun) -> dict[str, object]:
+    values = asdict(run)
+    return {key: value.value if hasattr(value, "value") else value for key, value in values.items()}
+
+
+def report_backfill_progress(current: int, total: int, symbol: str, state: str) -> None:
+    print(
+        json.dumps(
+            {"progress": {"current": current, "total": total, "symbol": symbol, "state": state}},
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def adapter_for(source_code: str) -> MarketDataAdapter:
@@ -130,6 +185,11 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
         batch_size=settings.market_sync_batch_size,
         future_tolerance_seconds=settings.market_future_tolerance_seconds,
     )
+    universes = InstrumentUniverseSyncService(uow_factory)
+    historical = HistoricalMarketDataBackfillService(
+        uow_factory,
+        future_tolerance_seconds=settings.market_future_tolerance_seconds,
+    )
     try:
         if args.command == "provider-check":
             selected_adapter = adapter_for(args.source)
@@ -190,7 +250,17 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                 ],
             }
         if args.command == "sync-instruments":
-            selected_adapter = adapter_for(args.source)
+            source_code = (args.provider or args.source).upper()
+            selected_adapter = adapter_for(source_code)
+            if selected_adapter.source_code == "BAOSTOCK":
+                instrument_sync_result = await universes.sync_instruments(
+                    adapter=selected_adapter,
+                    correlation_id=uuid4(),
+                    limit=args.limit,
+                    symbols=read_symbol_file(args.codes_file),
+                    dry_run=args.dry_run,
+                )
+                return asdict(instrument_sync_result)
             if selected_adapter.source_code == "DEMO":
                 await ensure_demo(catalog)
             elif selected_adapter.source_code == "AKSHARE_EASTMONEY":
@@ -210,6 +280,62 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                 "source": selected_adapter.source_code,
                 "instruments": instruments,
                 "mappings": mappings,
+            }
+        if args.command == "create-research-universe":
+            universe_result = await universes.create_research_universe(
+                correlation_id=uuid4(),
+                limit=args.limit,
+                symbols=read_symbol_file(args.codes_file),
+                dry_run=args.dry_run,
+            )
+            return {
+                "name": universe_result.name,
+                "instrument_count": len(universe_result.instrument_ids),
+                "symbols_preview": list(universe_result.symbols[:20]),
+                "created": universe_result.created,
+                "dry_run": universe_result.dry_run,
+            }
+        if args.command == "backfill":
+            selected_adapter = adapter_for(args.provider)
+            if args.limit > settings.market_backfill_max_instruments:
+                raise ApplicationError(
+                    "D01_BACKFILL_INSTRUMENT_LIMIT",
+                    f"单次补数最多 {settings.market_backfill_max_instruments} 个标的",
+                )
+            selected_instruments = await universes.resolve_universe(
+                universe=args.universe,
+                limit=args.limit,
+                instrument_ids=args.instrument_id,
+                symbols=read_symbol_file(args.codes_file),
+            )
+            backfill_result = await historical.backfill(
+                adapter=selected_adapter,
+                instruments=selected_instruments,
+                universe=args.universe,
+                timeframe=args.timeframe,
+                start=args.start,
+                end=args.end or datetime.now(UTC),
+                batch_size=args.batch_size or settings.market_backfill_batch_size,
+                continue_on_error=args.continue_on_error,
+                correlation_id=uuid4(),
+                max_retries=(
+                    settings.market_backfill_max_retries
+                    if args.max_retries is None
+                    else args.max_retries
+                ),
+                request_interval_seconds=(
+                    settings.market_backfill_request_interval_seconds
+                    if args.request_interval_ms is None
+                    else args.request_interval_ms / 1000
+                ),
+                dry_run=args.dry_run,
+                progress=None if args.dry_run else report_backfill_progress,
+            )
+            return {
+                **asdict(backfill_result),
+                "run": (
+                    None if backfill_result.run is None else serialize_sync_run(backfill_result.run)
+                ),
             }
         if args.command in {"sync-bars", "import-csv", "sync-daily", "sync-recent-minute-bars"}:
             if args.command == "import-csv":
@@ -275,23 +401,12 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                 "updated": run.total_updated,
                 "rejected": run.total_rejected,
             }
-        if args.command == "sync-status":
+        if args.command in {"sync-status", "list-sync-runs"}:
             values = await MarketDataQueryService(uow_factory).sync_runs(args.limit)
-            return {
-                "runs": [
-                    {
-                        "id": str(run.id),
-                        "source_id": str(run.source_id),
-                        "status": run.status.value,
-                        "timeframe": run.timeframe.value,
-                        "started_at": run.started_at.isoformat(),
-                        "completed_at": (
-                            None if run.completed_at is None else run.completed_at.isoformat()
-                        ),
-                    }
-                    for run in values
-                ]
-            }
+            return {"runs": [serialize_sync_run(run) for run in values]}
+        if args.command == "show-sync-run":
+            run = await MarketDataQueryService(uow_factory).sync_run(args.run_id)
+            return {"run": serialize_sync_run(run)}
         raise ValueError("unknown command")
     finally:
         await database.close()
@@ -308,6 +423,34 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("seed-demo")
     instruments = commands.add_parser("sync-instruments")
     instruments.add_argument("--source", default="DEMO")
+    instruments.add_argument("--provider")
+    instruments.add_argument("--limit", type=int)
+    instruments.add_argument("--codes-file")
+    instruments.add_argument("--dry-run", action="store_true")
+    research = commands.add_parser("create-research-universe")
+    research.add_argument("--limit", type=int, default=300)
+    research.add_argument("--codes-file")
+    research.add_argument("--dry-run", action="store_true")
+    backfill = commands.add_parser("backfill")
+    backfill.add_argument("--provider", default="baostock")
+    backfill.add_argument(
+        "--universe",
+        choices=("research", "manual", "all_active_a_share"),
+        default="research",
+    )
+    backfill.add_argument("--instrument-id", action="append", type=UUID)
+    backfill.add_argument("--codes-file")
+    backfill.add_argument("--limit", type=int, default=300)
+    backfill.add_argument("--timeframe", type=daily_timeframe, default=MarketTimeframe.DAY_1)
+    backfill.add_argument("--start", type=date_or_datetime, required=True)
+    backfill.add_argument("--end", type=date_or_datetime)
+    backfill.add_argument("--batch-size", type=int)
+    backfill.add_argument(
+        "--continue-on-error", action=argparse.BooleanOptionalAction, default=True
+    )
+    backfill.add_argument("--max-retries", type=int)
+    backfill.add_argument("--request-interval-ms", type=int)
+    backfill.add_argument("--dry-run", action="store_true")
     bars = commands.add_parser("sync-bars")
     bars.add_argument("--source", default="DEMO")
     bars.add_argument("--symbols", required=True)
@@ -325,11 +468,19 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--end", type=aware_datetime, required=True)
     status = commands.add_parser("sync-status")
     status.add_argument("--limit", type=int, default=20, choices=range(1, 101))
+    list_runs = commands.add_parser("list-sync-runs")
+    list_runs.add_argument("--limit", type=int, default=20, choices=range(1, 101))
+    show_run = commands.add_parser("show-sync-run")
+    show_run.add_argument("--run-id", type=UUID, required=True)
     return parser
 
 
-def fail(message: str) -> NoReturn:
-    print(json.dumps({"status": "error", "error": message}, ensure_ascii=False))
+def fail(message: str, code: str = "MARKET_DATA_COMMAND_FAILED") -> NoReturn:
+    print(
+        json.dumps(
+            {"status": "error", "error": {"code": code, "message": message}}, ensure_ascii=False
+        )
+    )
     raise SystemExit(2)
 
 
@@ -337,6 +488,10 @@ def main() -> None:
     args = build_parser().parse_args()
     try:
         result = asyncio.run(execute(args, get_settings()))
+    except ApplicationError as exc:
+        fail(exc.message, exc.code)
+    except MarketDataAdapterError as exc:
+        fail(str(exc), "MARKET_PROVIDER_ERROR")
     except (OSError, RuntimeError, ValueError) as exc:
         fail(str(exc))
     print(json.dumps({"status": "ok", **result}, ensure_ascii=False, default=str))

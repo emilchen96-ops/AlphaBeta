@@ -1,5 +1,7 @@
 # AlphaDesk
 
+> **2026-07-19：D01-A/B 已完成。** BaoStock A 股 Instrument、300–500 只研究 Watchlist 与未复权历史日线可通过受控 CLI 幂等写入 PostgreSQL；详见 [D01 历史行情](docs/historical_market_data.md)。D01-C/D/E 尚未开始，系统仍不接实时行情、MiniQMT 或真实券商。
+
 > **2026-07-19：I01 V0.1 集成基线已完成。** 当前功能、按钮、API、数据和配置状态以 [I01 集成说明](docs/integration_v0_1.md)、[功能盘点](docs/feature_inventory.md)、[UI 动作盘点](docs/ui_action_inventory.md)、[API 契约盘点](docs/api_contract_inventory.md) 与 [数据就绪度](docs/data_readiness.md) 为准。首页通过只读 `/api/v1/system/capabilities` 展示真实能力，不把“已实现”误报为“当前可运行”。下一步唯一主线是 **D01 历史行情数据中心**。
 
 > SC01、N01、A01 已完成。BT01 独立提交因 Migration 与后续模块冲突，未并入当前稳定链；当前回测能力为 PARTIAL，需在 D01 后进入 BT01-R。系统仍无 Windows 执行器、MiniQMT、外部 Broker 或实盘能力。
@@ -134,6 +136,19 @@ docker compose exec api alembic current
 经过 R01 风控和 M05 人工确认的订单，可在订单中心显式输入测试市场快照并执行本地模拟成交。结果会写入 Attempt、Fill 和 M04 模拟账本；成交记录页面只读展示费用及现金影响。完整操作说明见 [B01-C 模拟执行界面](docs/simulated_broker_ui.md)。该能力不读取真实行情、不连接券商，也不会产生真实交易。
 
 完整文档从 [docs/index.md](docs/index.md) 开始；开发任务必须遵守 [AGENTS.md](AGENTS.md)。
+
+## D01 历史日线
+
+以下命令必须在 API 可连接 PostgreSQL 且用户明确允许 BaoStock 外部连接时运行：
+
+```text
+python -m alphadesk_api.cli.market_data sync-instruments --provider baostock
+python -m alphadesk_api.cli.market_data create-research-universe --limit 300
+python -m alphadesk_api.cli.market_data backfill --provider baostock --universe research --timeframe DAY --start 2023-01-01
+python -m alphadesk_api.cli.market_data list-sync-runs
+```
+
+先使用 `--dry-run` 和较小 `--limit` 预览。单次补数默认最多 500 只，串行请求，不会启动后台任务，也不会创建 Signal、订单、成交或账本事实。
 
 ## SC01 历史日线条件扫描
 

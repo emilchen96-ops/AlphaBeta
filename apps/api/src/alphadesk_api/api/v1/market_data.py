@@ -177,6 +177,15 @@ async def get_sync_runs(
     return [MarketSyncRunResponse(**asdict(value)) for value in values]
 
 
+@router.get("/sync-runs/{run_id}", response_model=MarketSyncRunResponse)
+async def get_sync_run(request: Request, run_id: UUID) -> MarketSyncRunResponse:
+    try:
+        value = await query_service(request).sync_run(run_id)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return MarketSyncRunResponse(**asdict(value))
+
+
 def _redis_client(request: Request) -> Redis:
     client = getattr(request.app.state.redis, "client", None)
     if client is None:

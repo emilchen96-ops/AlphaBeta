@@ -158,6 +158,8 @@ class MarketSyncRunResponse(BaseModel):
     adjustment_type: AdjustmentType
     requested_symbols: tuple[str, ...]
     started_at: datetime
+    requested_start: datetime | None
+    requested_end: datetime | None
     completed_at: datetime | None
     total_received: int
     total_inserted: int
@@ -165,3 +167,4 @@ class MarketSyncRunResponse(BaseModel):
     total_rejected: int
     error_summary: str | None
     correlation_id: UUID
+    metadata: dict[str, object]

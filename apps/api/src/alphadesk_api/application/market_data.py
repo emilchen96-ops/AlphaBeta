@@ -112,11 +112,12 @@ class MarketDataIngestionService:
                     errors.append(f"mapping_missing:{external.symbol}")
                     continue
                 try:
-                    bar = self._normalize(
+                    bar = normalize_external_bar(
                         external,
                         instrument_id=mapping.instrument_id,
                         source_id=source.id,
                         adjustment=adjustment,
+                        future_tolerance=self._future_tolerance,
                     )
                     previous = previous_times.get(external.symbol)
                     if previous is not None and bar.bar_time < previous:
@@ -211,44 +212,6 @@ class MarketDataIngestionService:
             error_summary=summary,
         )
 
-    def _normalize(
-        self,
-        external: ExternalMarketBar,
-        *,
-        instrument_id: UUID,
-        source_id: UUID,
-        adjustment: AdjustmentType,
-    ) -> MarketBar:
-        now = datetime.now(UTC)
-        if external.timeframe not in (MarketTimeframe.DAY_1, MarketTimeframe.MINUTE_1):
-            raise ValueError("unsupported normalized timeframe")
-        if external.bar_time.tzinfo is None:
-            raise ValueError("bar_time must be timezone-aware")
-        bar_time = external.bar_time.astimezone(UTC)
-        if bar_time > now + self._future_tolerance:
-            raise ValueError("bar_time is too far in the future")
-        return MarketBar(
-            instrument_id=instrument_id,
-            source_id=source_id,
-            timeframe=external.timeframe,
-            adjustment_type=adjustment,
-            bar_time=bar_time,
-            open=Decimal(external.open),
-            high=Decimal(external.high),
-            low=Decimal(external.low),
-            close=Decimal(external.close),
-            volume=Decimal(external.volume),
-            amount=None if external.amount is None else Decimal(external.amount),
-            vwap=None if external.vwap is None else Decimal(external.vwap),
-            open_interest=(
-                None if external.open_interest is None else Decimal(external.open_interest)
-            ),
-            received_at=now,
-            source_updated_at=external.source_updated_at,
-            quality_status=MarketDataQualityStatus.NORMAL,
-            quality_flags={"source_classification": "DEMO"},
-        )
-
     async def _require_source(self, source_code: str) -> MarketDataSource:
         async with self._uow_factory() as uow:
             source = await uow.market_data_sources.get_by_code(source_code)
@@ -303,6 +266,48 @@ class MarketDataIngestionService:
             total_rejected=total_rejected,
             error_summary=reason[:1000],
         )
+
+
+def normalize_external_bar(
+    external: ExternalMarketBar,
+    *,
+    instrument_id: UUID,
+    source_id: UUID,
+    adjustment: AdjustmentType,
+    future_tolerance: timedelta,
+) -> MarketBar:
+    """Convert string-valued provider data without passing through binary floats."""
+
+    now = datetime.now(UTC)
+    if external.timeframe not in (MarketTimeframe.DAY_1, MarketTimeframe.MINUTE_1):
+        raise ValueError("unsupported normalized timeframe")
+    if external.bar_time.tzinfo is None:
+        raise ValueError("bar_time must be timezone-aware")
+    bar_time = external.bar_time.astimezone(UTC)
+    if bar_time > now + future_tolerance:
+        raise ValueError("bar_time is too far in the future")
+    return MarketBar(
+        instrument_id=instrument_id,
+        source_id=source_id,
+        timeframe=external.timeframe,
+        adjustment_type=adjustment,
+        bar_time=bar_time,
+        open=Decimal(external.open),
+        high=Decimal(external.high),
+        low=Decimal(external.low),
+        close=Decimal(external.close),
+        volume=Decimal(external.volume),
+        amount=None if external.amount is None else Decimal(external.amount),
+        vwap=None if external.vwap is None else Decimal(external.vwap),
+        open_interest=None if external.open_interest is None else Decimal(external.open_interest),
+        received_at=now,
+        source_updated_at=external.source_updated_at,
+        quality_status=MarketDataQualityStatus.NORMAL,
+        quality_flags={
+            "source_classification": "EXTERNAL",
+            **(external.metadata or {}),
+        },
+    )
 
 
 class MarketDataQueryService:
@@ -375,6 +380,13 @@ class MarketDataQueryService:
     async def sync_runs(self, limit: int) -> list[MarketSyncRun]:
         async with self._uow_factory() as uow:
             return await uow.market_sync_runs.list_recent(limit)
+
+    async def sync_run(self, run_id: UUID) -> MarketSyncRun:
+        async with self._uow_factory() as uow:
+            run = await uow.market_sync_runs.get_by_id(run_id)
+        if run is None:
+            raise ApplicationError("MARKET_SYNC_RUN_NOT_FOUND", "行情同步记录不存在")
+        return run
 
     async def _resolve_source(
         self, uow: UnitOfWork, instrument_id: UUID, source_code: str | None

@@ -11,7 +11,7 @@ from alphadesk_api.application.common import (
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketDataSourceStatus, MarketProviderTier, MarketTimeframe
 from alphadesk_domain.market import InstrumentMapping, MarketDataSource
-from alphadesk_domain.market_adapters import MarketDataAdapter
+from alphadesk_domain.market_adapters import ExternalInstrument, MarketDataAdapter
 
 
 class InstrumentCatalogService:
@@ -55,8 +55,19 @@ class InstrumentCatalogService:
         self, adapter: MarketDataAdapter, correlation_id: UUID
     ) -> tuple[int, int]:
         external = await adapter.list_instruments()
+        return await self.import_external(adapter.source_code, external, correlation_id)
+
+    async def import_external(
+        self,
+        source_code: str,
+        external: list[ExternalInstrument],
+        correlation_id: UUID,
+        batch_size: int = 500,
+    ) -> tuple[int, int]:
+        if not 1 <= batch_size <= 5_000:
+            raise ApplicationError("MARKET_DATA_VALIDATION_FAILED", "batch_size 超出安全范围")
         async with self._uow_factory() as uow:
-            source = await uow.market_data_sources.get_by_code(adapter.source_code)
+            source = await uow.market_data_sources.get_by_code(source_code)
             if source is None:
                 raise ApplicationError("MARKET_SOURCE_NOT_FOUND", "行情源不存在")
             instruments = [
@@ -70,11 +81,20 @@ class InstrumentCatalogService:
                     lot_size=Decimal(item.lot_size),
                     price_tick=Decimal(item.price_tick),
                     timezone=item.timezone,
-                    metadata={"source": adapter.source_code, "demo": adapter.source_code == "DEMO"},
+                    is_active=item.is_active,
+                    metadata={
+                        "source": source_code,
+                        "demo": source_code == "DEMO",
+                        **(item.metadata or {}),
+                    },
                 )
                 for item in external
             ]
-            persisted = await uow.instruments.upsert_many(instruments)
+            persisted: list[Instrument] = []
+            for offset in range(0, len(instruments), batch_size):
+                persisted.extend(
+                    await uow.instruments.upsert_many(instruments[offset : offset + batch_size])
+                )
             by_key = {(item.exchange, item.symbol): item for item in persisted}
             mappings = [
                 InstrumentMapping(
@@ -83,11 +103,15 @@ class InstrumentCatalogService:
                     external_symbol=item.symbol,
                     external_exchange=item.exchange,
                     is_primary=True,
-                    metadata={"demo": adapter.source_code == "DEMO"},
+                    metadata={
+                        "demo": source_code == "DEMO",
+                        **(item.metadata or {}),
+                    },
                 )
                 for item in external
             ]
-            await uow.instrument_mappings.upsert_many(mappings)
+            for offset in range(0, len(mappings), batch_size):
+                await uow.instrument_mappings.upsert_many(mappings[offset : offset + batch_size])
             if persisted:
                 await append_event_and_audit(
                     uow,
