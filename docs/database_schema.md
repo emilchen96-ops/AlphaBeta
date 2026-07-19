@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> N01 Migration `0012_n01` 新增资讯来源、摄取运行、RawDocument、InformationItem、MarketEvent 和 Instrument/主题关联表。原始文档按同来源 external ID 和规范内容 SHA-256 去重；每个 InformationItem 至多一个 MarketEvent；confidence/importance 使用 NUMERIC。
+
 > SC01 Migration `0011_sc01` 新增 `scan_runs` 与追加式 `scan_results`。运行幂等键唯一；结果对 `(scan_run_id, instrument_id)` 和 `(scan_run_id, rank)` 唯一，rank 从 1 开始，评分与参考价使用 NUMERIC。Scanner 只读取既有 MarketBar，不写入 Signal、风控、订单、成交或账本表。
 
 > B01-B Migration `0010_b01` 新增只追加 `broker_execution_attempts`，并扩展 Fill 的 Attempt、
@@ -86,6 +88,13 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `outbox_messages` | 与业务事实同事务写入的待发布记录 | `(event_id, topic)` 唯一；状态和重试次数受约束；按待处理状态/可用时间及聚合检索 |
 | `scan_runs` | 历史日线扫描运行 | `idempotency_key` 唯一；DAY_1、状态、非负计数和 SHA-256 指纹受约束 |
 | `scan_results` | 追加式规则匹配结果 | 运行/标的与运行/rank 唯一；rank、score、参考价和 schema 版本受约束 |
+| `information_sources` | 手工/RSS等来源目录 | `source_key` 唯一；来源类型受约束；不保存凭据 |
+| `information_ingestion_runs` | RSS手工摄取运行 | 状态与非负计数受约束；按来源/开始时间检索 |
+| `raw_documents` | 不可覆盖的来源原文 | 来源/external ID 与规范内容 SHA-256 唯一；按来源、发布/接收时间检索 |
+| `information_items` | 规范化可搜索资讯 | RawDocument 一对一；状态受约束；区分发布与接收时间 |
+| `market_events` | 确定性或用户指定事件 | InformationItem 一对一；类型、方向、重要度和 schema 版本受约束 |
+| `event_instrument_links` | 事件标的关联 | 事件/Instrument 复合主键；Decimal confidence 0–1 |
+| `event_theme_links` | 事件主题关联 | 事件/theme key 复合主键；按主题检索 |
 
 ## 关系概览
 
@@ -111,6 +120,12 @@ erDiagram
   TRADING_ACCOUNTS ||--o{ EXECUTOR_DEVICE_ACCOUNTS : assigned
   INSTRUMENTS ||--o{ SCAN_RESULTS : matched
   SCAN_RUNS ||--o{ SCAN_RESULTS : contains
+  INFORMATION_SOURCES ||--o{ RAW_DOCUMENTS : provides
+  RAW_DOCUMENTS ||--|| INFORMATION_ITEMS : normalizes
+  INFORMATION_ITEMS ||--|| MARKET_EVENTS : yields
+  MARKET_EVENTS ||--o{ EVENT_INSTRUMENT_LINKS : links
+  INSTRUMENTS ||--o{ EVENT_INSTRUMENT_LINKS : referenced
+  MARKET_EVENTS ||--o{ EVENT_THEME_LINKS : tags
 ```
 
 ## 可变状态与追加事实

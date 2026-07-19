@@ -1,5 +1,7 @@
 # AlphaDesk
 
+> N01 已实现 AI 之前的资讯事实层：手工文本、RSS/Atom Adapter、RawDocument 原文保留、Hash/external ID 去重、InformationItem、MarketEvent、Instrument/主题关联、API、CLI 和资讯页面。系统尚未进行 AI 分析，不验证全部外部事实，也不会创建订单。详见 [N01 资讯事件中心](docs/information_center.md)。
+
 > SC01 已实现 A 股历史日线条件扫描器：统一纯 Python Scanner 契约、成交量异常与涨停后回踩近似规则、ScanRun/ScanResult 持久化、API、CLI 和 `/scanners`、`/scan-runs` 页面。扫描结果仅是历史规则筛选，不代表投资建议，不是实时扫描，也不会创建 Signal 或订单。详见 [SC01 扫描器](docs/scanners.md)。
 
 > M05 已完成本地订单事实管道：模拟账户手工创建、人工确认、取消、过期、查询/Timeline、`SUBMIT_ORDER/PENDING` 与 Transactional Outbox 原子写入，以及 `/orders` 网页。QUEUED 不是已发送，Outbox PENDING 不是已发布；没有 Broker、Executor、Fill、资金/组合风控或实盘。详见 [订单](docs/orders.md)、[人工确认](docs/order_confirmation.md) 与 [Outbox](docs/transactional_outbox.md)。
@@ -130,6 +132,10 @@ docker compose exec api alembic current
 ## SC01 历史日线条件扫描
 
 启动 API、PostgreSQL 和 Web 后访问 `http://localhost:5173/scanners`。先确保目标 Instrument 已有本地 `DAY_1` 历史 K 线，再选择扫描器、股票池、截止时间和参数运行；结果可在 `/scan-runs` 查询。该功能不会调用风控、Broker 或账本，也不会产生订单。
+
+## N01 资讯事件中心
+
+访问 `http://localhost:5173/information` 可手工录入带来源、发布时间、Instrument 和主题的资讯；`/market-events` 查询确定性事件事实。原始正文保留且不会被规范化内容覆盖，发布时间和接收时间分别展示。
 
 ## M01.1 端到端补充验收
 

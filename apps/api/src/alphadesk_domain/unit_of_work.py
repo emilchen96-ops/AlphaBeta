@@ -11,13 +11,19 @@ from alphadesk_domain.repositories import (
     CashBalanceRepository,
     CashLedgerRepository,
     DomainEventRepository,
+    EventInstrumentLinkRepository,
+    EventThemeLinkRepository,
     ExecutorDeviceRepository,
     FillRepository,
+    InformationIngestionRunRepository,
+    InformationItemRepository,
+    InformationSourceRepository,
     InstrumentMappingRepository,
     InstrumentRepository,
     LedgerTransactionRepository,
     MarketBarRepository,
     MarketDataSourceRepository,
+    MarketEventRepository,
     MarketRealtimeRunRepository,
     MarketSyncRunRepository,
     OrderActionRepository,
@@ -27,6 +33,7 @@ from alphadesk_domain.repositories import (
     OutboxRepository,
     PositionLedgerRepository,
     PositionRepository,
+    RawDocumentRepository,
     RiskDecisionRepository,
     RiskRuleEvaluationRepository,
     ScanResultRepository,
@@ -60,6 +67,13 @@ class UnitOfWork(Protocol):
     strategy_experiment_runs: StrategyExperimentRunRepository
     scan_runs: ScanRunRepository
     scan_results: ScanResultRepository
+    information_sources: InformationSourceRepository
+    raw_documents: RawDocumentRepository
+    information_items: InformationItemRepository
+    market_events: MarketEventRepository
+    event_instrument_links: EventInstrumentLinkRepository
+    event_theme_links: EventThemeLinkRepository
+    information_ingestion_runs: InformationIngestionRunRepository
     historical_bars: HistoricalBarProvider
     orders: OrderRepository
     order_actions: OrderActionRepository

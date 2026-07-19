@@ -7,6 +7,11 @@ import { AuditPage } from "../pages/AuditPage";
 import { BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import {
+  InformationCenterPage,
+  InformationDetailPage,
+  MarketEventsPage,
+} from "../pages/InformationPages";
 import { OrdersPage } from "../pages/OrdersPage";
 import { PortfolioPage } from "../pages/PortfolioPage";
 import {
@@ -60,6 +65,13 @@ export const routes: RouteObject[] = [
       { path: "scanners", element: <ScannersPage /> },
       { path: "scan-runs", element: <ScanRunsPage /> },
       { path: "scan-runs/:runId", element: <ScanRunDetailPage /> },
+      { path: "information", element: <InformationCenterPage /> },
+      { path: "information/:itemId", element: <InformationDetailPage /> },
+      { path: "market-events", element: <MarketEventsPage /> },
+      {
+        path: "market-events/:eventId",
+        element: <InformationDetailPage eventMode />,
+      },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "strategy-experiments", element: <StrategyExperimentsPage /> },
       {

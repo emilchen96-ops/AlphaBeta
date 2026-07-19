@@ -7,6 +7,7 @@ import {
   FilterOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
+  NotificationOutlined,
   OrderedListOutlined,
   PieChartOutlined,
   SafetyCertificateOutlined,
@@ -30,6 +31,8 @@ const menuItems = [
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
   { key: "/scanners", icon: <FilterOutlined />, label: "条件扫描" },
   { key: "/scan-runs", icon: <DatabaseOutlined />, label: "扫描运行" },
+  { key: "/information", icon: <NotificationOutlined />, label: "资讯中心" },
+  { key: "/market-events", icon: <AuditOutlined />, label: "市场事件" },
   { key: "/strategies", icon: <ExperimentOutlined />, label: "策略" },
   {
     key: "/strategy-experiments",

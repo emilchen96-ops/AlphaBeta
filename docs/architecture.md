@@ -1,5 +1,18 @@
 # 架构总览
 
+> N01 增量：手工输入或 RSS/Atom Adapter 只产生来源、原始文档、规范资讯、市场事件和关联事实；PostgreSQL 是唯一事实来源。N01 不调用 AI、Scanner、Strategy、Risk 或 Broker，不创建 Signal/Order，也不写账本。详见 [information_center.md](information_center.md)。
+
+```mermaid
+flowchart LR
+  Input[手工文本 / RSS Fixture或手工抓取] --> Raw[RawDocument 原文事实]
+  Raw --> Normalize[规范化 + SHA-256 去重]
+  Normalize --> Item[InformationItem]
+  Item --> Event[MarketEvent]
+  Event --> Links[Instrument / Theme 关联]
+  Links --> UI[资讯与事件页面]
+  Event -.禁止.-> Trade[AI / Signal / Risk / Order / Broker / Ledger]
+```
+
 > SC01 增量：浏览器通过 FastAPI 手工发起历史日线筛选；应用服务从 PostgreSQL 读取既有 MarketBar，将纯 Python Scanner 的匹配结果作为 ScanRun/ScanResult 保存。该链路不使用 Redis，不创建 Signal、RiskDecision、Order 或 Fill，不调用 Broker，也不修改账户和账本。详见 [scanners.md](scanners.md)。
 
 ## SC01 历史扫描链路

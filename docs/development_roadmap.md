@@ -1,5 +1,7 @@
 # 开发路线图
 
+> 2026-07-19：N01 已完成，包含手工/RSS输入、原始事实保留、去重、资讯与市场事件、Instrument/主题关联、API、CLI 和页面。N01 不使用 AI，不创建 Signal、订单或账本记录。
+
 > 2026-07-19：SC01 已完成，包含统一 Scanner、两个历史日线规则、持久化、API、CLI 和 React 页面。扫描不会创建 Signal、Order、Fill、RiskDecision 或账本记录。
 
 > 当前进度：B01-A 与 B01-B 已完成开发。系统具备纯领域模拟 Broker、追加式执行尝试、持久化

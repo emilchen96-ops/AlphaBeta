@@ -20,14 +20,20 @@ from alphadesk_api.infrastructure.models import (
     BrokerExecutionAttemptModel,
     CashLedgerEntryModel,
     DomainEventModel,
+    EventInstrumentLinkModel,
+    EventThemeLinkModel,
     ExecutorDeviceAccountModel,
     ExecutorDeviceModel,
     FillModel,
+    InformationIngestionRunModel,
+    InformationItemModel,
+    InformationSourceModel,
     InstrumentMappingModel,
     InstrumentModel,
     LedgerTransactionModel,
     MarketBarModel,
     MarketDataSourceModel,
+    MarketEventModel,
     MarketRealtimeRunModel,
     MarketSyncRunModel,
     OrderActionModel,
@@ -37,6 +43,7 @@ from alphadesk_api.infrastructure.models import (
     OutboxMessageModel,
     PositionLedgerEntryModel,
     PositionModel,
+    RawDocumentModel,
     RiskDecisionModel,
     RiskRuleEvaluationModel,
     ScanResultModel,
@@ -89,6 +96,15 @@ from alphadesk_domain.enums import (
     MarketTimeframe,
     OutboxStatus,
     RealtimeRunStatus,
+)
+from alphadesk_domain.information import (
+    EventInstrumentLink,
+    EventThemeLink,
+    InformationIngestionRun,
+    InformationItem,
+    InformationSource,
+    MarketEvent,
+    RawDocument,
 )
 from alphadesk_domain.market import (
     InstrumentMapping,
@@ -951,6 +967,274 @@ class SqlAlchemyScanResultRepository(SqlAlchemyRepository[ScanResult, ScanResult
             )
             or 0
         )
+
+
+class SqlAlchemyInformationSourceRepository(
+    SqlAlchemyRepository[InformationSource, InformationSourceModel]
+):
+    entity_type = InformationSource
+    model_type = InformationSourceModel
+
+    async def add(self, entity: InformationSource) -> None:
+        await self._add(entity)
+
+    async def update(self, entity: InformationSource) -> None:
+        values = model_values(model_from_entity(InformationSourceModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(InformationSourceModel)
+            .where(InformationSourceModel.id == entity.id)
+            .values(**values)
+        )
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> InformationSource | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_key(self, source_key: str) -> InformationSource | None:
+        row = await self._session.scalar(
+            select(InformationSourceModel).where(InformationSourceModel.source_key == source_key)
+        )
+        return None if row is None else entity_from_model(InformationSource, row)
+
+    async def list_all(self) -> list[InformationSource]:
+        rows = await self._session.scalars(
+            select(InformationSourceModel).order_by(
+                InformationSourceModel.display_name, InformationSourceModel.id
+            )
+        )
+        return [entity_from_model(InformationSource, row) for row in rows]
+
+
+class SqlAlchemyRawDocumentRepository(SqlAlchemyRepository[RawDocument, RawDocumentModel]):
+    entity_type = RawDocument
+    model_type = RawDocumentModel
+
+    async def add(self, entity: RawDocument) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> RawDocument | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_source_external(
+        self, source_id: UUID, external_id: str
+    ) -> RawDocument | None:
+        row = await self._session.scalar(
+            select(RawDocumentModel).where(
+                RawDocumentModel.source_id == source_id,
+                RawDocumentModel.external_id == external_id,
+            )
+        )
+        return None if row is None else entity_from_model(RawDocument, row)
+
+    async def get_by_hash(self, content_hash: str) -> RawDocument | None:
+        row = await self._session.scalar(
+            select(RawDocumentModel).where(RawDocumentModel.content_hash == content_hash)
+        )
+        return None if row is None else entity_from_model(RawDocument, row)
+
+
+class SqlAlchemyInformationItemRepository(
+    SqlAlchemyRepository[InformationItem, InformationItemModel]
+):
+    entity_type = InformationItem
+    model_type = InformationItemModel
+
+    async def add(self, entity: InformationItem) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> InformationItem | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_raw_document(self, raw_document_id: UUID) -> InformationItem | None:
+        row = await self._session.scalar(
+            select(InformationItemModel).where(
+                InformationItemModel.raw_document_id == raw_document_id
+            )
+        )
+        return None if row is None else entity_from_model(InformationItem, row)
+
+    async def list(
+        self,
+        *,
+        search: str | None,
+        source_id: UUID | None,
+        instrument_id: UUID | None,
+        theme_key: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[InformationItem], int]:
+        statement = select(InformationItemModel).join(
+            RawDocumentModel, RawDocumentModel.id == InformationItemModel.raw_document_id
+        )
+        conditions = []
+        if instrument_id is not None or theme_key is not None:
+            statement = statement.join(
+                MarketEventModel,
+                MarketEventModel.information_item_id == InformationItemModel.id,
+            )
+        if instrument_id is not None:
+            statement = statement.join(
+                EventInstrumentLinkModel,
+                EventInstrumentLinkModel.event_id == MarketEventModel.id,
+            )
+            conditions.append(EventInstrumentLinkModel.instrument_id == instrument_id)
+        if theme_key is not None:
+            statement = statement.join(
+                EventThemeLinkModel, EventThemeLinkModel.event_id == MarketEventModel.id
+            )
+            conditions.append(EventThemeLinkModel.theme_key == theme_key)
+        if source_id is not None:
+            conditions.append(RawDocumentModel.source_id == source_id)
+        if search:
+            pattern = f"%{search}%"
+            conditions.append(
+                or_(
+                    InformationItemModel.normalized_title.ilike(pattern),
+                    InformationItemModel.normalized_content.ilike(pattern),
+                )
+            )
+        statement = statement.where(*conditions).distinct()
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(
+                    statement.with_only_columns(InformationItemModel.id)
+                    .order_by(None)
+                    .subquery()
+                )
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            statement.order_by(
+                InformationItemModel.published_at.desc(), InformationItemModel.id
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(InformationItem, row) for row in rows], total
+
+
+class SqlAlchemyMarketEventRepository(SqlAlchemyRepository[MarketEvent, MarketEventModel]):
+    entity_type = MarketEvent
+    model_type = MarketEventModel
+
+    async def add(self, entity: MarketEvent) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> MarketEvent | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_information_item(self, item_id: UUID) -> MarketEvent | None:
+        row = await self._session.scalar(
+            select(MarketEventModel).where(MarketEventModel.information_item_id == item_id)
+        )
+        return None if row is None else entity_from_model(MarketEvent, row)
+
+    async def list(
+        self,
+        *,
+        event_type: str | None,
+        direction: str | None,
+        instrument_id: UUID | None,
+        theme_key: str | None,
+        search: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[MarketEvent], int]:
+        statement = select(MarketEventModel)
+        conditions = []
+        if instrument_id is not None:
+            statement = statement.join(
+                EventInstrumentLinkModel,
+                EventInstrumentLinkModel.event_id == MarketEventModel.id,
+            )
+            conditions.append(EventInstrumentLinkModel.instrument_id == instrument_id)
+        if theme_key is not None:
+            statement = statement.join(
+                EventThemeLinkModel, EventThemeLinkModel.event_id == MarketEventModel.id
+            )
+            conditions.append(EventThemeLinkModel.theme_key == theme_key)
+        if event_type is not None:
+            conditions.append(MarketEventModel.event_type == event_type)
+        if direction is not None:
+            conditions.append(MarketEventModel.direction == direction)
+        if search:
+            conditions.append(MarketEventModel.title.ilike(f"%{search}%"))
+        statement = statement.where(*conditions).distinct()
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(
+                    statement.with_only_columns(MarketEventModel.id).order_by(None).subquery()
+                )
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            statement.order_by(MarketEventModel.event_at.desc(), MarketEventModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(MarketEvent, row) for row in rows], total
+
+
+class SqlAlchemyEventInstrumentLinkRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append_many(self, entities: list[EventInstrumentLink]) -> None:
+        self._session.add_all(
+            [model_from_entity(EventInstrumentLinkModel, item) for item in entities]
+        )
+        await self._session.flush()
+
+    async def list_by_event(self, event_id: UUID) -> list[EventInstrumentLink]:
+        rows = await self._session.scalars(
+            select(EventInstrumentLinkModel)
+            .where(EventInstrumentLinkModel.event_id == event_id)
+            .order_by(EventInstrumentLinkModel.instrument_id)
+        )
+        return [entity_from_model(EventInstrumentLink, row) for row in rows]
+
+
+class SqlAlchemyEventThemeLinkRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append_many(self, entities: list[EventThemeLink]) -> None:
+        self._session.add_all([model_from_entity(EventThemeLinkModel, item) for item in entities])
+        await self._session.flush()
+
+    async def list_by_event(self, event_id: UUID) -> list[EventThemeLink]:
+        rows = await self._session.scalars(
+            select(EventThemeLinkModel)
+            .where(EventThemeLinkModel.event_id == event_id)
+            .order_by(EventThemeLinkModel.theme_key)
+        )
+        return [entity_from_model(EventThemeLink, row) for row in rows]
+
+
+class SqlAlchemyInformationIngestionRunRepository(
+    SqlAlchemyRepository[InformationIngestionRun, InformationIngestionRunModel]
+):
+    entity_type = InformationIngestionRun
+    model_type = InformationIngestionRunModel
+
+    async def add(self, entity: InformationIngestionRun) -> None:
+        await self._add(entity)
+
+    async def update(self, entity: InformationIngestionRun) -> None:
+        values = model_values(model_from_entity(InformationIngestionRunModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(InformationIngestionRunModel)
+            .where(InformationIngestionRunModel.id == entity.id)
+            .values(**values)
+        )
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> InformationIngestionRun | None:
+        return await self._get_by_id(entity_id)
 
 
 class SqlAlchemyStrategyExperimentRepository(

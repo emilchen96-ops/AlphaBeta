@@ -13,14 +13,20 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyCashBalanceRepository,
     SqlAlchemyCashLedgerRepository,
     SqlAlchemyDomainEventRepository,
+    SqlAlchemyEventInstrumentLinkRepository,
+    SqlAlchemyEventThemeLinkRepository,
     SqlAlchemyExecutorDeviceRepository,
     SqlAlchemyFillRepository,
     SqlAlchemyHistoricalBarProvider,
+    SqlAlchemyInformationIngestionRunRepository,
+    SqlAlchemyInformationItemRepository,
+    SqlAlchemyInformationSourceRepository,
     SqlAlchemyInstrumentMappingRepository,
     SqlAlchemyInstrumentRepository,
     SqlAlchemyLedgerTransactionRepository,
     SqlAlchemyMarketBarRepository,
     SqlAlchemyMarketDataSourceRepository,
+    SqlAlchemyMarketEventRepository,
     SqlAlchemyMarketRealtimeRunRepository,
     SqlAlchemyMarketSyncRunRepository,
     SqlAlchemyOrderActionRepository,
@@ -30,6 +36,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyOutboxRepository,
     SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
+    SqlAlchemyRawDocumentRepository,
     SqlAlchemyRiskDecisionRepository,
     SqlAlchemyRiskRuleEvaluationRepository,
     SqlAlchemyScanResultRepository,
@@ -75,6 +82,13 @@ class SqlAlchemyUnitOfWork:
         self.strategy_experiment_runs = SqlAlchemyStrategyExperimentRunRepository(session)
         self.scan_runs = SqlAlchemyScanRunRepository(session)
         self.scan_results = SqlAlchemyScanResultRepository(session)
+        self.information_sources = SqlAlchemyInformationSourceRepository(session)
+        self.raw_documents = SqlAlchemyRawDocumentRepository(session)
+        self.information_items = SqlAlchemyInformationItemRepository(session)
+        self.market_events = SqlAlchemyMarketEventRepository(session)
+        self.event_instrument_links = SqlAlchemyEventInstrumentLinkRepository(session)
+        self.event_theme_links = SqlAlchemyEventThemeLinkRepository(session)
+        self.information_ingestion_runs = SqlAlchemyInformationIngestionRunRepository(session)
         self.historical_bars = SqlAlchemyHistoricalBarProvider(session)
         self.orders = SqlAlchemyOrderRepository(session)
         self.order_actions = SqlAlchemyOrderActionRepository(session)

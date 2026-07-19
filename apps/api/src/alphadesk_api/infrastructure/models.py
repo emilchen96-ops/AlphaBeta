@@ -62,6 +62,14 @@ from alphadesk_domain.enums import (
     SyncTriggerType,
     TimeInForce,
 )
+from alphadesk_domain.information import (
+    InformationIngestionStatus,
+    InformationSourceType,
+    InformationStatus,
+    MarketEventDirection,
+    MarketEventStatus,
+    MarketEventType,
+)
 from alphadesk_domain.scanners import ScanRunStatus
 from alphadesk_domain.strategy import StrategyEnvironment
 from alphadesk_domain.strategy_experiments import StrategyExperimentStatus
@@ -1668,3 +1676,184 @@ class ScanResultModel(TimestampedModel, Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class InformationSourceModel(MutableTimestampedModel, Base):
+    __tablename__ = "information_sources"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_information_sources_source_key"),
+        CheckConstraint(
+            f"source_type IN ({enum_values(InformationSourceType)})",
+            name="information_source_type_valid",
+        ),
+        Index("ix_information_sources_type_enabled", "source_type", "enabled"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    base_url: Mapped[str | None] = mapped_column(String(2048))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    configuration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class InformationIngestionRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "information_ingestion_runs"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({enum_values(InformationIngestionStatus)})",
+            name="information_ingestion_status_valid",
+        ),
+        CheckConstraint(
+            "fetched_count >= 0 AND inserted_count >= 0 AND duplicate_count >= 0 "
+            "AND failed_count >= 0",
+            name="information_ingestion_counters_non_negative",
+        ),
+        Index("ix_information_ingestion_source_started", "source_id", "started_at"),
+        Index("ix_information_ingestion_status_started", "status", "started_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("information_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    fetched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inserted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_summary: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class RawDocumentModel(TimestampedModel, Base):
+    __tablename__ = "raw_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id", "external_id", name="uq_raw_documents_source_external_id"
+        ),
+        UniqueConstraint("content_hash", name="uq_raw_documents_content_hash"),
+        CheckConstraint("length(content_hash) = 64", name="raw_document_hash_sha256"),
+        Index("ix_raw_documents_source_received", "source_id", "received_at"),
+        Index("ix_raw_documents_published", "published_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    source_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("information_sources.id", ondelete="RESTRICT"), nullable=False
+    )
+    external_id: Mapped[str | None] = mapped_column(String(512))
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    raw_content: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    language: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    ingestion_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("information_ingestion_runs.id", ondelete="RESTRICT")
+    )
+
+
+class InformationItemModel(TimestampedModel, Base):
+    __tablename__ = "information_items"
+    __table_args__ = (
+        UniqueConstraint("raw_document_id", name="uq_information_items_raw_document"),
+        CheckConstraint(
+            f"status IN ({enum_values(InformationStatus)})", name="information_item_status_valid"
+        ),
+        Index("ix_information_items_published", "published_at"),
+        Index("ix_information_items_received", "received_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    raw_document_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("raw_documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    normalized_title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    normalized_content: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class MarketEventModel(TimestampedModel, Base):
+    __tablename__ = "market_events"
+    __table_args__ = (
+        UniqueConstraint("information_item_id", name="uq_market_events_information_item"),
+        CheckConstraint(
+            f"event_type IN ({enum_values(MarketEventType)})", name="market_event_type_valid"
+        ),
+        CheckConstraint(
+            f"direction IN ({enum_values(MarketEventDirection)})",
+            name="market_event_direction_valid",
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(MarketEventStatus)})", name="market_event_status_valid"
+        ),
+        CheckConstraint(
+            "importance IS NULL OR (importance >= 0 AND importance <= 1)",
+            name="market_event_importance_range",
+        ),
+        CheckConstraint("schema_version >= 1", name="market_event_schema_version_positive"),
+        Index("ix_market_events_type_time", "event_type", "event_at"),
+        Index("ix_market_events_direction_time", "direction", "event_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    information_item_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("information_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    importance: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class EventInstrumentLinkModel(Base):
+    __tablename__ = "event_instrument_links"
+    __table_args__ = (
+        CheckConstraint(
+            "confidence IS NULL OR (confidence >= 0 AND confidence <= 1)",
+            name="event_instrument_confidence_range",
+        ),
+        Index("ix_event_instrument_links_instrument", "instrument_id", "event_id"),
+    )
+
+    event_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("market_events.id", ondelete="RESTRICT"), primary_key=True
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), primary_key=True
+    )
+    relation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=UTC_NOW
+    )
+
+
+class EventThemeLinkModel(Base):
+    __tablename__ = "event_theme_links"
+    __table_args__ = (Index("ix_event_theme_links_theme", "theme_key", "event_id"),)
+
+    event_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("market_events.id", ondelete="RESTRICT"), primary_key=True
+    )
+    theme_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    theme_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=UTC_NOW
+    )

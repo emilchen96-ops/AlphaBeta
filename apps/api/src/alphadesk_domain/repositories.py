@@ -41,6 +41,15 @@ from alphadesk_domain.enums import (
     MarketTimeframe,
     RealtimeRunStatus,
 )
+from alphadesk_domain.information import (
+    EventInstrumentLink,
+    EventThemeLink,
+    InformationIngestionRun,
+    InformationItem,
+    InformationSource,
+    MarketEvent,
+    RawDocument,
+)
 from alphadesk_domain.market import (
     InstrumentMapping,
     MarketBar,
@@ -492,3 +501,69 @@ class MarketRealtimeRunRepository(Protocol):
         rejected_count: int,
         error_summary: str | None,
     ) -> None: ...
+
+
+class InformationSourceRepository(Protocol):
+    async def add(self, entity: InformationSource) -> None: ...
+    async def update(self, entity: InformationSource) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> InformationSource | None: ...
+    async def get_by_key(self, source_key: str) -> InformationSource | None: ...
+    async def list_all(self) -> list[InformationSource]: ...
+
+
+class RawDocumentRepository(Protocol):
+    async def add(self, entity: RawDocument) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> RawDocument | None: ...
+    async def get_by_source_external(
+        self, source_id: UUID, external_id: str
+    ) -> RawDocument | None: ...
+    async def get_by_hash(self, content_hash: str) -> RawDocument | None: ...
+
+
+class InformationItemRepository(Protocol):
+    async def add(self, entity: InformationItem) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> InformationItem | None: ...
+    async def get_by_raw_document(self, raw_document_id: UUID) -> InformationItem | None: ...
+    async def list(
+        self,
+        *,
+        search: str | None,
+        source_id: UUID | None,
+        instrument_id: UUID | None,
+        theme_key: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[InformationItem], int]: ...
+
+
+class MarketEventRepository(Protocol):
+    async def add(self, entity: MarketEvent) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> MarketEvent | None: ...
+    async def get_by_information_item(self, item_id: UUID) -> MarketEvent | None: ...
+    async def list(
+        self,
+        *,
+        event_type: str | None,
+        direction: str | None,
+        instrument_id: UUID | None,
+        theme_key: str | None,
+        search: str | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[MarketEvent], int]: ...
+
+
+class EventInstrumentLinkRepository(Protocol):
+    async def append_many(self, entities: list[EventInstrumentLink]) -> None: ...
+    async def list_by_event(self, event_id: UUID) -> list[EventInstrumentLink]: ...
+
+
+class EventThemeLinkRepository(Protocol):
+    async def append_many(self, entities: list[EventThemeLink]) -> None: ...
+    async def list_by_event(self, event_id: UUID) -> list[EventThemeLink]: ...
+
+
+class InformationIngestionRunRepository(Protocol):
+    async def add(self, entity: InformationIngestionRun) -> None: ...
+    async def update(self, entity: InformationIngestionRun) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> InformationIngestionRun | None: ...
