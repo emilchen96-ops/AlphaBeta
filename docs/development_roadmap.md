@@ -1,6 +1,8 @@
 # 开发路线图
 
-> 2026-07-19：A01 已完成，包含安全 Provider 端口、版本化 Prompt、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和 React 页面。默认真实 Provider 禁用，Fake Provider 仅用于测试/本地演示；AI 不创建 Signal、Order、Fill 或账本记录。SC01、N01、A01 均已完成。BT01 仍为部分完成，下一步仅为 **BT01 补全与封板**；RT01 尚未开始。
+> 2026-07-19：I01 V0.1 集成基线已完成。系统已建立统一功能、动作、API、数据与配置盘点，以及只读 capability 接口；SC01、N01、A01 已完成。BT01 独立提交因 Migration/共享代码冲突未安全并入，保持 PARTIAL。下一步唯一主线是 **D01 历史行情数据中心**，其后才允许 BT01-R。
+
+> 2026-07-19：A01 已完成，包含安全 Provider 端口、版本化 Prompt、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和 React 页面。默认真实 Provider 禁用，Fake Provider 仅用于测试/本地演示；AI 不创建 Signal、Order、Fill 或账本记录。
 
 > 2026-07-19：N01 已完成，包含手工/RSS输入、原始事实保留、去重、资讯与市场事件、Instrument/主题关联、API、CLI 和页面。N01 不使用 AI，不创建 Signal、订单或账本记录。
 

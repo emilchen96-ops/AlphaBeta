@@ -1,6 +1,8 @@
 # AlphaDesk 文档索引
 
-> 当前研究里程碑为 **A01 完成**：版本化 Prompt、Disabled/Fake Provider、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和页面见 [ai_research_assistant.md](ai_research_assistant.md)。真实 Provider 当前不可用且默认禁用；AI 输出仅供研究，不创建 Signal 或订单。SC01 与 N01 均已完成，BT01 仍为部分完成，下一步仅为 BT01 补全与封板；RT01 尚未开始。
+> 当前里程碑为 **I01 V0.1 集成基线完成**。权威盘点见 [集成说明](integration_v0_1.md)、[功能盘点](feature_inventory.md)、[UI 动作盘点](ui_action_inventory.md)、[API 契约盘点](api_contract_inventory.md) 与 [数据就绪度](data_readiness.md)。SC01、N01、A01 已完成；BT01 未安全并入，当前为 PARTIAL。下一步唯一主线是 **D01 历史行情数据中心**。
+
+> 当前研究里程碑为 **A01 完成**：版本化 Prompt、Disabled/Fake Provider、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和页面见 [ai_research_assistant.md](ai_research_assistant.md)。真实 Provider 当前不可用且默认禁用；AI 输出仅供研究，不创建 Signal 或订单。
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 

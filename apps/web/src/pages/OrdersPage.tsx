@@ -42,6 +42,7 @@ import {
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import { SimulatedExecutionModal } from "../components/SimulatedExecutionModal/SimulatedExecutionModal";
 import { getRiskDecision } from "../api/risk";
+import { systemCapabilitiesQueryOptions } from "../api/system";
 import type { OrderFactSummary } from "../types/orders";
 
 const stateText: Record<string, string> = {
@@ -98,6 +99,13 @@ export function OrdersPage() {
     reasons: string[];
   }>();
   const [form] = Form.useForm();
+  const capabilities = useQuery(systemCapabilitiesQueryOptions);
+  const unavailable =
+    capabilities.data?.items?.find((item) => item.module_key === "orders")
+      ?.available === false;
+  const unavailableReason = capabilities.data?.items?.find(
+    (item) => item.module_key === "orders",
+  )?.reason;
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const instruments = useQuery({
@@ -223,7 +231,11 @@ export function OrdersPage() {
         title="订单中心"
         description="人工订单先经过 R01 风控和 M05 确认；仅可使用手工快照执行本地模拟成交，不连接真实券商。"
         action={
-          <Button icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+          <Button
+            icon={<PlusOutlined />}
+            disabled={unavailable}
+            onClick={() => setCreateOpen(true)}
+          >
             创建订单
           </Button>
         }
@@ -234,6 +246,15 @@ export function OrdersPage() {
         title="订单创建必须通过服务端风控"
         description="LIMIT 估算金额仅为数量 × 用户限价，MARKET 无法估算成交金额。PASS 只创建 WAITING_CONFIRMATION Order；REJECT 或 REVIEW 不创建 Order，也不会自动重试或绕过风控。"
       />
+      {unavailable ? (
+        <Alert
+          showIcon
+          type="info"
+          title="当前缺少订单前置数据"
+          description={unavailableReason}
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
       {riskOutcome ? (
         <Alert
           style={{ marginTop: 16 }}

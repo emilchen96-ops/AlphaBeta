@@ -20,6 +20,10 @@ from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.core.middleware import CorrelationIdMiddleware
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
+from alphadesk_api.infrastructure.system_capabilities import (
+    SqlAlchemyCapabilityDataProvider,
+    UnavailableCapabilityDataProvider,
+)
 from alphadesk_domain.ai_research import DisabledAIResearchProvider, FakeAIResearchProvider
 from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
 from alphadesk_domain.strategy import StrategyRegistry
@@ -98,6 +102,11 @@ def create_app(
     app.state.strategy_registry = strategy_registry
     app.state.scanner_registry = scanner_registry
     app.state.ai_research_provider = ai_provider
+    app.state.capability_data_provider = (
+        SqlAlchemyCapabilityDataProvider(database_service.session_factory)
+        if isinstance(database_service, DatabaseService)
+        else UnavailableCapabilityDataProvider()
+    )
 
     app.add_middleware(
         CORSMiddleware,

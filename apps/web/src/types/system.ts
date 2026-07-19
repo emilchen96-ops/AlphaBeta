@@ -11,6 +11,49 @@ export interface SystemStatus {
   correlation_id: string;
 }
 
+export type CapabilityImplementationStatus =
+  "WORKING" | "PARTIAL" | "PLACEHOLDER" | "NOT_IMPLEMENTED";
+export type CapabilityReadinessStatus =
+  "READY" | "MISSING" | "DISABLED" | "NOT_REQUIRED" | "UNKNOWN";
+
+export interface SystemCapability {
+  module_key: string;
+  implementation_status: CapabilityImplementationStatus;
+  data_status: CapabilityReadinessStatus;
+  configuration_status: CapabilityReadinessStatus;
+  available: boolean;
+  reason: string;
+  required_actions: string[];
+}
+
+export interface CapabilityDataCounts {
+  instrument_count: number | null;
+  market_bar_count: number | null;
+  daily_market_bar_count: number | null;
+  market_bar_instrument_count: number | null;
+  earliest_market_bar_at: string | null;
+  latest_market_bar_at: string | null;
+  simulated_account_count: number | null;
+  scan_run_count: number | null;
+  strategy_run_count: number | null;
+  strategy_experiment_count: number | null;
+  information_source_count: number | null;
+  information_item_count: number | null;
+  market_event_count: number | null;
+  ai_analysis_run_count: number | null;
+  order_count: number | null;
+  executable_order_count: number | null;
+  fill_count: number | null;
+  risk_decision_count: number | null;
+}
+
+export interface SystemCapabilities {
+  generated_at: string;
+  database_reachable: boolean;
+  counts: CapabilityDataCounts;
+  items: SystemCapability[];
+}
+
 export interface ApiErrorEnvelope {
   error: {
     code: string;

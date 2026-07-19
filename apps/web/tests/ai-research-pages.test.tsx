@@ -153,6 +153,7 @@ test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", as
   expect(screen.getByText("资讯原始事实")).toBeInTheDocument();
   expect(screen.getByText("市场事件事实")).toBeInTheDocument();
   expect(screen.getAllByText("EVENT_SUMMARY").length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: /创建研究分析/ })).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: /买入|卖出|下单|自动交易/ }),
   ).not.toBeInTheDocument();

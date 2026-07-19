@@ -186,6 +186,11 @@ export function AIResearchPage() {
             type="primary"
             icon={<RobotOutlined />}
             loading={mutation.isPending}
+            disabled={
+              provider.isLoading ||
+              !provider.data?.configured ||
+              mutation.isPending
+            }
             onClick={() => void submit()}
           >
             创建研究分析

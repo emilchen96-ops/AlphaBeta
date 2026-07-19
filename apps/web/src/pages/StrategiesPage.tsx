@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 
 import { getInstruments } from "../api/market";
 import { createStrategyRun, getStrategyCatalog } from "../api/strategies";
+import { systemCapabilitiesQueryOptions } from "../api/system";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { StrategyParameterDefinition } from "../types/strategies";
 
@@ -60,6 +61,14 @@ export function StrategiesPage() {
   const [form] = Form.useForm();
   const [selectedKey, setSelectedKey] = useState<string>();
   const [instrumentSearch, setInstrumentSearch] = useState("");
+  const capabilities = useQuery(systemCapabilitiesQueryOptions);
+  const unavailable =
+    capabilities.data?.items?.find(
+      (item) => item.module_key === "strategy_research",
+    )?.available === false;
+  const unavailableReason = capabilities.data?.items?.find(
+    (item) => item.module_key === "strategy_research",
+  )?.reason;
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
     queryFn: getStrategyCatalog,
@@ -123,6 +132,15 @@ export function StrategiesPage() {
         title="Signal 是研究输出，不是订单"
         description="不会创建 Order、调用风控或 Broker，也不会修改资金和持仓。reference_price 仅供参考；当前不是绩效回测，也没有实时策略调度。"
       />
+      {unavailable ? (
+        <Alert
+          showIcon
+          type="info"
+          title="当前缺少可研究的历史行情"
+          description={unavailableReason}
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
       <Space
         orientation="vertical"
         size="middle"
@@ -136,6 +154,7 @@ export function StrategiesPage() {
               <Space wrap>
                 <Button
                   icon={<ExperimentOutlined />}
+                  disabled={unavailable}
                   onClick={() =>
                     void navigate(
                       `/strategy-experiments?strategy_key=${encodeURIComponent(item.strategy_key)}`,
@@ -146,6 +165,7 @@ export function StrategiesPage() {
                 </Button>
                 <Button
                   icon={<ExperimentOutlined />}
+                  disabled={unavailable}
                   onClick={() => openRun(item.strategy_key)}
                 >
                   创建研究运行
@@ -246,7 +266,7 @@ export function StrategiesPage() {
             <Button
               type="primary"
               loading={mutation.isPending}
-              disabled={mutation.isPending}
+              disabled={unavailable || mutation.isPending}
               onClick={() => void submit()}
             >
               运行历史研究

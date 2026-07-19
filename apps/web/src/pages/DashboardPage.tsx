@@ -13,13 +13,45 @@ import {
   Descriptions,
   Row,
   Skeleton,
+  Table,
+  Tag,
   Typography,
 } from "antd";
+import { useQuery } from "@tanstack/react-query";
 import { useOutletContext } from "react-router-dom";
 
 import type { AppOutletContext } from "../components/AppLayout/AppLayout";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import { ServiceStatus } from "../components/ServiceStatus/ServiceStatus";
+import { systemCapabilitiesQueryOptions } from "../api/system";
+import type { SystemCapability } from "../types/system";
+
+const moduleLabels: Record<string, string> = {
+  market_data: "历史行情",
+  scanner: "条件扫描",
+  strategy_research: "策略研究",
+  strategy_experiments: "批量研究",
+  information_center: "资讯中心",
+  ai_research: "AI 研究",
+  orders: "订单",
+  risk: "风控",
+  simulated_broker: "模拟 Broker",
+  backtest: "回测",
+  realtime_market_data: "实时行情",
+  miniqmt: "MiniQMT",
+};
+
+const capabilityStatusLabels: Record<string, string> = {
+  WORKING: "已实现",
+  PARTIAL: "部分完成",
+  PLACEHOLDER: "占位",
+  NOT_IMPLEMENTED: "未实现",
+  READY: "就绪",
+  MISSING: "缺数据",
+  DISABLED: "未启用",
+  NOT_REQUIRED: "不需要",
+  UNKNOWN: "未知",
+};
 
 function formatUtc(value: string | number | undefined): string {
   if (!value) return "—";
@@ -40,6 +72,7 @@ export function DashboardPage() {
     lastUpdatedAt,
     refresh,
   } = context;
+  const capabilities = useQuery(systemCapabilitiesQueryOptions);
 
   return (
     <section>
@@ -139,6 +172,55 @@ export function DashboardPage() {
                 </Typography.Text>
               </Descriptions.Item>
             </Descriptions>
+          </Card>
+
+          <Card title="功能可用性（后端权威检查）" className="details-card">
+            {capabilities.isError ? (
+              <Alert
+                showIcon
+                type="warning"
+                title="暂时无法读取功能可用性"
+                description={capabilities.error.message}
+              />
+            ) : null}
+            <Table<SystemCapability>
+              rowKey="module_key"
+              size="small"
+              loading={capabilities.isLoading}
+              dataSource={capabilities.data?.items ?? []}
+              pagination={false}
+              scroll={{ x: 900 }}
+              columns={[
+                {
+                  title: "模块",
+                  render: (_, item) =>
+                    moduleLabels[item.module_key] ?? item.module_key,
+                },
+                {
+                  title: "实现",
+                  render: (_, item) =>
+                    capabilityStatusLabels[item.implementation_status],
+                },
+                {
+                  title: "数据",
+                  render: (_, item) => capabilityStatusLabels[item.data_status],
+                },
+                {
+                  title: "配置",
+                  render: (_, item) =>
+                    capabilityStatusLabels[item.configuration_status],
+                },
+                {
+                  title: "当前可用",
+                  render: (_, item) => (
+                    <Tag color={item.available ? "success" : "default"}>
+                      {item.available ? "可用" : "不可用"}
+                    </Tag>
+                  ),
+                },
+                { title: "说明", dataIndex: "reason" },
+              ]}
+            />
           </Card>
         </>
       ) : null}

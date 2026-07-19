@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 
 import { getInstruments } from "../api/market";
 import { createScanRun, getScannerCatalog } from "../api/scanners";
+import { systemCapabilitiesQueryOptions } from "../api/system";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
   ScannerParameterDefinition,
@@ -64,6 +65,13 @@ export function ScannersPage() {
   const [form] = Form.useForm<RunFormValues>();
   const [selectedKey, setSelectedKey] = useState<string>();
   const [instrumentSearch, setInstrumentSearch] = useState("");
+  const capabilities = useQuery(systemCapabilitiesQueryOptions);
+  const unavailable =
+    capabilities.data?.items?.find((item) => item.module_key === "scanner")
+      ?.available === false;
+  const unavailableReason = capabilities.data?.items?.find(
+    (item) => item.module_key === "scanner",
+  )?.reason;
   const catalog = useQuery({
     queryKey: ["scanner-catalog"],
     queryFn: getScannerCatalog,
@@ -126,6 +134,15 @@ export function ScannersPage() {
         title="扫描结果仅为规则筛选结果，不代表投资建议"
         description="当前使用历史日线数据，不是实时扫描；扫描器不会自动创建 Signal 或订单，也不会修改资金、持仓和账本。"
       />
+      {unavailable ? (
+        <Alert
+          showIcon
+          type="info"
+          title="当前缺少可扫描的历史行情"
+          description={unavailableReason}
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
       <Space wrap style={{ marginTop: 16 }}>
         <Button onClick={() => void navigate("/scan-runs")}>
           查看扫描运行
@@ -150,6 +167,7 @@ export function ScannersPage() {
             extra={
               <Button
                 icon={<FilterOutlined />}
+                disabled={unavailable}
                 onClick={() => openRun(item.scanner_key)}
               >
                 创建扫描运行
@@ -239,6 +257,7 @@ export function ScannersPage() {
             <Button
               type="primary"
               loading={mutation.isPending}
+              disabled={unavailable || mutation.isPending}
               onClick={() => void submit()}
             >
               运行历史日线扫描

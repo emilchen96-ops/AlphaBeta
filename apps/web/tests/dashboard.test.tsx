@@ -1,6 +1,11 @@
 import { act, screen } from "@testing-library/react";
 
-import { healthyStatus, mockStatusSuccess, renderRoute } from "./test-utils";
+import {
+  healthyCapabilities,
+  healthyStatus,
+  mockStatusSuccess,
+  renderRoute,
+} from "./test-utils";
 
 beforeEach(() => {
   vi.stubGlobal("WebSocket", undefined);
@@ -31,6 +36,11 @@ test("Dashboard显示基础设施真实响应", async () => {
   ).toBeGreaterThan(0);
   expect(screen.getAllByText("Redis · 在线").length).toBeGreaterThan(0);
   expect(screen.getByText("0.1.0")).toBeInTheDocument();
+  expect(
+    await screen.findByText("功能可用性（后端权威检查）"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("历史行情")).toBeInTheDocument();
+  expect(screen.getByText("部分完成")).toBeInTheDocument();
 });
 
 test("Dashboard在API失败时保持可用", async () => {
@@ -43,18 +53,31 @@ test("Dashboard在API失败时保持可用", async () => {
 });
 
 test("Dashboard可在API恢复后手动重新连接", async () => {
-  const fetchMock = vi
-    .fn()
-    .mockRejectedValueOnce(new TypeError("offline"))
-    .mockRejectedValueOnce(new TypeError("offline"))
-    .mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify(healthyStatus), {
+  let statusAttempts = 0;
+  const fetchMock = vi.fn((input: string | URL | Request) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (url.endsWith("/system/capabilities")) {
+      return Promise.resolve(
+        new Response(JSON.stringify(healthyCapabilities), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
-      ),
+      );
+    }
+    statusAttempts += 1;
+    if (statusAttempts <= 2) return Promise.reject(new TypeError("offline"));
+    return Promise.resolve(
+      new Response(JSON.stringify(healthyStatus), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
+  });
   vi.stubGlobal("fetch", fetchMock);
   renderRoute("/");
   const retryButton = await screen.findByRole(

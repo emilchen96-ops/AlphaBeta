@@ -35,6 +35,7 @@ import {
   listStrategyExperimentRuns,
   listStrategyExperiments,
 } from "../api/strategies";
+import { systemCapabilitiesQueryOptions } from "../api/system";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
   CreateStrategyExperimentRequest,
@@ -205,6 +206,14 @@ export function StrategyExperimentsPage() {
   );
   const submitting = useRef(false);
   const controller = useRef<AbortController | undefined>(undefined);
+  const capabilities = useQuery(systemCapabilitiesQueryOptions);
+  const unavailable =
+    capabilities.data?.items?.find(
+      (item) => item.module_key === "strategy_experiments",
+    )?.available === false;
+  const unavailableReason = capabilities.data?.items?.find(
+    (item) => item.module_key === "strategy_experiments",
+  )?.reason;
 
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
@@ -318,6 +327,15 @@ export function StrategyExperimentsPage() {
         description="用真实历史数据运行参数组合，并审阅可追溯的 Signal 事实。"
       />
       <ResearchBoundary />
+      {unavailable ? (
+        <Alert
+          showIcon
+          type="info"
+          title="当前缺少可运行实验的历史行情"
+          description={unavailableReason}
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
       <Card title="创建批量研究实验" style={{ marginTop: 16 }}>
         <Form
           form={form}
@@ -429,7 +447,7 @@ export function StrategyExperimentsPage() {
               type="primary"
               icon={<ExperimentOutlined />}
               loading={mutation.isPending}
-              disabled={mutation.isPending}
+              disabled={unavailable || mutation.isPending}
               onClick={() => void submit()}
               style={{ marginTop: submitError ? 12 : 0 }}
             >

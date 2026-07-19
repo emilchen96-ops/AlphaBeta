@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -6,6 +7,11 @@ from fastapi.testclient import TestClient
 
 from alphadesk_api.app_factory import create_app
 from alphadesk_api.core.config import Settings
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("ALPHADESK_RUN_M02_INTEGRATION", "false").lower() != "true",
+    reason="M02 PostgreSQL integration tests require explicit opt-in",
+)
 
 
 class Probe:

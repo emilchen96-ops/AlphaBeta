@@ -1,6 +1,8 @@
 # AlphaDesk
 
-> **2026-07-19：SC01、N01、A01 已完成。** A01 以 N01 的 InformationItem/MarketEvent 为唯一输入边界，保存版本化 AIAnalysisRun、ResearchInsight 与 Evidence，并提供 API、CLI 和 React 研究页面。默认真实 Provider 禁用，测试/演示使用 Fake Provider；所有 AI 输出仅供研究，不创建 Signal、Order、Fill 或账本记录。BT01 仍为部分完成，下一步仅为 BT01 补全与封板；RT01 尚未开始。
+> **2026-07-19：I01 V0.1 集成基线已完成。** 当前功能、按钮、API、数据和配置状态以 [I01 集成说明](docs/integration_v0_1.md)、[功能盘点](docs/feature_inventory.md)、[UI 动作盘点](docs/ui_action_inventory.md)、[API 契约盘点](docs/api_contract_inventory.md) 与 [数据就绪度](docs/data_readiness.md) 为准。首页通过只读 `/api/v1/system/capabilities` 展示真实能力，不把“已实现”误报为“当前可运行”。下一步唯一主线是 **D01 历史行情数据中心**。
+
+> SC01、N01、A01 已完成。BT01 独立提交因 Migration 与后续模块冲突，未并入当前稳定链；当前回测能力为 PARTIAL，需在 D01 后进入 BT01-R。系统仍无 Windows 执行器、MiniQMT、外部 Broker 或实盘能力。
 
 > A01 文档：[AI 研究助手](docs/ai_research_assistant.md)；N01 文档：[资讯事件中心](docs/information_event_center.md)；SC01 文档：[历史条件扫描器](docs/scanners.md)。
 

@@ -30,6 +30,44 @@ class SystemStatusResponse(BaseModel):
     correlation_id: str
 
 
+class CapabilityDataCountsResponse(BaseModel):
+    instrument_count: int | None = None
+    market_bar_count: int | None = None
+    daily_market_bar_count: int | None = None
+    market_bar_instrument_count: int | None = None
+    earliest_market_bar_at: datetime | None = None
+    latest_market_bar_at: datetime | None = None
+    simulated_account_count: int | None = None
+    scan_run_count: int | None = None
+    strategy_run_count: int | None = None
+    strategy_experiment_count: int | None = None
+    information_source_count: int | None = None
+    information_item_count: int | None = None
+    market_event_count: int | None = None
+    ai_analysis_run_count: int | None = None
+    order_count: int | None = None
+    executable_order_count: int | None = None
+    fill_count: int | None = None
+    risk_decision_count: int | None = None
+
+
+class SystemCapabilityResponse(BaseModel):
+    module_key: str
+    implementation_status: Literal["WORKING", "PARTIAL", "PLACEHOLDER", "NOT_IMPLEMENTED"]
+    data_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
+    configuration_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
+    available: bool
+    reason: str
+    required_actions: list[str]
+
+
+class SystemCapabilitiesResponse(BaseModel):
+    generated_at: datetime
+    database_reachable: bool
+    counts: CapabilityDataCountsResponse
+    items: list[SystemCapabilityResponse]
+
+
 class WebSocketMessage(BaseModel):
     type: Literal["connected", "pong", "error"]
     timestamp: datetime
