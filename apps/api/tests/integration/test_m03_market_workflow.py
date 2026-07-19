@@ -85,6 +85,8 @@ async def seed_demo(
 async def test_demo_ingestion_is_idempotent_audited_and_has_no_outbox_publication(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    async with session_factory() as session:
+        outbox_before = await session.scalar(select(func.count()).select_from(OutboxMessageModel))
     catalog, ingestion = await seed_demo(session_factory)
     del catalog
     adapter = DemoCsvMarketDataAdapter()
@@ -107,7 +109,8 @@ async def test_demo_ingestion_is_idempotent_audited_and_has_no_outbox_publicatio
         assert await session.scalar(select(func.count()).select_from(MarketBarModel)) == 540
         assert await session.scalar(select(func.count()).select_from(DomainEventModel)) >= 7
         assert await session.scalar(select(func.count()).select_from(AuditLogModel)) >= 7
-        assert await session.scalar(select(func.count()).select_from(OutboxMessageModel)) == 0
+        outbox_after = await session.scalar(select(func.count()).select_from(OutboxMessageModel))
+        assert outbox_after == outbox_before
 
 
 @pytest.mark.integration

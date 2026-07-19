@@ -64,6 +64,7 @@ docker compose -p alphadesk-i01 exec api alembic check
 - 首页显示能力矩阵。
 - AI Provider 未配置时禁用创建按钮；订单、策略、批量实验和扫描器在前置数据缺失时禁用写操作并显示原因。
 - Backtest/Audit/Settings 页面及导航准确标记 PARTIAL/计划/只读，移除任何虚假可用暗示。
+- 修复模拟成交时间晚于记账进程时 `posted_at` 早于 `occurred_at` 的边界，并校正跨模块集成测试的数据隔离与已存在只读路径的 405 契约断言。
 - 保留 localhost/127.0.0.1 双回环 CORS。
 
 ## 下一阶段

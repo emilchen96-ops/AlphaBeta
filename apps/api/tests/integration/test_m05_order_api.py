@@ -117,4 +117,4 @@ def test_order_api_rejects_numeric_decimal_and_unsafe_mutation_routes() -> None:
             client.patch(f"/api/v1/orders/{account.id}", json={"status": "FILLED"}).status_code
             == 405
         )
-        assert client.post(f"/api/v1/orders/{account.id}/fills", json={}).status_code == 404
+        assert client.post(f"/api/v1/orders/{account.id}/fills", json={}).status_code == 405

@@ -605,6 +605,7 @@ class FillAccountingService:
         old_realized: Decimal,
     ) -> FillAccountingResult:
         await uow.cash_balances.update(cash)
+        posted_at = max(_now(), fill.executed_at)
         transaction = LedgerTransaction(
             account_id=account.id,
             transaction_type=transaction_type,
@@ -614,7 +615,7 @@ class FillAccountingService:
             related_fill_id=fill.id,
             correlation_id=fill.correlation_id,
             occurred_at=fill.executed_at,
-            posted_at=_now(),
+            posted_at=posted_at,
             description="模拟成交记账",
             metadata={"scope": "M04", "broker_type": fill.broker_type},
         )
