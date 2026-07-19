@@ -149,9 +149,7 @@ async def test_manual_hash_dedup_links_search_and_no_trading_side_effects(
                 EventThemeLinkModel,
             )
         ]
-        assert information_after == [
-            (value or 0) + 1 for value in information_before
-        ]
+        assert information_after == [(value or 0) + 1 for value in information_before]
         after = [
             await session.scalar(select(func.count()).select_from(model)) for model in protected
         ]

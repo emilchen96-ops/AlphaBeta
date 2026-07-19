@@ -62,7 +62,11 @@ line-length = 100
 select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"alembic/versions/*.py" = ["D", "E501"]
+"alembic/versions/*.py" = ["B007", "D", "E501"]
+
+[tool.ruff.format]
+# Historical migrations are immutable; 0009 predates the formatter baseline.
+exclude = ["alembic/versions/0009_r01_risk_decision_pipeline.py"]
 
 [tool.mypy]
 python_version = "3.12"
