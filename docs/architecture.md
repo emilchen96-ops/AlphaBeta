@@ -1,5 +1,20 @@
 # 架构总览
 
+> SC01 增量：浏览器通过 FastAPI 手工发起历史日线筛选；应用服务从 PostgreSQL 读取既有 MarketBar，将纯 Python Scanner 的匹配结果作为 ScanRun/ScanResult 保存。该链路不使用 Redis，不创建 Signal、RiskDecision、Order 或 Fill，不调用 Broker，也不修改账户和账本。详见 [scanners.md](scanners.md)。
+
+## SC01 历史扫描链路
+
+```mermaid
+flowchart LR
+  UI[React 扫描表单] --> API[FastAPI ScannerRunService]
+  API --> PG[(PostgreSQL MarketBar)]
+  API --> Core[纯 Python Scanner]
+  Core --> Facts[ScanRun + ScanResult]
+  Facts --> PG
+  Facts --> UI
+  Core -.禁止.-> Trading[Signal / Risk / Order / Broker / Ledger]
+```
+
 > M05 状态：Web/FastAPI 已具备本地手工订单事实管道。确认事务只写 PostgreSQL 的 Action、Transition、Command、Event、Audit 与 PENDING Outbox；没有 Publisher、Redis 订单流、执行器、Broker、Fill 或实盘。QUEUED 不等于已发送。
 
 > The real-time market provider is currently `disabled`; historical prices cannot act as real-time prices. MiniQMT can only arrive through a Windows Agent after M06. There is no real-trading capability and this system must not be publicly deployed.

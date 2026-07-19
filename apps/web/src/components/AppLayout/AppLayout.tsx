@@ -4,6 +4,7 @@ import {
   BarChartOutlined,
   DatabaseOutlined,
   ExperimentOutlined,
+  FilterOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   OrderedListOutlined,
@@ -27,6 +28,8 @@ const menuItems = [
   { key: "/", icon: <AppstoreOutlined />, label: "总览" },
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
+  { key: "/scanners", icon: <FilterOutlined />, label: "条件扫描" },
+  { key: "/scan-runs", icon: <DatabaseOutlined />, label: "扫描运行" },
   { key: "/strategies", icon: <ExperimentOutlined />, label: "策略" },
   {
     key: "/strategy-experiments",

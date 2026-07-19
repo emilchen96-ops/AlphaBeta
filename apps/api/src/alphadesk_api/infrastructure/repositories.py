@@ -39,6 +39,8 @@ from alphadesk_api.infrastructure.models import (
     PositionModel,
     RiskDecisionModel,
     RiskRuleEvaluationModel,
+    ScanResultModel,
+    ScanRunModel,
     SignalModel,
     StrategyExperimentModel,
     StrategyExperimentRunModel,
@@ -96,6 +98,7 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.scanners import ScanResult, ScanRun
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
@@ -859,6 +862,95 @@ class SqlAlchemyStrategyRunRepository(SqlAlchemyRepository[StrategyRun, Strategy
             .limit(limit)
         )
         return [entity_from_model(StrategyRun, row) for row in rows], total
+
+
+class SqlAlchemyScanRunRepository(SqlAlchemyRepository[ScanRun, ScanRunModel]):
+    entity_type = ScanRun
+    model_type = ScanRunModel
+
+    async def add(self, entity: ScanRun) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> ScanRun | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> ScanRun | None:
+        row = await self._session.scalar(
+            select(ScanRunModel).where(ScanRunModel.idempotency_key == key)
+        )
+        return None if row is None else entity_from_model(ScanRun, row)
+
+    async def update(self, entity: ScanRun) -> None:
+        values = model_values(model_from_entity(ScanRunModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(ScanRunModel).where(ScanRunModel.id == entity.id).values(**values)
+        )
+        await self._session.flush()
+
+    async def list(
+        self,
+        *,
+        scanner_key: str | None,
+        status: str | None,
+        instrument_id: UUID | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[ScanRun], int]:
+        conditions = []
+        if scanner_key is not None:
+            conditions.append(ScanRunModel.scanner_key == scanner_key)
+        if status is not None:
+            conditions.append(ScanRunModel.status == status)
+        if instrument_id is not None:
+            conditions.append(ScanRunModel.instrument_ids.contains([instrument_id]))
+        if created_from is not None:
+            conditions.append(ScanRunModel.created_at >= created_from)
+        if created_to is not None:
+            conditions.append(ScanRunModel.created_at < created_to)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(ScanRunModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(ScanRunModel)
+            .where(*conditions)
+            .order_by(ScanRunModel.created_at.desc(), ScanRunModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(ScanRun, row) for row in rows], total
+
+
+class SqlAlchemyScanResultRepository(SqlAlchemyRepository[ScanResult, ScanResultModel]):
+    entity_type = ScanResult
+    model_type = ScanResultModel
+
+    async def append_many(self, entities: list[ScanResult]) -> None:
+        self._session.add_all([model_from_entity(ScanResultModel, item) for item in entities])
+        await self._session.flush()
+
+    async def list_by_run(self, run_id: UUID) -> list[ScanResult]:
+        rows = await self._session.scalars(
+            select(ScanResultModel)
+            .where(ScanResultModel.scan_run_id == run_id)
+            .order_by(ScanResultModel.rank, ScanResultModel.instrument_id)
+        )
+        return [entity_from_model(ScanResult, row) for row in rows]
+
+    async def count_by_run(self, run_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(ScanResultModel)
+                .where(ScanResultModel.scan_run_id == run_id)
+            )
+            or 0
+        )
 
 
 class SqlAlchemyStrategyExperimentRepository(

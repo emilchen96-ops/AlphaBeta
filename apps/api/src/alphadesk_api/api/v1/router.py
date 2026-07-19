@@ -9,6 +9,7 @@ from alphadesk_api.api.v1 import (
     market_data,
     orders,
     risk,
+    scanners,
     simulated_executions,
     strategies,
     system,
@@ -25,6 +26,7 @@ api_router.include_router(orders.router)
 api_router.include_router(simulated_executions.router)
 api_router.include_router(risk.router)
 api_router.include_router(strategies.router)
+api_router.include_router(scanners.router)
 
 health_router = APIRouter()
 health_router.include_router(health.router)

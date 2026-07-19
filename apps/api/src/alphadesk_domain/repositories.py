@@ -49,6 +49,7 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.scanners import ScanResult, ScanRun
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import StrategyRun
@@ -209,6 +210,30 @@ class StrategyRunRepository(Protocol):
         offset: int,
         limit: int,
     ) -> tuple[list[StrategyRun], int]: ...
+
+
+class ScanRunRepository(Protocol):
+    async def add(self, entity: ScanRun) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> ScanRun | None: ...
+    async def get_by_idempotency_key(self, key: str) -> ScanRun | None: ...
+    async def update(self, entity: ScanRun) -> None: ...
+    async def list(
+        self,
+        *,
+        scanner_key: str | None,
+        status: str | None,
+        instrument_id: UUID | None,
+        created_from: datetime | None,
+        created_to: datetime | None,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[ScanRun], int]: ...
+
+
+class ScanResultRepository(Protocol):
+    async def append_many(self, entities: list[ScanResult]) -> None: ...
+    async def list_by_run(self, run_id: UUID) -> list[ScanResult]: ...
+    async def count_by_run(self, run_id: UUID) -> int: ...
 
 
 class StrategyExperimentRepository(Protocol):

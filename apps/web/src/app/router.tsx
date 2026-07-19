@@ -15,6 +15,8 @@ import {
   RiskLimitsPage,
 } from "../pages/RiskPages";
 import { SettingsPage } from "../pages/SettingsPage";
+import { ScannersPage } from "../pages/ScannersPage";
+import { ScanRunDetailPage, ScanRunsPage } from "../pages/ScanRunsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
 import {
   StrategyExperimentDetailPage,
@@ -55,6 +57,9 @@ export const routes: RouteObject[] = [
         ),
       },
       { path: "portfolio", element: <PortfolioPage /> },
+      { path: "scanners", element: <ScannersPage /> },
+      { path: "scan-runs", element: <ScanRunsPage /> },
+      { path: "scan-runs/:runId", element: <ScanRunDetailPage /> },
       { path: "strategies", element: <StrategiesPage /> },
       { path: "strategy-experiments", element: <StrategyExperimentsPage /> },
       {

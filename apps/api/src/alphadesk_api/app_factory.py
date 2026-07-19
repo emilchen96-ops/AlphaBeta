@@ -20,6 +20,7 @@ from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.core.middleware import CorrelationIdMiddleware
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
+from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_examples import register_builtin_strategies
 
@@ -44,6 +45,8 @@ def create_app(
     resolved_redis_service = redis_service or RedisService(resolved_settings)
     strategy_registry = StrategyRegistry()
     register_builtin_strategies(strategy_registry)
+    scanner_registry = ScannerRegistry()
+    register_builtin_scanners(scanner_registry)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -87,6 +90,7 @@ def create_app(
     app.state.redis = resolved_redis_service
     app.state.market_ws_hub = None
     app.state.strategy_registry = strategy_registry
+    app.state.scanner_registry = scanner_registry
 
     app.add_middleware(
         CORSMiddleware,

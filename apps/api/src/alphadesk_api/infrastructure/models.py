@@ -62,6 +62,7 @@ from alphadesk_domain.enums import (
     SyncTriggerType,
     TimeInForce,
 )
+from alphadesk_domain.scanners import ScanRunStatus
 from alphadesk_domain.strategy import StrategyEnvironment
 from alphadesk_domain.strategy_experiments import StrategyExperimentStatus
 from alphadesk_domain.strategy_runs import StrategyRunStatus
@@ -1595,3 +1596,75 @@ class MarketRealtimeRunModel(MutableTimestampedModel, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+
+
+class ScanRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "scan_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_scan_runs_idempotency_key"),
+        CheckConstraint(
+            f"status IN ({enum_values(ScanRunStatus)})", name="scan_run_status_valid"
+        ),
+        CheckConstraint("timeframe = 'DAY_1'", name="scan_run_timeframe_daily"),
+        CheckConstraint(
+            "instruments_scanned >= 0 AND matches_found >= 0 "
+            "AND matches_found <= instruments_scanned",
+            name="scan_run_counters_valid",
+        ),
+        CheckConstraint("length(request_fingerprint) = 64", name="scan_run_fingerprint_sha256"),
+        Index("ix_scan_runs_scanner_created", "scanner_key", "created_at"),
+        Index("ix_scan_runs_status_created", "status", "created_at"),
+        Index("ix_scan_runs_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    scanner_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    scanner_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    universe_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    instruments_scanned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matches_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ScanResultModel(TimestampedModel, Base):
+    __tablename__ = "scan_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "scan_run_id", "instrument_id", name="uq_scan_results_run_instrument"
+        ),
+        UniqueConstraint("scan_run_id", "rank", name="uq_scan_results_run_rank"),
+        CheckConstraint("rank >= 1", name="scan_result_rank_positive"),
+        CheckConstraint("score >= 0", name="scan_result_score_non_negative"),
+        CheckConstraint("reference_price > 0", name="scan_result_reference_price_positive"),
+        CheckConstraint("schema_version >= 1", name="scan_result_schema_version_positive"),
+        Index("ix_scan_results_run_rank", "scan_run_id", "rank"),
+        Index("ix_scan_results_instrument_matched", "instrument_id", "matched_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    scan_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("scan_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reference_price: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

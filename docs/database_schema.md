@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> SC01 Migration `0011_sc01` 新增 `scan_runs` 与追加式 `scan_results`。运行幂等键唯一；结果对 `(scan_run_id, instrument_id)` 和 `(scan_run_id, rank)` 唯一，rank 从 1 开始，评分与参考价使用 NUMERIC。Scanner 只读取既有 MarketBar，不写入 Signal、风控、订单、成交或账本表。
+
 > B01-B Migration `0010_b01` 新增只追加 `broker_execution_attempts`，并扩展 Fill 的 Attempt、
 > Command、连续序号和稳定执行引用。Command 新增明确的本地 `CONSUMED` 事实；Outbox 新增
 > `SUPPRESSED` 及固定抑制原因，避免本地模拟成交命令未来被 Publisher 外发。Attempt、Fill、M04
@@ -82,6 +84,8 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `domain_events` | 统一领域事件日志 | `event_id` 主键；schema 版本为正；按实体序列、事件时间和关联 ID 检索 |
 | `audit_logs` | 关键操作审计日志 | append-only；记录 actor、动作、原因、前后值与结果；按资源时间和关联 ID 检索 |
 | `outbox_messages` | 与业务事实同事务写入的待发布记录 | `(event_id, topic)` 唯一；状态和重试次数受约束；按待处理状态/可用时间及聚合检索 |
+| `scan_runs` | 历史日线扫描运行 | `idempotency_key` 唯一；DAY_1、状态、非负计数和 SHA-256 指纹受约束 |
+| `scan_results` | 追加式规则匹配结果 | 运行/标的与运行/rank 唯一；rank、score、参考价和 schema 版本受约束 |
 
 ## 关系概览
 
@@ -105,6 +109,8 @@ erDiagram
   DOMAIN_EVENTS ||--o{ OUTBOX_MESSAGES : stages
   EXECUTOR_DEVICES ||--o{ EXECUTOR_DEVICE_ACCOUNTS : authorizes
   TRADING_ACCOUNTS ||--o{ EXECUTOR_DEVICE_ACCOUNTS : assigned
+  INSTRUMENTS ||--o{ SCAN_RESULTS : matched
+  SCAN_RUNS ||--o{ SCAN_RESULTS : contains
 ```
 
 ## 可变状态与追加事实

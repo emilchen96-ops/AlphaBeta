@@ -1,0 +1,636 @@
+"""Framework-independent SC01 scanner contracts and deterministic A-share scanners."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from enum import StrEnum
+from hashlib import sha256
+from itertools import pairwise
+from typing import Protocol
+from uuid import UUID, uuid4
+
+from alphadesk_domain.entities import Instrument
+from alphadesk_domain.enums import MarketTimeframe
+from alphadesk_domain.strategy import StrategyBar
+from alphadesk_domain.values import as_utc, non_empty, utc_now
+
+
+class ScannerError(ValueError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ScannerParameterType(StrEnum):
+    INTEGER = "integer"
+    DECIMAL = "decimal"
+    BOOLEAN = "boolean"
+
+
+class ScanRunStatus(StrEnum):
+    CREATED = "CREATED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+type ScannerParameterValue = str | int | bool | Decimal | None
+type StoredScannerParameter = str | int | bool | None
+type ScannerMetricValue = str | int | bool | Decimal | None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScannerParameterDefinition:
+    name: str
+    parameter_type: ScannerParameterType
+    description: str
+    default: ScannerParameterValue = None
+    required: bool = False
+    nullable: bool = False
+    min_value: Decimal | int | None = None
+    max_value: Decimal | int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", non_empty(self.name, "name"))
+        object.__setattr__(self, "description", non_empty(self.description, "description"))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScannerMetadata:
+    scanner_key: str
+    display_name: str
+    description: str
+    version: str
+    supported_timeframes: tuple[MarketTimeframe, ...]
+    parameter_definitions: tuple[ScannerParameterDefinition, ...]
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scanner_key", non_empty(self.scanner_key, "scanner_key"))
+        object.__setattr__(self, "display_name", non_empty(self.display_name, "display_name"))
+        object.__setattr__(self, "description", non_empty(self.description, "description"))
+        object.__setattr__(self, "version", non_empty(self.version, "version"))
+        if not self.supported_timeframes:
+            raise ValueError("supported_timeframes must not be empty")
+        if self.schema_version < 1:
+            raise ValueError("schema_version must be positive")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScannerContext:
+    as_of: datetime
+    timeframe: MarketTimeframe
+    parameters: Mapping[str, ScannerParameterValue]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "as_of", as_utc(self.as_of, "as_of"))
+        if self.timeframe is not MarketTimeframe.DAY_1:
+            raise ScannerError("SCANNER_TIMEFRAME_NOT_SUPPORTED", "only DAY_1 is supported")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScanCandidate:
+    instrument_id: UUID
+    score: Decimal
+    matched_at: datetime
+    reference_price: Decimal
+    reason_code: str
+    reason: str
+    metrics: Mapping[str, ScannerMetricValue]
+
+    def __post_init__(self) -> None:
+        if not self.score.is_finite() or self.score < 0:
+            raise ValueError("score must be a finite non-negative Decimal")
+        if not self.reference_price.is_finite() or self.reference_price <= 0:
+            raise ValueError("reference_price must be a positive Decimal")
+        object.__setattr__(self, "matched_at", as_utc(self.matched_at, "matched_at"))
+        object.__setattr__(self, "reason_code", non_empty(self.reason_code, "reason_code"))
+        object.__setattr__(self, "reason", non_empty(self.reason, "reason"))
+
+
+class Scanner(Protocol):
+    @property
+    def metadata(self) -> ScannerMetadata: ...
+
+    def validate_parameters(
+        self, parameters: Mapping[str, ScannerParameterValue]
+    ) -> dict[str, ScannerParameterValue]: ...
+
+    def scan(
+        self,
+        context: ScannerContext,
+        instrument: Instrument,
+        bars: Sequence[StrategyBar],
+    ) -> ScanCandidate | None: ...
+
+
+class BaseScanner:
+    metadata: ScannerMetadata
+
+    def validate_parameters(
+        self, parameters: Mapping[str, ScannerParameterValue]
+    ) -> dict[str, ScannerParameterValue]:
+        definitions = {item.name: item for item in self.metadata.parameter_definitions}
+        unknown = sorted(set(parameters) - set(definitions))
+        if unknown:
+            raise ScannerError(
+                "SCANNER_UNKNOWN_PARAMETER", f"unknown scanner parameter: {unknown[0]}"
+            )
+        validated: dict[str, ScannerParameterValue] = {}
+        for name, definition in definitions.items():
+            raw = parameters.get(name, definition.default)
+            if raw is None:
+                if definition.required and not definition.nullable:
+                    raise ScannerError(
+                        "SCANNER_INVALID_PARAMETER", f"parameter '{name}' is required"
+                    )
+                validated[name] = None
+                continue
+            value = self._coerce(definition, raw)
+            if definition.min_value is not None and value < definition.min_value:
+                raise ScannerError(
+                    "SCANNER_INVALID_PARAMETER", f"parameter '{name}' is below its minimum"
+                )
+            if definition.max_value is not None and value > definition.max_value:
+                raise ScannerError(
+                    "SCANNER_INVALID_PARAMETER", f"parameter '{name}' exceeds its maximum"
+                )
+            validated[name] = value
+        return validated
+
+    @staticmethod
+    def _coerce(
+        definition: ScannerParameterDefinition, raw: ScannerParameterValue
+    ) -> int | bool | Decimal:
+        name = definition.name
+        if definition.parameter_type is ScannerParameterType.BOOLEAN:
+            if not isinstance(raw, bool):
+                raise ScannerError(
+                    "SCANNER_INVALID_PARAMETER", f"parameter '{name}' must be boolean"
+                )
+            return raw
+        if definition.parameter_type is ScannerParameterType.INTEGER:
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                raise ScannerError(
+                    "SCANNER_INVALID_PARAMETER", f"parameter '{name}' must be integer"
+                )
+            return raw
+        if isinstance(raw, float | bool):
+            raise ScannerError(
+                "SCANNER_INVALID_PARAMETER", f"parameter '{name}' must be a decimal string"
+            )
+        try:
+            value = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+        except (InvalidOperation, ValueError) as exc:
+            raise ScannerError(
+                "SCANNER_INVALID_PARAMETER", f"parameter '{name}' is not a valid decimal"
+            ) from exc
+        if not value.is_finite():
+            raise ScannerError("SCANNER_INVALID_PARAMETER", f"parameter '{name}' must be finite")
+        return value
+
+
+def _eligible_bars(
+    context: ScannerContext, instrument: Instrument, bars: Sequence[StrategyBar]
+) -> list[StrategyBar]:
+    ordered = list(bars)
+    if any(left.timestamp >= right.timestamp for left, right in pairwise(ordered)):
+        raise ScannerError("SCANNER_INVALID_BARS", "bars must be strictly ascending")
+    if any(bar.instrument_id != instrument.id for bar in ordered):
+        raise ScannerError("SCANNER_INVALID_BARS", "bar instrument does not match scanner input")
+    if any(bar.timeframe is not context.timeframe for bar in ordered):
+        raise ScannerError("SCANNER_INVALID_BARS", "bar timeframe does not match scanner input")
+    return [bar for bar in ordered if bar.timestamp <= context.as_of]
+
+
+def _decimal_metric(value: Decimal | None) -> Decimal | None:
+    return None if value is None else value.normalize()
+
+
+class VolumeAnomalyScanner(BaseScanner):
+    metadata = ScannerMetadata(
+        scanner_key="volume_anomaly",
+        display_name="成交量异常放大",
+        description="以当前日线之前的历史均量识别可配置的成交量异常。",
+        version="1.0.0",
+        supported_timeframes=(MarketTimeframe.DAY_1,),
+        parameter_definitions=(
+            ScannerParameterDefinition(
+                name="volume_window",
+                parameter_type=ScannerParameterType.INTEGER,
+                description="历史均量窗口, 不包含当前K线",
+                default=20,
+                min_value=1,
+                max_value=500,
+            ),
+            ScannerParameterDefinition(
+                name="minimum_volume_ratio",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="最小成交量倍数",
+                default=Decimal("2"),
+                min_value=Decimal("0"),
+            ),
+            ScannerParameterDefinition(
+                name="minimum_amount",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="可选最小成交额",
+                nullable=True,
+                min_value=Decimal("0"),
+            ),
+            ScannerParameterDefinition(
+                name="minimum_price",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="可选最小收盘价",
+                nullable=True,
+                min_value=Decimal("0"),
+            ),
+            ScannerParameterDefinition(
+                name="minimum_daily_return",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="可选最小日收益率",
+                nullable=True,
+            ),
+            ScannerParameterDefinition(
+                name="maximum_daily_return",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="可选最大日收益率",
+                nullable=True,
+            ),
+        ),
+    )
+
+    def scan(
+        self,
+        context: ScannerContext,
+        instrument: Instrument,
+        bars: Sequence[StrategyBar],
+    ) -> ScanCandidate | None:
+        parameters = self.validate_parameters(context.parameters)
+        window = int(parameters["volume_window"] or 0)
+        eligible = _eligible_bars(context, instrument, bars)
+        if len(eligible) < window + 1:
+            return None
+        current = eligible[-1]
+        history = eligible[-window - 1 : -1]
+        average_volume = sum((bar.volume for bar in history), Decimal("0")) / Decimal(window)
+        if average_volume <= 0:
+            return None
+        ratio = current.volume / average_volume
+        if ratio < _required_decimal(parameters, "minimum_volume_ratio"):
+            return None
+        if parameters["minimum_amount"] is not None and (
+            current.amount is None
+            or current.amount < _required_decimal(parameters, "minimum_amount")
+        ):
+            return None
+        if parameters["minimum_price"] is not None and current.close < _required_decimal(
+            parameters, "minimum_price"
+        ):
+            return None
+        previous_close = history[-1].close
+        daily_return = current.close / previous_close - Decimal("1")
+        minimum_return = parameters["minimum_daily_return"]
+        maximum_return = parameters["maximum_daily_return"]
+        if minimum_return is not None and daily_return < _required_decimal(
+            parameters, "minimum_daily_return"
+        ):
+            return None
+        if maximum_return is not None and daily_return > _required_decimal(
+            parameters, "maximum_daily_return"
+        ):
+            return None
+        return ScanCandidate(
+            instrument_id=instrument.id,
+            score=ratio,
+            matched_at=current.timestamp,
+            reference_price=current.close,
+            reason_code="VOLUME_ANOMALY",
+            reason="当前成交量达到此前历史均量的可配置倍数。",
+            metrics={
+                "current_volume": _decimal_metric(current.volume),
+                "average_volume": _decimal_metric(average_volume),
+                "volume_ratio": _decimal_metric(ratio),
+                "current_amount": _decimal_metric(current.amount),
+                "current_close": _decimal_metric(current.close),
+                "daily_return": _decimal_metric(daily_return),
+                "window": window,
+            },
+        )
+
+
+class LimitUpPullbackScanner(BaseScanner):
+    metadata = ScannerMetadata(
+        scanner_key="limit_up_pullback",
+        display_name="涨停后回落起涨区",
+        description="使用可配置近似规则识别涨停后回落至前一日收盘附近的标的。",
+        version="1.0.0",
+        supported_timeframes=(MarketTimeframe.DAY_1,),
+        parameter_definitions=(
+            ScannerParameterDefinition(
+                name="lookback_days",
+                parameter_type=ScannerParameterType.INTEGER,
+                description="向前查找涨停近似K线的交易日数量",
+                default=20,
+                min_value=2,
+                max_value=500,
+            ),
+            ScannerParameterDefinition(
+                name="limit_up_threshold",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="涨停近似收益率阈值",
+                default=Decimal("0.095"),
+                min_value=Decimal("0"),
+                max_value=Decimal("1"),
+            ),
+            ScannerParameterDefinition(
+                name="baseline_tolerance",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="当前价格与起涨基准价的最大距离",
+                default=Decimal("0.05"),
+                min_value=Decimal("0"),
+                max_value=Decimal("1"),
+            ),
+            ScannerParameterDefinition(
+                name="minimum_days_after_limit_up",
+                parameter_type=ScannerParameterType.INTEGER,
+                description="涨停近似日至当前的最小交易日间隔",
+                default=2,
+                min_value=1,
+                max_value=500,
+            ),
+            ScannerParameterDefinition(
+                name="maximum_days_after_limit_up",
+                parameter_type=ScannerParameterType.INTEGER,
+                description="可选最大交易日间隔",
+                nullable=True,
+                min_value=1,
+                max_value=500,
+            ),
+            ScannerParameterDefinition(
+                name="require_current_above_baseline",
+                parameter_type=ScannerParameterType.BOOLEAN,
+                description="要求当前价格不低于起涨基准价",
+                default=True,
+            ),
+            ScannerParameterDefinition(
+                name="minimum_current_volume_ratio",
+                parameter_type=ScannerParameterType.DECIMAL,
+                description="可选当前成交量相对历史均量下限",
+                nullable=True,
+                min_value=Decimal("0"),
+            ),
+        ),
+    )
+
+    def scan(
+        self,
+        context: ScannerContext,
+        instrument: Instrument,
+        bars: Sequence[StrategyBar],
+    ) -> ScanCandidate | None:
+        parameters = self.validate_parameters(context.parameters)
+        eligible = _eligible_bars(context, instrument, bars)
+        if len(eligible) < 3:
+            return None
+        current_index = len(eligible) - 1
+        current = eligible[current_index]
+        lookback = int(parameters["lookback_days"] or 0)
+        minimum_days = int(parameters["minimum_days_after_limit_up"] or 0)
+        maximum_days_value = parameters["maximum_days_after_limit_up"]
+        maximum_days = None if maximum_days_value is None else int(maximum_days_value)
+        threshold = _required_decimal(parameters, "limit_up_threshold")
+        tolerance = _required_decimal(parameters, "baseline_tolerance")
+        start_index = max(1, current_index - lookback)
+        selected: tuple[StrategyBar, Decimal, Decimal, Decimal, int] | None = None
+        for index in range(current_index - 1, start_index - 1, -1):
+            days_since = current_index - index
+            if days_since < minimum_days or (
+                maximum_days is not None and days_since > maximum_days
+            ):
+                continue
+            previous_close = eligible[index - 1].close
+            if previous_close <= 0:
+                continue
+            limit_bar = eligible[index]
+            limit_return = limit_bar.close / previous_close - Decimal("1")
+            if limit_return < threshold:
+                continue
+            distance = abs(current.close - previous_close) / previous_close
+            if distance > tolerance:
+                continue
+            if (
+                bool(parameters["require_current_above_baseline"])
+                and current.close < previous_close
+            ):
+                continue
+            selected = (limit_bar, limit_return, previous_close, distance, days_since)
+            break
+        if selected is None:
+            return None
+        volume_ratio: Decimal | None = None
+        minimum_volume_ratio = parameters["minimum_current_volume_ratio"]
+        if minimum_volume_ratio is not None:
+            history = eligible[max(0, current_index - lookback) : current_index]
+            if not history:
+                return None
+            average = sum((bar.volume for bar in history), Decimal("0")) / Decimal(len(history))
+            if average <= 0:
+                return None
+            volume_ratio = current.volume / average
+            if volume_ratio < _required_decimal(parameters, "minimum_current_volume_ratio"):
+                return None
+        limit_bar, limit_return, baseline, distance, days_since = selected
+        return ScanCandidate(
+            instrument_id=instrument.id,
+            score=Decimal("1") - distance,
+            matched_at=current.timestamp,
+            reference_price=current.close,
+            reason_code="LIMIT_UP_PULLBACK_APPROXIMATION",
+            reason=("使用可配置近似规则识别涨停后回落起涨区。该规则并非交易所权威涨停判定。"),
+            metrics={
+                "limit_up_date": limit_bar.timestamp.isoformat(),
+                "limit_up_return": _decimal_metric(limit_return),
+                "limit_up_close": _decimal_metric(limit_bar.close),
+                "baseline_price": _decimal_metric(baseline),
+                "current_close": _decimal_metric(current.close),
+                "distance_to_baseline": _decimal_metric(distance),
+                "days_since_limit_up": days_since,
+                "current_volume_ratio": _decimal_metric(volume_ratio),
+            },
+        )
+
+
+def _required_decimal(parameters: Mapping[str, ScannerParameterValue], name: str) -> Decimal:
+    value = parameters[name]
+    if not isinstance(value, Decimal):
+        raise ScannerError("SCANNER_INVALID_PARAMETER", f"parameter '{name}' must be decimal")
+    return value
+
+
+class ScannerRegistry:
+    def __init__(self) -> None:
+        self._factories: dict[str, Callable[[], Scanner]] = {}
+
+    def register(self, scanner_key: str, factory: Callable[[], Scanner]) -> None:
+        key = non_empty(scanner_key, "scanner_key")
+        if key in self._factories:
+            raise ScannerError("SCANNER_ALREADY_REGISTERED", f"scanner '{key}' already exists")
+        scanner = factory()
+        if scanner.metadata.scanner_key != key:
+            raise ScannerError(
+                "SCANNER_INVALID_REGISTRATION", "scanner key does not match metadata"
+            )
+        self._factories[key] = factory
+
+    def create(self, scanner_key: str) -> Scanner:
+        try:
+            return self._factories[scanner_key]()
+        except KeyError as exc:
+            raise ScannerError(
+                "SCANNER_NOT_FOUND", f"scanner '{scanner_key}' does not exist"
+            ) from exc
+
+    def list_metadata(self) -> list[ScannerMetadata]:
+        return [self._factories[key]().metadata for key in sorted(self._factories)]
+
+
+def register_builtin_scanners(registry: ScannerRegistry) -> None:
+    registry.register("limit_up_pullback", LimitUpPullbackScanner)
+    registry.register("volume_anomaly", VolumeAnomalyScanner)
+
+
+def stored_scanner_parameters(
+    parameters: Mapping[str, ScannerParameterValue],
+) -> dict[str, StoredScannerParameter]:
+    values: dict[str, StoredScannerParameter] = {}
+    for name in sorted(parameters):
+        value = parameters[name]
+        values[name] = format(value.normalize(), "f") if isinstance(value, Decimal) else value
+    return values
+
+
+def stored_scanner_metrics(
+    metrics: Mapping[str, ScannerMetricValue],
+) -> dict[str, str | int | bool | None]:
+    values: dict[str, str | int | bool | None] = {}
+    for name in sorted(metrics):
+        value = metrics[name]
+        values[name] = format(value.normalize(), "f") if isinstance(value, Decimal) else value
+    return values
+
+
+def scanner_request_fingerprint(payload: Mapping[str, object]) -> str:
+    canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+@dataclass(slots=True, kw_only=True)
+class ScanRun:
+    scanner_key: str
+    scanner_version: str
+    parameters: dict[str, StoredScannerParameter]
+    universe_type: str
+    instrument_ids: tuple[UUID, ...]
+    timeframe: MarketTimeframe
+    as_of: datetime
+    status: ScanRunStatus
+    idempotency_key: str
+    request_fingerprint: str
+    correlation_id: UUID
+    id: UUID = field(default_factory=uuid4)
+    instruments_scanned: int = 0
+    matches_found: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    failed_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        self.scanner_key = non_empty(self.scanner_key, "scanner_key")
+        self.scanner_version = non_empty(self.scanner_version, "scanner_version")
+        self.universe_type = non_empty(self.universe_type, "universe_type")
+        self.idempotency_key = non_empty(self.idempotency_key, "idempotency_key")
+        if len(self.idempotency_key) > 128:
+            raise ValueError("idempotency_key must not exceed 128 characters")
+        self.request_fingerprint = non_empty(self.request_fingerprint, "request_fingerprint")
+        if len(self.request_fingerprint) != 64:
+            raise ValueError("request_fingerprint must be SHA-256 hex")
+        self.instrument_ids = tuple(sorted(set(self.instrument_ids), key=str))
+        if not self.instrument_ids:
+            raise ValueError("instrument_ids must not be empty")
+        if self.timeframe is not MarketTimeframe.DAY_1:
+            raise ValueError("only DAY_1 scans are supported")
+        self.as_of = as_utc(self.as_of, "as_of")
+        if self.instruments_scanned < 0 or self.matches_found < 0:
+            raise ValueError("scan counters must be non-negative")
+        for name in ("started_at", "completed_at", "failed_at"):
+            value = getattr(self, name)
+            if value is not None:
+                setattr(self, name, as_utc(value, name))
+        self.created_at = as_utc(self.created_at, "created_at")
+        self.updated_at = as_utc(self.updated_at, "updated_at")
+
+    def mark_running(self, occurred_at: datetime) -> None:
+        if self.status is not ScanRunStatus.CREATED:
+            raise ValueError("only CREATED scan runs can start")
+        now = as_utc(occurred_at, "occurred_at")
+        self.status = ScanRunStatus.RUNNING
+        self.started_at = now
+        self.updated_at = now
+
+    def mark_completed(self, occurred_at: datetime, instruments: int, matches: int) -> None:
+        if self.status is not ScanRunStatus.RUNNING:
+            raise ValueError("only RUNNING scan runs can complete")
+        if instruments < 0 or matches < 0 or matches > instruments:
+            raise ValueError("invalid scan counters")
+        now = as_utc(occurred_at, "occurred_at")
+        self.status = ScanRunStatus.COMPLETED
+        self.instruments_scanned = instruments
+        self.matches_found = matches
+        self.completed_at = now
+        self.updated_at = now
+
+    def mark_failed(self, occurred_at: datetime, code: str, message: str) -> None:
+        now = as_utc(occurred_at, "occurred_at")
+        self.status = ScanRunStatus.FAILED
+        self.failed_at = now
+        self.error_code = non_empty(code, "error_code")[:64]
+        self.error_message = non_empty(message, "error_message")[:512]
+        self.updated_at = now
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScanResult:
+    scan_run_id: UUID
+    instrument_id: UUID
+    rank: int
+    score: Decimal
+    matched_at: datetime
+    reference_price: Decimal
+    reason_code: str
+    reason: str
+    metrics: dict[str, str | int | bool | None]
+    id: UUID = field(default_factory=uuid4)
+    schema_version: int = 1
+    created_at: datetime = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        if self.rank < 1:
+            raise ValueError("rank must start at one")
+        if not self.score.is_finite() or self.score < 0:
+            raise ValueError("score must be finite and non-negative")
+        if not self.reference_price.is_finite() or self.reference_price <= 0:
+            raise ValueError("reference_price must be positive")
+        if self.schema_version < 1:
+            raise ValueError("schema_version must be positive")
+        object.__setattr__(self, "matched_at", as_utc(self.matched_at, "matched_at"))
+        object.__setattr__(self, "created_at", as_utc(self.created_at, "created_at"))
+        object.__setattr__(self, "reason_code", non_empty(self.reason_code, "reason_code"))
+        object.__setattr__(self, "reason", non_empty(self.reason, "reason"))
