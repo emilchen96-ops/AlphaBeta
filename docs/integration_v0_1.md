@@ -69,4 +69,4 @@ docker compose -p alphadesk-i01 exec api alembic check
 
 ## 下一阶段
 
-D01 历史行情数据中心：Instrument 同步、增量日线补数、幂等、覆盖率、交易日历、复权/质量状态、缺口检测、可恢复同步和数据就绪 API。D01 不应包含回测撮合或实盘执行。
+D01 历史行情数据中心已在后续 `codex/d01-market-data` 分支完成：Instrument/研究池、历史补数、每日增量、质量事实、覆盖率、Readiness、API/CLI 和页面均已接入。没有引入权威交易日历、复权因子、实时行情、MiniQMT 或交易写入。下一阶段仅为 BT01-R 日线回测补全与封板。

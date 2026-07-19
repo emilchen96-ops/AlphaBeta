@@ -83,9 +83,9 @@ Scanner 和 Strategy 已通过既有 PostgreSQL HistoricalBarProvider 直接读�
 
 MiniQMT 负责未来 Windows 本地券商/行情边界，不是历史研究数据落库的前置条件。BaoStock + PostgreSQL 已能独立支持离线 Scanner、Strategy 和后续 BT01-R；D01 不访问券商账户。
 
-## 后续阶段
+## D01-C/D/E 运营闭环
 
-D01-C 每日增量、D01-D 完整数据质量中心、D01-E 前端数据状态页面均未开始。
+D01-C/D/E 已完成：每日更新从本地最后一根日线增量读取并以 operation key 幂等；质量运行与问题为追加事实；覆盖率、Readiness、同步历史和质量详情由 API/CLI 与 `/market-data-center` 使用。具体见 [每日增量](daily_market_data_update.md)、[质量与 Readiness](market_data_quality.md) 和 [数据中心页面](market_data_center_ui.md)。D01 历史行情数据中心至此完成，下一阶段是 BT01-R；实时行情、MiniQMT 和自动调度仍不在 D01 范围内。
 
 ## 2026-07-19 真实 Provider 验收
 

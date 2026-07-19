@@ -22,6 +22,19 @@
 
 AlphaDesk 是一个面向个人使用的本地量化交易系统。项目以可审计、可恢复和安全边界清晰为首要目标，当前采用 React + TypeScript 前端、FastAPI 模块化单体后端、PostgreSQL 与 Redis 基础设施。
 
+## D01 历史行情日常操作
+
+完成首次 Instrument/研究池同步和历史补数后，日常可执行：
+
+```powershell
+python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research --dry-run
+python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research
+python -m alphadesk_api.cli.market_data verify-quality --universe research --timeframe DAY
+python -m alphadesk_api.cli.market_data show-readiness --universe research
+```
+
+启动 Web/API 后打开 `http://127.0.0.1:5173/market-data-center`。该页面只维护 BaoStock 历史日线，不提供实时行情、不连接 MiniQMT，也不会自动创建 Signal、订单、成交或回测。
+
 ## 当前阶段：M02
 
 M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成。当前具备：

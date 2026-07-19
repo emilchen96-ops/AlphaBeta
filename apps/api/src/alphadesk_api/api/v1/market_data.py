@@ -8,9 +8,21 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 from redis.asyncio import Redis
 
-from alphadesk_api.api.v1.market_common import to_app_error, uow_factory
+from alphadesk_api.api.v1.market_common import (
+    request_correlation_id,
+    to_app_error,
+    uow_factory,
+)
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.application.historical_market_data import InstrumentUniverseSyncService
 from alphadesk_api.application.market_data import MarketDataQueryService
+from alphadesk_api.application.market_data_operations import (
+    DailyMarketDataUpdateService,
+    MarketDataQualityIntegrityService,
+    MarketDataQualityQueryService,
+    MarketDataQualityService,
+    MarketDataReadinessService,
+)
 from alphadesk_api.infrastructure.free_market_cache import (
     HEARTBEAT_KEY,
     STATUS_KEY,
@@ -18,14 +30,25 @@ from alphadesk_api.infrastructure.free_market_cache import (
     QuoteCache,
     read_json,
 )
+from alphadesk_api.infrastructure.market_data import BaoStockHistoricalMarketDataAdapter
 from alphadesk_api.schemas.market import (
+    DailyUpdateRequest,
+    DailyUpdateResponse,
     MarketBarResponse,
     MarketBarsResponse,
+    MarketDataOverviewResponse,
+    MarketDataQualityIssueResponse,
+    MarketDataQualityRunResponse,
     MarketDataSourceResponse,
     MarketFreshnessResponse,
     MarketLatestItemResponse,
     MarketLatestResponse,
     MarketSyncRunResponse,
+    QualityRunDetailResponse,
+    QualityRunPageResponse,
+    QualityRunRequest,
+    ReadinessCapabilityResponse,
+    UniverseCoverageResponse,
 )
 from alphadesk_api.schemas.realtime_market import (
     LatestQuotesResponse,
@@ -33,7 +56,13 @@ from alphadesk_api.schemas.realtime_market import (
     RealtimeStatusResponse,
     SubscriptionSummaryResponse,
 )
-from alphadesk_domain.enums import AdjustmentType, MarketTimeframe, QuoteFreshnessStatus
+from alphadesk_domain.entities import Instrument
+from alphadesk_domain.enums import (
+    AdjustmentType,
+    MarketDataIssueSeverity,
+    MarketTimeframe,
+    QuoteFreshnessStatus,
+)
 from alphadesk_domain.market import MarketBar, MarketDataFreshness
 
 router = APIRouter(prefix="/market-data", tags=["market-data"])
@@ -43,6 +72,34 @@ def query_service(request: Request) -> MarketDataQueryService:
     return MarketDataQueryService(
         uow_factory(request),
         minute_stale_seconds=request.app.state.settings.market_minute_stale_seconds,
+    )
+
+
+async def _operations_instruments(
+    request: Request,
+    *,
+    universe_key: str,
+    max_instruments: int | None,
+    instrument_ids: list[UUID] | None = None,
+) -> list[Instrument]:
+    settings = request.app.state.settings
+    limit = max_instruments or settings.market_backfill_max_instruments
+    if limit > settings.market_backfill_max_instruments:
+        raise ApplicationError(
+            "MARKET_DATA_TOO_MANY_INSTRUMENTS",
+            f"单次操作最多 {settings.market_backfill_max_instruments} 个标的",
+        )
+    return await InstrumentUniverseSyncService(uow_factory(request)).resolve_universe(
+        universe="manual" if instrument_ids else universe_key,
+        limit=limit,
+        instrument_ids=instrument_ids,
+    )
+
+
+def _readiness_service(request: Request) -> MarketDataReadinessService:
+    return MarketDataReadinessService(
+        uow_factory(request),
+        backtest_minimum_bars=request.app.state.settings.market_data_backtest_minimum_bars,
     )
 
 
@@ -184,6 +241,205 @@ async def get_sync_run(request: Request, run_id: UUID) -> MarketSyncRunResponse:
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
     return MarketSyncRunResponse(**asdict(value))
+
+
+@router.post(
+    "/daily-updates",
+    response_model=DailyUpdateResponse,
+    summary="Synchronously update bounded historical daily bars; this may take time",
+)
+async def create_daily_update(request: Request, payload: DailyUpdateRequest) -> DailyUpdateResponse:
+    try:
+        instruments = await _operations_instruments(
+            request,
+            universe_key=payload.universe_key,
+            max_instruments=payload.max_instruments,
+            instrument_ids=payload.instrument_ids or None,
+        )
+        factory = getattr(request.app.state, "historical_market_adapter_factory", None)
+        adapter = factory() if callable(factory) else BaoStockHistoricalMarketDataAdapter()
+        settings = request.app.state.settings
+        value = await DailyMarketDataUpdateService(
+            uow_factory(request),
+            default_start_date=settings.market_daily_default_start_date,
+            max_instruments=settings.market_backfill_max_instruments,
+            batch_size=settings.market_backfill_batch_size,
+            max_retries=settings.market_backfill_max_retries,
+            request_interval_seconds=settings.market_backfill_request_interval_seconds,
+            future_tolerance_seconds=settings.market_future_tolerance_seconds,
+        ).update(
+            adapter=adapter,
+            instruments=instruments,
+            universe_key=payload.universe_key,
+            target_date=payload.target_date,
+            continue_on_error=payload.continue_on_error,
+            dry_run=payload.dry_run,
+            correlation_id=request_correlation_id(request),
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return DailyUpdateResponse(**asdict(value))
+
+
+@router.post("/quality-runs", response_model=QualityRunDetailResponse)
+async def create_quality_run(
+    request: Request, payload: QualityRunRequest
+) -> QualityRunDetailResponse:
+    if (
+        payload.range_start is not None
+        and payload.range_end is not None
+        and payload.range_start > payload.range_end
+    ):
+        raise to_app_error(
+            ApplicationError("MARKET_DATA_INVALID_RANGE", "质量检查开始时间不能晚于结束时间")
+        )
+    if any(
+        value is not None and value.tzinfo is None
+        for value in (payload.range_start, payload.range_end)
+    ):
+        raise to_app_error(
+            ApplicationError("MARKET_DATA_INVALID_RANGE", "质量检查时间必须包含时区")
+        )
+    try:
+        instruments = await _operations_instruments(
+            request,
+            universe_key=payload.universe_key,
+            max_instruments=payload.max_instruments,
+        )
+        settings = request.app.state.settings
+        result = await MarketDataQualityService(
+            uow_factory(request),
+            stale_calendar_days=settings.market_data_stale_calendar_days,
+            minimum_bars=settings.market_data_backtest_minimum_bars,
+        ).verify(
+            instruments=instruments,
+            universe_key=payload.universe_key,
+            provider=payload.provider,
+            correlation_id=request_correlation_id(request),
+            range_start=payload.range_start,
+            range_end=payload.range_end,
+        )
+        mismatches = await MarketDataQualityIntegrityService(uow_factory(request)).verify(
+            result.run.id
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return QualityRunDetailResponse(
+        run=MarketDataQualityRunResponse(**asdict(result.run)),
+        issues=[MarketDataQualityIssueResponse(**asdict(item)) for item in result.issues],
+        issue_page=1,
+        issue_page_size=max(1, len(result.issues)),
+        issue_total=len(result.issues),
+        integrity_mismatches=mismatches,
+    )
+
+
+@router.get("/quality-runs", response_model=QualityRunPageResponse)
+async def get_quality_runs(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> QualityRunPageResponse:
+    values, total = await MarketDataQualityQueryService(uow_factory(request)).list_runs(
+        page=page, page_size=page_size
+    )
+    return QualityRunPageResponse(
+        items=[MarketDataQualityRunResponse(**asdict(item)) for item in values],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+@router.get("/quality-runs/{run_id}", response_model=QualityRunDetailResponse)
+async def get_quality_run(
+    request: Request,
+    run_id: UUID,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    severity: MarketDataIssueSeverity | None = None,
+    issue_type: str | None = Query(default=None, max_length=64),
+    instrument_id: UUID | None = None,
+) -> QualityRunDetailResponse:
+    service = MarketDataQualityQueryService(uow_factory(request))
+    try:
+        run = await service.run(run_id)
+        issues, total = await service.issues(
+            run_id,
+            page=page,
+            page_size=page_size,
+            severity=severity,
+            issue_type=issue_type,
+            instrument_id=instrument_id,
+        )
+        mismatches = await MarketDataQualityIntegrityService(uow_factory(request)).verify(run_id)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return QualityRunDetailResponse(
+        run=MarketDataQualityRunResponse(**asdict(run)),
+        issues=[MarketDataQualityIssueResponse(**asdict(item)) for item in issues],
+        issue_page=page,
+        issue_page_size=page_size,
+        issue_total=total,
+        integrity_mismatches=mismatches,
+    )
+
+
+@router.get("/coverage", response_model=UniverseCoverageResponse)
+async def get_coverage(
+    request: Request,
+    universe_key: str = Query(default="research", max_length=64),
+    provider: str = Query(default="baostock", max_length=64),
+    max_instruments: int | None = Query(default=None, ge=1, le=500),
+) -> UniverseCoverageResponse:
+    try:
+        instruments = await _operations_instruments(
+            request, universe_key=universe_key, max_instruments=max_instruments
+        )
+        value = await _readiness_service(request).coverage(
+            instruments=instruments, universe_key=universe_key, provider=provider
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return UniverseCoverageResponse(**asdict(value))
+
+
+@router.get("/readiness", response_model=list[ReadinessCapabilityResponse])
+async def get_readiness(
+    request: Request,
+    universe_key: str = Query(default="research", max_length=64),
+    provider: str = Query(default="baostock", max_length=64),
+    max_instruments: int | None = Query(default=None, ge=1, le=500),
+) -> list[ReadinessCapabilityResponse]:
+    try:
+        instruments = await _operations_instruments(
+            request, universe_key=universe_key, max_instruments=max_instruments
+        )
+        values = await _readiness_service(request).readiness(
+            instruments=instruments, provider=provider
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return [ReadinessCapabilityResponse(**asdict(item)) for item in values]
+
+
+@router.get("/overview", response_model=MarketDataOverviewResponse)
+async def get_market_data_overview(
+    request: Request,
+    universe_key: str = Query(default="research", max_length=64),
+    provider: str = Query(default="baostock", max_length=64),
+    max_instruments: int | None = Query(default=None, ge=1, le=500),
+) -> MarketDataOverviewResponse:
+    try:
+        instruments = await _operations_instruments(
+            request, universe_key=universe_key, max_instruments=max_instruments
+        )
+        value = await _readiness_service(request).overview(
+            instruments=instruments, universe_key=universe_key, provider=provider
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+    return MarketDataOverviewResponse(**asdict(value))
 
 
 def _redis_client(request: Request) -> Redis:

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import sys
+from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -19,6 +20,13 @@ from alphadesk_api.application.historical_market_data import (
 from alphadesk_api.application.market_data import (
     MarketDataIngestionService,
     MarketDataQueryService,
+)
+from alphadesk_api.application.market_data_operations import (
+    DailyMarketDataUpdateService,
+    MarketDataQualityIntegrityService,
+    MarketDataQualityQueryService,
+    MarketDataQualityService,
+    MarketDataReadinessService,
 )
 from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.infrastructure.database import DatabaseService
@@ -190,6 +198,18 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
         uow_factory,
         future_tolerance_seconds=settings.market_future_tolerance_seconds,
     )
+    daily_updates = DailyMarketDataUpdateService(
+        uow_factory,
+        default_start_date=settings.market_daily_default_start_date,
+        max_instruments=settings.market_backfill_max_instruments,
+        batch_size=settings.market_backfill_batch_size,
+        max_retries=settings.market_backfill_max_retries,
+        request_interval_seconds=settings.market_backfill_request_interval_seconds,
+        future_tolerance_seconds=settings.market_future_tolerance_seconds,
+    )
+    readiness = MarketDataReadinessService(
+        uow_factory, backtest_minimum_bars=settings.market_data_backtest_minimum_bars
+    )
     try:
         if args.command == "provider-check":
             selected_adapter = adapter_for(args.source)
@@ -337,6 +357,72 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                     None if backfill_result.run is None else serialize_sync_run(backfill_result.run)
                 ),
             }
+        if args.command == "update-daily":
+            selected_instruments = await universes.resolve_universe(
+                universe=args.universe,
+                limit=args.max_instruments,
+                instrument_ids=args.instrument_id,
+                symbols=read_symbol_file(args.codes_file),
+            )
+            daily_result = await daily_updates.update(
+                adapter=adapter_for(args.provider),
+                instruments=selected_instruments,
+                universe_key=args.universe,
+                target_date=args.target_date,
+                continue_on_error=args.continue_on_error,
+                dry_run=args.dry_run,
+                correlation_id=uuid4(),
+                progress=None if args.dry_run else report_backfill_progress,
+            )
+            return {
+                **asdict(daily_result),
+                "run": (None if daily_result.run is None else serialize_sync_run(daily_result.run)),
+            }
+        if args.command == "verify-quality":
+            selected_instruments = await universes.resolve_universe(
+                universe=args.universe,
+                limit=args.max_instruments,
+            )
+            quality_result = await MarketDataQualityService(
+                uow_factory,
+                stale_calendar_days=settings.market_data_stale_calendar_days,
+                minimum_bars=settings.market_data_backtest_minimum_bars,
+            ).verify(
+                instruments=selected_instruments,
+                universe_key=args.universe,
+                provider=args.provider,
+                correlation_id=uuid4(),
+            )
+            integrity = await MarketDataQualityIntegrityService(uow_factory).verify(
+                quality_result.run.id
+            )
+            return {
+                "run": asdict(quality_result.run),
+                "issue_type_counts": dict(
+                    Counter(item.issue_type for item in quality_result.issues)
+                ),
+                "integrity_mismatches": integrity,
+            }
+        if args.command == "show-readiness":
+            selected_instruments = await universes.resolve_universe(
+                universe=args.universe,
+                limit=args.max_instruments,
+            )
+            readiness_values = await readiness.readiness(
+                instruments=selected_instruments, provider=args.provider
+            )
+            return {"capabilities": [asdict(item) for item in readiness_values]}
+        if args.command == "show-quality-run":
+            query = MarketDataQualityQueryService(uow_factory)
+            quality_run = await query.run(args.run_id)
+            issues, total = await query.issues(args.run_id, page=1, page_size=args.issue_limit)
+            integrity = await MarketDataQualityIntegrityService(uow_factory).verify(args.run_id)
+            return {
+                "run": asdict(quality_run),
+                "issues": [asdict(item) for item in issues],
+                "issue_total": total,
+                "integrity_mismatches": integrity,
+            }
         if args.command in {"sync-bars", "import-csv", "sync-daily", "sync-recent-minute-bars"}:
             if args.command == "import-csv":
                 csv_adapter = LocalCsvMarketDataAdapter(
@@ -362,7 +448,7 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
             else:
                 selected_adapter = adapter_for(args.source)
                 symbols = [value.strip() for value in args.symbols.split(",") if value.strip()]
-            run = await ingestion.sync_bars(
+            ingestion_run = await ingestion.sync_bars(
                 adapter=selected_adapter,
                 symbols=symbols,
                 timeframe=args.timeframe,
@@ -382,11 +468,11 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                                 "schema_version": 1,
                                 "type": "minute_bar_updated",
                                 "symbols": symbols,
-                                "run_id": str(run.id),
+                                "run_id": str(ingestion_run.id),
                                 "completed_at": (
                                     None
-                                    if run.completed_at is None
-                                    else run.completed_at.isoformat()
+                                    if ingestion_run.completed_at is None
+                                    else ingestion_run.completed_at.isoformat()
                                 ),
                             }
                         ),
@@ -394,19 +480,19 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
                 finally:
                     await redis_service.close()
             return {
-                "run_id": str(run.id),
-                "status": run.status.value,
-                "received": run.total_received,
-                "inserted": run.total_inserted,
-                "updated": run.total_updated,
-                "rejected": run.total_rejected,
+                "run_id": str(ingestion_run.id),
+                "status": ingestion_run.status.value,
+                "received": ingestion_run.total_received,
+                "inserted": ingestion_run.total_inserted,
+                "updated": ingestion_run.total_updated,
+                "rejected": ingestion_run.total_rejected,
             }
         if args.command in {"sync-status", "list-sync-runs"}:
-            values = await MarketDataQueryService(uow_factory).sync_runs(args.limit)
-            return {"runs": [serialize_sync_run(run) for run in values]}
+            sync_runs = await MarketDataQueryService(uow_factory).sync_runs(args.limit)
+            return {"runs": [serialize_sync_run(item) for item in sync_runs]}
         if args.command == "show-sync-run":
-            run = await MarketDataQueryService(uow_factory).sync_run(args.run_id)
-            return {"run": serialize_sync_run(run)}
+            sync_run = await MarketDataQueryService(uow_factory).sync_run(args.run_id)
+            return {"run": serialize_sync_run(sync_run)}
         raise ValueError("unknown command")
     finally:
         await database.close()
@@ -472,6 +558,35 @@ def build_parser() -> argparse.ArgumentParser:
     list_runs.add_argument("--limit", type=int, default=20, choices=range(1, 101))
     show_run = commands.add_parser("show-sync-run")
     show_run.add_argument("--run-id", type=UUID, required=True)
+    update_daily = commands.add_parser("update-daily")
+    update_daily.add_argument("--provider", default="baostock")
+    update_daily.add_argument(
+        "--universe", choices=("research", "manual", "all_active_a_share"), default="research"
+    )
+    update_daily.add_argument("--instrument-id", action="append", type=UUID)
+    update_daily.add_argument("--codes-file")
+    update_daily.add_argument("--target-date", type=date.fromisoformat)
+    update_daily.add_argument("--max-instruments", type=int, default=300, choices=range(1, 501))
+    update_daily.add_argument(
+        "--continue-on-error", action=argparse.BooleanOptionalAction, default=True
+    )
+    update_daily.add_argument("--dry-run", action="store_true")
+    verify_quality = commands.add_parser("verify-quality")
+    verify_quality.add_argument("--provider", default="baostock")
+    verify_quality.add_argument(
+        "--universe", choices=("research", "all_active_a_share"), default="research"
+    )
+    verify_quality.add_argument("--timeframe", type=daily_timeframe, default=MarketTimeframe.DAY_1)
+    verify_quality.add_argument("--max-instruments", type=int, default=300, choices=range(1, 501))
+    show_readiness = commands.add_parser("show-readiness")
+    show_readiness.add_argument("--provider", default="baostock")
+    show_readiness.add_argument(
+        "--universe", choices=("research", "all_active_a_share"), default="research"
+    )
+    show_readiness.add_argument("--max-instruments", type=int, default=300, choices=range(1, 501))
+    show_quality = commands.add_parser("show-quality-run")
+    show_quality.add_argument("--run-id", type=UUID, required=True)
+    show_quality.add_argument("--issue-limit", type=int, default=100, choices=range(1, 201))
     return parser
 
 

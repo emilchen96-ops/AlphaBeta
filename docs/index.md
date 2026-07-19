@@ -1,6 +1,6 @@
 # AlphaDesk 文档索引
 
-> 当前数据里程碑为 **D01-A/B 完成**：BaoStock A 股 Instrument 同步、研究 Watchlist、串行历史日线补数、幂等和同步记录见 [D01 历史行情](historical_market_data.md)。D01-C/D/E 尚未开始，不包含实时行情、MiniQMT、回测或交易写入。
+> 当前数据里程碑为 **D01 完成**：BaoStock A 股 Instrument/研究池、历史补数、每日增量、质量事实、覆盖率、Readiness、API/CLI 和数据中心页面见 [D01 历史行情](historical_market_data.md)、[每日增量](daily_market_data_update.md)、[质量检查](market_data_quality.md) 与 [数据中心页面](market_data_center_ui.md)。不包含实时行情、MiniQMT、回测或交易写入；下一阶段为 BT01-R。
 
 > 当前里程碑为 **I01 V0.1 集成基线完成**。权威盘点见 [集成说明](integration_v0_1.md)、[功能盘点](feature_inventory.md)、[UI 动作盘点](ui_action_inventory.md)、[API 契约盘点](api_contract_inventory.md) 与 [数据就绪度](data_readiness.md)。SC01、N01、A01 已完成；BT01 未安全并入，当前为 PARTIAL。下一步唯一主线是 **D01 历史行情数据中心**。
 
@@ -61,7 +61,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | 变更内容                        | 必读文档                                                                                  |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
-| D01 A 股历史日线                | `historical_market_data.md`、`market_data.md`、`data_readiness.md`、`database_schema.md`   |
+| D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01 AI 研究助手                 | `ai_research_assistant.md`、`information_event_center.md`、`database_schema.md`、`security.md` |

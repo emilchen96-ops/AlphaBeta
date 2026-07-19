@@ -33,6 +33,8 @@ from alphadesk_api.infrastructure.models import (
     InstrumentModel,
     LedgerTransactionModel,
     MarketBarModel,
+    MarketDataQualityIssueModel,
+    MarketDataQualityRunModel,
     MarketDataSourceModel,
     MarketEventModel,
     MarketRealtimeRunModel,
@@ -95,6 +97,8 @@ from alphadesk_domain.entities import (
 from alphadesk_domain.enums import (
     AdjustmentType,
     CommandType,
+    MarketDataIssueSeverity,
+    MarketDataQualityRunStatus,
     MarketDataSourceStatus,
     MarketSyncStatus,
     MarketTimeframe,
@@ -114,6 +118,9 @@ from alphadesk_domain.market import (
     InstrumentMapping,
     MarketBar,
     MarketBarUpsertResult,
+    MarketDataCoverage,
+    MarketDataQualityIssue,
+    MarketDataQualityRun,
     MarketDataSource,
     MarketSyncRun,
 )
@@ -2372,6 +2379,45 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
         )
         return [entity_from_model(MarketBar, row) for row in rows]
 
+    async def get_coverage(
+        self,
+        *,
+        instrument_ids: list[UUID],
+        source_id: UUID,
+        timeframe: MarketTimeframe,
+        adjustment_type: AdjustmentType,
+    ) -> list[MarketDataCoverage]:
+        if not instrument_ids:
+            return []
+        rows = await self._session.execute(
+            select(
+                MarketBarModel.instrument_id,
+                MarketBarModel.source_id,
+                func.count(MarketBarModel.id).label("bar_count"),
+                func.min(MarketBarModel.bar_time).label("earliest_bar"),
+                func.max(MarketBarModel.bar_time).label("latest_bar"),
+            )
+            .where(
+                MarketBarModel.instrument_id.in_(instrument_ids),
+                MarketBarModel.source_id == source_id,
+                MarketBarModel.timeframe == timeframe.value,
+                MarketBarModel.adjustment_type == adjustment_type.value,
+            )
+            .group_by(MarketBarModel.instrument_id, MarketBarModel.source_id)
+        )
+        return [
+            MarketDataCoverage(
+                instrument_id=row.instrument_id,
+                source_id=row.source_id,
+                timeframe=timeframe,
+                adjustment_type=adjustment_type,
+                bar_count=int(row.bar_count),
+                earliest_bar=row.earliest_bar,
+                latest_bar=row.latest_bar,
+            )
+            for row in rows
+        ]
+
 
 class SqlAlchemyMarketSyncRunRepository(SqlAlchemyRepository[MarketSyncRun, MarketSyncRunModel]):
     entity_type = MarketSyncRun
@@ -2388,6 +2434,15 @@ class SqlAlchemyMarketSyncRunRepository(SqlAlchemyRepository[MarketSyncRun, Mark
             select(MarketSyncRunModel).order_by(MarketSyncRunModel.started_at.desc()).limit(limit)
         )
         return [entity_from_model(MarketSyncRun, row) for row in rows]
+
+    async def get_by_operation_key(self, operation_key: str) -> MarketSyncRun | None:
+        row = await self._session.scalar(
+            select(MarketSyncRunModel)
+            .where(MarketSyncRunModel.metadata_json["operation_key"].astext == operation_key)
+            .order_by(MarketSyncRunModel.started_at.desc())
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(MarketSyncRun, row)
 
     async def update_status(
         self,
@@ -2417,6 +2472,121 @@ class SqlAlchemyMarketSyncRunRepository(SqlAlchemyRepository[MarketSyncRun, Mark
         await self._session.execute(
             update(MarketSyncRunModel).where(MarketSyncRunModel.id == entity_id).values(**values)
         )
+
+
+class SqlAlchemyMarketDataQualityRunRepository(
+    SqlAlchemyRepository[MarketDataQualityRun, MarketDataQualityRunModel]
+):
+    entity_type = MarketDataQualityRun
+    model_type = MarketDataQualityRunModel
+
+    async def add(self, entity: MarketDataQualityRun) -> None:
+        await self._add(entity)
+
+    async def get_by_id(self, entity_id: UUID) -> MarketDataQualityRun | None:
+        return await self._get_by_id(entity_id)
+
+    async def list_recent(
+        self, *, offset: int, limit: int
+    ) -> tuple[list[MarketDataQualityRun], int]:
+        total = int(
+            await self._session.scalar(select(func.count()).select_from(MarketDataQualityRunModel))
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(MarketDataQualityRunModel)
+            .order_by(MarketDataQualityRunModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(MarketDataQualityRun, row) for row in rows], total
+
+    async def complete(
+        self,
+        entity_id: UUID,
+        *,
+        status: MarketDataQualityRunStatus,
+        completed_at: datetime,
+        instruments_checked: int,
+        bars_checked: int,
+        error_count: int,
+        warning_count: int,
+        info_count: int,
+        metadata: dict[str, object],
+    ) -> None:
+        await self._session.execute(
+            update(MarketDataQualityRunModel)
+            .where(MarketDataQualityRunModel.id == entity_id)
+            .values(
+                status=status.value,
+                completed_at=completed_at,
+                instruments_checked=instruments_checked,
+                bars_checked=bars_checked,
+                issues_found=error_count + warning_count + info_count,
+                error_count=error_count,
+                warning_count=warning_count,
+                info_count=info_count,
+                metadata_json=metadata,
+                updated_at=completed_at,
+            )
+        )
+
+
+class SqlAlchemyMarketDataQualityIssueRepository(
+    SqlAlchemyRepository[MarketDataQualityIssue, MarketDataQualityIssueModel]
+):
+    entity_type = MarketDataQualityIssue
+    model_type = MarketDataQualityIssueModel
+
+    async def add_many(self, entities: list[MarketDataQualityIssue]) -> None:
+        self._session.add_all(
+            [model_from_entity(MarketDataQualityIssueModel, entity) for entity in entities]
+        )
+        await self._session.flush()
+
+    async def list_for_run(
+        self,
+        quality_run_id: UUID,
+        *,
+        offset: int,
+        limit: int,
+        severity: MarketDataIssueSeverity | None = None,
+        issue_type: str | None = None,
+        instrument_id: UUID | None = None,
+    ) -> tuple[list[MarketDataQualityIssue], int]:
+        filters = [MarketDataQualityIssueModel.quality_run_id == quality_run_id]
+        if severity is not None:
+            filters.append(MarketDataQualityIssueModel.severity == severity.value)
+        if issue_type is not None:
+            filters.append(MarketDataQualityIssueModel.issue_type == issue_type.upper())
+        if instrument_id is not None:
+            filters.append(MarketDataQualityIssueModel.instrument_id == instrument_id)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(MarketDataQualityIssueModel).where(*filters)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(MarketDataQualityIssueModel)
+            .where(*filters)
+            .order_by(
+                MarketDataQualityIssueModel.severity,
+                MarketDataQualityIssueModel.created_at,
+                MarketDataQualityIssueModel.id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(MarketDataQualityIssue, row) for row in rows], total
+
+    async def count_by_severity(self, quality_run_id: UUID) -> dict[MarketDataIssueSeverity, int]:
+        rows = await self._session.execute(
+            select(MarketDataQualityIssueModel.severity, func.count())
+            .where(MarketDataQualityIssueModel.quality_run_id == quality_run_id)
+            .group_by(MarketDataQualityIssueModel.severity)
+        )
+        return {MarketDataIssueSeverity(severity): int(count) for severity, count in rows}
 
 
 class SqlAlchemyMarketRealtimeRunRepository(

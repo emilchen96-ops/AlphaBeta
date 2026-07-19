@@ -1,6 +1,6 @@
 """Pydantic contracts for M03 instruments, watchlists, and market data."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -8,7 +8,10 @@ from pydantic import BaseModel, Field
 
 from alphadesk_domain.enums import (
     AdjustmentType,
+    MarketDataIssueSeverity,
+    MarketDataQualityRunStatus,
     MarketDataQualityStatus,
+    MarketDataReadinessStatus,
     MarketDataSourceStatus,
     MarketProviderTier,
     MarketSyncStatus,
@@ -168,3 +171,159 @@ class MarketSyncRunResponse(BaseModel):
     error_summary: str | None
     correlation_id: UUID
     metadata: dict[str, object]
+
+
+class DailyUpdateRequest(BaseModel):
+    provider: str = Field(default="baostock", max_length=64)
+    universe_key: str = Field(default="research", max_length=64)
+    instrument_ids: list[UUID] = Field(default_factory=list, max_length=500)
+    target_date: date | None = None
+    max_instruments: int | None = Field(default=None, ge=1, le=500)
+    dry_run: bool = True
+    continue_on_error: bool = True
+
+
+class DailyInstrumentPlanResponse(BaseModel):
+    instrument_id: UUID
+    symbol: str
+    start_date: date
+    target_date: date
+    state: str
+
+
+class DailyUpdateResponse(BaseModel):
+    run: MarketSyncRunResponse | None
+    target_date: date
+    requested: int
+    up_to_date: int
+    completed: int
+    failed: int
+    unprocessed: int
+    bars_fetched: int
+    bars_inserted: int
+    bars_updated: int
+    bars_skipped: int
+    invalid_bars: int
+    retry_count: int
+    failures: tuple[dict[str, str], ...]
+    plans: tuple[DailyInstrumentPlanResponse, ...]
+    dry_run: bool
+    idempotent_replay: bool
+
+
+class QualityRunRequest(BaseModel):
+    universe_key: str = Field(default="research", max_length=64)
+    provider: str = Field(default="baostock", max_length=64)
+    max_instruments: int | None = Field(default=None, ge=1, le=500)
+    range_start: datetime | None = None
+    range_end: datetime | None = None
+
+
+class MarketDataQualityRunResponse(BaseModel):
+    id: UUID
+    universe_key: str | None
+    provider: str | None
+    timeframe: MarketTimeframe
+    status: MarketDataQualityRunStatus
+    instruments_checked: int
+    bars_checked: int
+    issues_found: int
+    error_count: int
+    warning_count: int
+    info_count: int
+    started_at: datetime
+    completed_at: datetime | None
+    correlation_id: UUID
+    metadata: dict[str, object]
+    created_at: datetime
+    updated_at: datetime
+
+
+class MarketDataQualityIssueResponse(BaseModel):
+    id: UUID
+    quality_run_id: UUID
+    instrument_id: UUID | None
+    issue_type: str
+    severity: MarketDataIssueSeverity
+    timeframe: MarketTimeframe
+    first_affected_at: datetime | None
+    last_affected_at: datetime | None
+    observed_value: str | None
+    expected_value: str | None
+    message: str
+    required_action: str | None
+    metadata: dict[str, object]
+    created_at: datetime
+
+
+class QualityRunPageResponse(BaseModel):
+    items: list[MarketDataQualityRunResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class QualityRunDetailResponse(BaseModel):
+    run: MarketDataQualityRunResponse
+    issues: list[MarketDataQualityIssueResponse]
+    issue_page: int
+    issue_page_size: int
+    issue_total: int
+    integrity_mismatches: tuple[str, ...]
+
+
+class InstrumentCoverageResponse(BaseModel):
+    instrument_id: UUID
+    symbol: str
+    name: str
+    exchange: str
+    bar_count: int
+    earliest_bar: datetime | None
+    latest_bar: datetime | None
+    mapping_status: str
+    missing_requirements: tuple[str, ...]
+
+
+class UniverseCoverageResponse(BaseModel):
+    universe_key: str
+    name: str
+    instrument_count: int
+    instruments_with_data: int
+    sufficient_instruments: int
+    insufficient_instruments: int
+    earliest_bar: datetime | None
+    latest_bar: datetime | None
+    latest_sync_at: datetime | None
+    items: tuple[InstrumentCoverageResponse, ...]
+
+
+class ReadinessCapabilityResponse(BaseModel):
+    capability_key: str
+    display_name: str
+    status: MarketDataReadinessStatus
+    ready_instrument_count: int
+    total_instrument_count: int
+    minimum_bars_required: int
+    latest_data_date: date | None
+    blocking_issue_count: int
+    warning_count: int
+    reason: str
+    required_action: str
+    code_status: str
+
+
+class MarketDataOverviewResponse(BaseModel):
+    instrument_count: int
+    active_a_share_count: int
+    research_universe_count: int
+    market_bar_count: int
+    earliest_bar: datetime | None
+    latest_bar: datetime | None
+    latest_sync_at: datetime | None
+    provider: str
+    timeframe: MarketTimeframe
+    adjustment_type: AdjustmentType
+    scanner_ready: bool
+    strategy_ready: bool
+    backtest_data_ready: bool
+    backtest_code_status: str

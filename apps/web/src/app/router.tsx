@@ -7,6 +7,7 @@ import { AuditPage } from "../pages/AuditPage";
 import { BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
 import {
   InformationCenterPage,
   InformationDetailPage,
@@ -67,6 +68,7 @@ export const routes: RouteObject[] = [
           </Suspense>
         ),
       },
+      { path: "market-data-center", element: <MarketDataCenterPage /> },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "scanners", element: <ScannersPage /> },
       { path: "scan-runs", element: <ScanRunsPage /> },

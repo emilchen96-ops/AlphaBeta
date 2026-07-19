@@ -69,6 +69,12 @@ def assess_system_capabilities(
     executable_order_ready = database_ready and _has(data.executable_order_count)
 
     def historical_capability(module_key: str, label: str) -> SystemCapability:
+        coverage = data.market_bar_instrument_count or 0
+        latest = (
+            data.latest_market_bar_at.date().isoformat()
+            if data.latest_market_bar_at is not None
+            else "未知"
+        )
         return SystemCapability(
             module_key=module_key,
             implementation_status="WORKING",
@@ -76,7 +82,8 @@ def assess_system_capabilities(
             configuration_status="NOT_REQUIRED",
             available=bars_ready,
             reason=(
-                f"{label}可读取当前 PostgreSQL 历史日线; 具体运行仍校验时间范围和最少 K 线。"
+                f"{label}可读取 PostgreSQL 历史日线; 当前覆盖 {coverage} 个标的, "
+                f"最近行情日 {latest}; 具体运行仍校验时间范围和最少 K 线。"
                 if bars_ready
                 else f"{label}代码已实现, 但当前缺少 Instrument 或历史日线。"
             ),
@@ -170,10 +177,14 @@ def assess_system_capabilities(
         SystemCapability(
             module_key="backtest",
             implementation_status="PARTIAL",
-            data_status="UNKNOWN",
+            data_status=("READY" if bars_ready else ("MISSING" if database_ready else "UNKNOWN")),
             configuration_status="NOT_REQUIRED",
             available=False,
-            reason="BT01 位于独立分支, 当前集成分支未安全整合。",
+            reason=(
+                "历史日线数据已存在, 但数据就绪不代表 BT01 代码完成。"
+                if bars_ready
+                else "BT01 代码仍为 PARTIAL, 且当前历史日线数据不足。"
+            ),
             required_actions=("在后续 BT01-R 重建单一 Migration 链并完成专项验收",),
         ),
         SystemCapability(

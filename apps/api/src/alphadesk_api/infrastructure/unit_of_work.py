@@ -26,6 +26,8 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyInstrumentRepository,
     SqlAlchemyLedgerTransactionRepository,
     SqlAlchemyMarketBarRepository,
+    SqlAlchemyMarketDataQualityIssueRepository,
+    SqlAlchemyMarketDataQualityRunRepository,
     SqlAlchemyMarketDataSourceRepository,
     SqlAlchemyMarketEventRepository,
     SqlAlchemyMarketRealtimeRunRepository,
@@ -112,6 +114,8 @@ class SqlAlchemyUnitOfWork:
         self.instrument_mappings = SqlAlchemyInstrumentMappingRepository(session)
         self.market_bars = SqlAlchemyMarketBarRepository(session)
         self.market_sync_runs = SqlAlchemyMarketSyncRunRepository(session)
+        self.market_data_quality_runs = SqlAlchemyMarketDataQualityRunRepository(session)
+        self.market_data_quality_issues = SqlAlchemyMarketDataQualityIssueRepository(session)
         self.market_realtime_runs = SqlAlchemyMarketRealtimeRunRepository(session)
         return self
 

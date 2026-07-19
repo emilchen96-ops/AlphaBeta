@@ -39,6 +39,8 @@ from alphadesk_domain.enums import (
     ExecutorPermission,
     LedgerTransactionStatus,
     LedgerTransactionType,
+    MarketDataIssueSeverity,
+    MarketDataQualityRunStatus,
     MarketDataQualityStatus,
     MarketDataSourceStatus,
     MarketProviderTier,
@@ -1565,6 +1567,91 @@ class MarketSyncRunModel(MutableTimestampedModel, Base):
     total_rejected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_summary: Mapped[str | None] = mapped_column(String(1000))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class MarketDataQualityRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "market_data_quality_runs"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({enum_values(MarketDataQualityRunStatus)})", name="status_valid"
+        ),
+        CheckConstraint(f"timeframe IN ({enum_values(MarketTimeframe)})", name="timeframe_valid"),
+        CheckConstraint(
+            "instruments_checked >= 0 AND bars_checked >= 0 AND issues_found >= 0 "
+            "AND error_count >= 0 AND warning_count >= 0 AND info_count >= 0",
+            name="counters_non_negative",
+        ),
+        CheckConstraint(
+            "issues_found = error_count + warning_count + info_count",
+            name="severity_counts_match",
+        ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at", name="completion_not_early"
+        ),
+        Index("ix_market_data_quality_runs_status_created", "status", "created_at"),
+        Index("ix_market_data_quality_runs_universe_created", "universe_key", "created_at"),
+        Index("ix_market_data_quality_runs_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    universe_key: Mapped[str | None] = mapped_column(String(64))
+    provider: Mapped[str | None] = mapped_column(String(64))
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    instruments_checked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bars_checked: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    issues_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    warning_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    info_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+
+
+class MarketDataQualityIssueModel(TimestampedModel, Base):
+    __tablename__ = "market_data_quality_issues"
+    __table_args__ = (
+        CheckConstraint(
+            f"severity IN ({enum_values(MarketDataIssueSeverity)})", name="severity_valid"
+        ),
+        CheckConstraint(f"timeframe IN ({enum_values(MarketTimeframe)})", name="timeframe_valid"),
+        CheckConstraint("length(trim(issue_type)) > 0", name="issue_type_non_empty"),
+        CheckConstraint("length(trim(message)) > 0", name="message_non_empty"),
+        CheckConstraint(
+            "last_affected_at IS NULL OR first_affected_at IS NULL "
+            "OR last_affected_at >= first_affected_at",
+            name="affected_range_valid",
+        ),
+        Index("ix_market_data_quality_issues_run", "quality_run_id", "created_at"),
+        Index("ix_market_data_quality_issues_severity_created", "severity", "created_at"),
+        Index("ix_market_data_quality_issues_instrument_type", "instrument_id", "issue_type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    quality_run_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("market_data_quality_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    instrument_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT")
+    )
+    issue_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    first_affected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_affected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observed_value: Mapped[str | None] = mapped_column(String(512))
+    expected_value: Mapped[str | None] = mapped_column(String(512))
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    required_action: Mapped[str | None] = mapped_column(String(512))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )

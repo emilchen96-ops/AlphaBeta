@@ -7,6 +7,13 @@ import type {
   MarketTimeframe,
   LatestQuotesResponse,
   RealtimeMarketStatus,
+  DailyUpdateResult,
+  MarketDataOverview,
+  MarketSyncRun,
+  QualityRunDetail,
+  QualityRunPage,
+  ReadinessCapability,
+  UniverseCoverage,
   Watchlist,
   WatchlistDetail,
   WatchlistItem,
@@ -119,4 +126,74 @@ export function getBars(
     limit: "600",
   });
   return apiRequest<MarketBarsResponse>(`/api/v1/market-data/bars?${query}`);
+}
+
+export function getMarketDataOverview() {
+  return apiRequest<MarketDataOverview>("/api/v1/market-data/overview");
+}
+
+export function getMarketDataCoverage() {
+  return apiRequest<UniverseCoverage>("/api/v1/market-data/coverage");
+}
+
+export function getMarketDataReadiness() {
+  return apiRequest<ReadinessCapability[]>("/api/v1/market-data/readiness");
+}
+
+export function getMarketSyncRuns() {
+  return apiRequest<MarketSyncRun[]>("/api/v1/market-data/sync-runs?limit=50");
+}
+
+export function updateDailyMarketData(payload: {
+  target_date: string | null;
+  max_instruments: number;
+  dry_run: boolean;
+  continue_on_error: boolean;
+}) {
+  return apiRequest<DailyUpdateResult>(
+    "/api/v1/market-data/daily-updates",
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        provider: "baostock",
+        universe_key: "research",
+        ...payload,
+      }),
+    },
+    10 * 60_000,
+  );
+}
+
+export function getQualityRuns(page = 1) {
+  return apiRequest<QualityRunPage>(
+    `/api/v1/market-data/quality-runs?page=${page}&page_size=20`,
+  );
+}
+
+export function getQualityRun(
+  runId: string,
+  filters: { severity?: string; issue_type?: string } = {},
+) {
+  const query = new URLSearchParams({ page: "1", page_size: "100" });
+  if (filters.severity) query.set("severity", filters.severity);
+  if (filters.issue_type) query.set("issue_type", filters.issue_type);
+  return apiRequest<QualityRunDetail>(
+    `/api/v1/market-data/quality-runs/${runId}?${query}`,
+  );
+}
+
+export function verifyMarketDataQuality() {
+  return apiRequest<QualityRunDetail>(
+    "/api/v1/market-data/quality-runs",
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        provider: "baostock",
+        universe_key: "research",
+      }),
+    },
+    10 * 60_000,
+  );
 }

@@ -23,6 +23,8 @@ from alphadesk_domain.repositories import (
     InstrumentRepository,
     LedgerTransactionRepository,
     MarketBarRepository,
+    MarketDataQualityIssueRepository,
+    MarketDataQualityRunRepository,
     MarketDataSourceRepository,
     MarketEventRepository,
     MarketRealtimeRunRepository,
@@ -97,6 +99,8 @@ class UnitOfWork(Protocol):
     instrument_mappings: InstrumentMappingRepository
     market_bars: MarketBarRepository
     market_sync_runs: MarketSyncRunRepository
+    market_data_quality_runs: MarketDataQualityRunRepository
+    market_data_quality_issues: MarketDataQualityIssueRepository
     market_realtime_runs: MarketRealtimeRunRepository
 
     async def __aenter__(self) -> Self: ...

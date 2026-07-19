@@ -38,6 +38,8 @@ from alphadesk_domain.entities import (
 )
 from alphadesk_domain.enums import (
     AdjustmentType,
+    MarketDataIssueSeverity,
+    MarketDataQualityRunStatus,
     MarketSyncStatus,
     MarketTimeframe,
     RealtimeRunStatus,
@@ -55,6 +57,9 @@ from alphadesk_domain.market import (
     InstrumentMapping,
     MarketBar,
     MarketBarUpsertResult,
+    MarketDataCoverage,
+    MarketDataQualityIssue,
+    MarketDataQualityRun,
     MarketDataSource,
     MarketSyncRun,
 )
@@ -451,6 +456,14 @@ class MarketBarRepository(Protocol):
         end: datetime,
         limit: int,
     ) -> list[MarketBar]: ...
+    async def get_coverage(
+        self,
+        *,
+        instrument_ids: list[UUID],
+        source_id: UUID,
+        timeframe: MarketTimeframe,
+        adjustment_type: AdjustmentType,
+    ) -> list[MarketDataCoverage]: ...
     async def get_latest_bar(
         self,
         *,
@@ -473,6 +486,7 @@ class MarketSyncRunRepository(Protocol):
     async def add(self, entity: MarketSyncRun) -> None: ...
     async def get_by_id(self, entity_id: UUID) -> MarketSyncRun | None: ...
     async def list_recent(self, limit: int) -> list[MarketSyncRun]: ...
+    async def get_by_operation_key(self, operation_key: str) -> MarketSyncRun | None: ...
     async def update_status(
         self,
         entity_id: UUID,
@@ -486,6 +500,44 @@ class MarketSyncRunRepository(Protocol):
         error_summary: str | None,
         metadata: dict[str, object] | None = None,
     ) -> None: ...
+
+
+class MarketDataQualityRunRepository(Protocol):
+    async def add(self, entity: MarketDataQualityRun) -> None: ...
+    async def get_by_id(self, entity_id: UUID) -> MarketDataQualityRun | None: ...
+    async def list_recent(
+        self, *, offset: int, limit: int
+    ) -> tuple[list[MarketDataQualityRun], int]: ...
+    async def complete(
+        self,
+        entity_id: UUID,
+        *,
+        status: MarketDataQualityRunStatus,
+        completed_at: datetime,
+        instruments_checked: int,
+        bars_checked: int,
+        error_count: int,
+        warning_count: int,
+        info_count: int,
+        metadata: dict[str, object],
+    ) -> None: ...
+
+
+class MarketDataQualityIssueRepository(Protocol):
+    async def add_many(self, entities: list[MarketDataQualityIssue]) -> None: ...
+    async def list_for_run(
+        self,
+        quality_run_id: UUID,
+        *,
+        offset: int,
+        limit: int,
+        severity: MarketDataIssueSeverity | None = None,
+        issue_type: str | None = None,
+        instrument_id: UUID | None = None,
+    ) -> tuple[list[MarketDataQualityIssue], int]: ...
+    async def count_by_severity(
+        self, quality_run_id: UUID
+    ) -> dict[MarketDataIssueSeverity, int]: ...
 
 
 class MarketRealtimeRunRepository(Protocol):

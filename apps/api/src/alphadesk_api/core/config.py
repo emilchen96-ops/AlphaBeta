@@ -1,5 +1,6 @@
 """Type-safe application configuration."""
 
+from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
@@ -56,6 +57,9 @@ class Settings(BaseSettings):
     market_backfill_request_interval_seconds: float = Field(default=0.1, ge=0, le=10)
     market_backfill_max_retries: int = Field(default=2, ge=0, le=2)
     market_backfill_max_instruments: int = Field(default=500, ge=1, le=500)
+    market_daily_default_start_date: date = date(2023, 1, 1)
+    market_data_stale_calendar_days: int = Field(default=7, ge=1, le=90)
+    market_data_backtest_minimum_bars: int = Field(default=250, ge=20, le=5000)
     market_future_tolerance_seconds: int = Field(default=300, ge=0, le=3600)
     market_minute_stale_seconds: int = Field(default=300, ge=30, le=86400)
     market_csv_max_bytes: int = Field(default=10_000_000, ge=1024, le=100_000_000)

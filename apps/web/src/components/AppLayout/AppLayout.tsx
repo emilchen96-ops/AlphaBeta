@@ -28,6 +28,7 @@ const { Header, Sider, Content, Footer } = Layout;
 
 const menuItems = [
   { key: "/", icon: <AppstoreOutlined />, label: "总览" },
+  { key: "/market-data-center", icon: <DatabaseOutlined />, label: "数据中心" },
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
   { key: "/scanners", icon: <FilterOutlined />, label: "条件扫描" },

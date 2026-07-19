@@ -6,7 +6,7 @@
 
 > M04.1A is sealed: BaoStock is historical-only and the real-time provider is `disabled`; the project is not expanding free real-time sources and awaits a later Windows Agent/MiniQMT integration.
 
-> D01-A/B 已把 BaoStock 历史能力扩展为可运营的 A 股 Instrument 同步、研究 Watchlist 和逐标的日线批量补数。权威操作与边界见 [D01 历史行情](historical_market_data.md)；实时行情、每日自动增量和质量中心仍不属于本阶段。
+> D01 已完成 BaoStock A 股 Instrument、研究 Watchlist、历史补数、每日增量、质量事实、Readiness 和数据中心页面。权威操作见 [D01 历史行情](historical_market_data.md)、[每日增量](daily_market_data_update.md) 和 [质量检查](market_data_quality.md)；实时行情、自动调度和 MiniQMT 不属于 D01。
 
 M03 建立只读行情基础设施：标的目录、来源映射、K 线、同步运行记录、查询 API 与离线演示数据。它不包含策略、Signal、订单、风控、Broker 或交易执行。
 
@@ -60,6 +60,9 @@ python -m alphadesk_api.cli.market_data sync-instruments --provider baostock
 python -m alphadesk_api.cli.market_data create-research-universe --limit 300
 python -m alphadesk_api.cli.market_data backfill --provider baostock --universe research --timeframe DAY --start 2023-01-01
 python -m alphadesk_api.cli.market_data list-sync-runs
+python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research --dry-run
+python -m alphadesk_api.cli.market_data verify-quality --universe research --timeframe DAY
+python -m alphadesk_api.cli.market_data show-readiness --universe research
 ```
 
 CSV 必需列为 `symbol,bar_time,open,high,low,close,volume`；可选列为 `amount,vwap,open_interest,source_updated_at`。时间必须带时区。
@@ -72,5 +75,11 @@ CSV 必需列为 `symbol,bar_time,open,high,low,close,volume`；可选列为 `am
 - `GET /api/v1/market-data/sources`
 - `GET /api/v1/market-data/sync-runs`
 - `GET /api/v1/market-data/sync-runs/{run_id}`
+- `POST /api/v1/market-data/daily-updates`
+- `POST/GET /api/v1/market-data/quality-runs`
+- `GET /api/v1/market-data/quality-runs/{run_id}`
+- `GET /api/v1/market-data/overview`
+- `GET /api/v1/market-data/coverage`
+- `GET /api/v1/market-data/readiness`
 
 查询有分页、标的数量和 K 线条数上限。错误使用统一信封和 Correlation ID；接口不接受供应商凭证，也没有任何交易写入口。

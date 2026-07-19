@@ -243,6 +243,26 @@ class MarketDataQualityStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class MarketDataQualityRunStatus(StrEnum):
+    CREATED = "CREATED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class MarketDataIssueSeverity(StrEnum):
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+
+
+class MarketDataReadinessStatus(StrEnum):
+    READY = "READY"
+    PARTIAL = "PARTIAL"
+    NOT_READY = "NOT_READY"
+    UNKNOWN = "UNKNOWN"
+
+
 class MarketProviderTier(StrEnum):
     DEMO = "DEMO"
     FREE_BEST_EFFORT = "FREE_BEST_EFFORT"
