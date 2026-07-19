@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "staging", "production"] = "development"
     debug: bool = False
     api_prefix: str = "/api/v1"
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    )
 
     postgres_host: str = "postgres"
     postgres_port: int = Field(default=5432, ge=1, le=65535)

@@ -20,3 +20,10 @@ def test_production_rejects_missing_explicit_database_password() -> None:
             environment="production",
             postgres_password=SecretStr("change-me-local-only"),
         )
+
+
+def test_local_cors_accepts_both_loopback_hostnames() -> None:
+    assert Settings().cors_origins == [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
