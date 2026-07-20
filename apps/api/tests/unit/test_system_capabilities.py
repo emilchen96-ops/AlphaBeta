@@ -68,8 +68,8 @@ def test_capability_assessment_separates_data_config_and_implementation() -> Non
     assert items["strategy_experiments"].data_status == "READY"
     assert items["ai_research"].configuration_status == "READY"
     assert items["simulated_broker"].available is True
-    assert items["backtest"].implementation_status == "PARTIAL"
-    assert items["backtest"].available is False
+    assert items["backtest"].implementation_status == "WORKING"
+    assert items["backtest"].available is True
     assert items["miniqmt"].implementation_status == "NOT_IMPLEMENTED"
 
 

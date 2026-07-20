@@ -1,5 +1,21 @@
 # 架构总览
 
+> BT01-R 增量：同步回测服务只读取 D01 PostgreSQL 日线，按 `SESSION_OPEN → SESSION_CLOSE → SESSION_END` 驱动既有 Strategy、R01、M05、B01 与 M04。每个运行拥有独立 BT01 模拟账户；回测订单 Outbox 固定为 `SUPPRESSED/BACKTEST_ENGINE`，不会进入 Redis Publisher、Windows Agent、MiniQMT 或券商。详见 [daily_backtest.md](daily_backtest.md) 与 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。
+
+```mermaid
+flowchart LR
+  D01[(D01 MarketBar)] --> Clock[BacktestClock]
+  Clock --> Strategy[Strategy]
+  Strategy --> Signal[Signal]
+  Signal --> Risk[R01 RiskDecision]
+  Risk --> Order[M05 Order]
+  Order --> Broker[B01 SimulatedBroker]
+  Broker --> Fill[Fill]
+  Fill --> Ledger[M04 Ledger]
+  Ledger --> Result[Equity / Metrics / Integrity]
+  Order -. SUPPRESSED .-> Outbox[(PostgreSQL Outbox)]
+```
+
 > A01 增量：FastAPI 只把用户选定的 N01 InformationItem/MarketEvent 交给配置驱动的 `AIResearchProvider`。版本化 Prompt 将外部文本视为不可信数据，结构化输出必须引用本次输入 Evidence；PostgreSQL 保存 AIAnalysisRun、ResearchInsight 和 ResearchEvidence。默认 Provider 为 disabled，Fake 仅用于测试/本地演示，当前没有真实 Provider。A01 不调用 Scanner、Risk、Broker 或 MiniQMT，不创建 Signal、Order、Fill，也不修改资金和持仓。详见 [ai_research_assistant.md](ai_research_assistant.md)。
 
 ```mermaid

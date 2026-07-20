@@ -8,6 +8,11 @@ from alphadesk_domain.repositories import (
     AccountSnapshotRepository,
     AIAnalysisRunRepository,
     AuditLogRepository,
+    BacktestEquityPointRepository,
+    BacktestEventRepository,
+    BacktestMetricRepository,
+    BacktestRunRepository,
+    BacktestTradeSummaryRepository,
     BrokerExecutionAttemptRepository,
     CashBalanceRepository,
     CashLedgerRepository,
@@ -102,6 +107,11 @@ class UnitOfWork(Protocol):
     market_data_quality_runs: MarketDataQualityRunRepository
     market_data_quality_issues: MarketDataQualityIssueRepository
     market_realtime_runs: MarketRealtimeRunRepository
+    backtest_runs: BacktestRunRepository
+    backtest_equity_points: BacktestEquityPointRepository
+    backtest_metrics: BacktestMetricRepository
+    backtest_trades: BacktestTradeSummaryRepository
+    backtest_events: BacktestEventRepository
 
     async def __aenter__(self) -> Self: ...
     async def __aexit__(

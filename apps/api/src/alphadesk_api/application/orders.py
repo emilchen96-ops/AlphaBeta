@@ -93,6 +93,11 @@ class CreateOrderRequest:
     note: str | None = None
     actor_id: str | None = None
     occurred_at: datetime | None = None
+    intent_source: str = OrderIntentSource.MANUAL
+    source_id: UUID | None = None
+    actor_type: str = OrderActorType.LOCAL_USER
+    strategy_key: str | None = None
+    reference_price: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +110,7 @@ class ConfirmOrderRequest:
     actor_type: str = OrderActorType.LOCAL_USER
     actor_id: str | None = None
     occurred_at: datetime | None = None
+    suppress_outbox_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,12 +264,19 @@ class OrderIntentService:
             idempotency_key=request.idempotency_key,
             broker_type="LOCAL_PENDING",
             correlation_id=request.correlation_id,
-            intent_source=OrderIntentSource.MANUAL,
+            intent_source=OrderIntentSource(request.intent_source),
             request_fingerprint=fingerprint,
             row_version=1,
             confirmation_required=True,
-            created_by_actor_type=OrderActorType.LOCAL_USER,
+            created_by_actor_type=request.actor_type,
             created_by_actor_id=request.actor_id,
+            signal_id=(
+                request.source_id if request.intent_source == OrderIntentSource.STRATEGY else None
+            ),
+            metadata={
+                "strategy_key": request.strategy_key,
+                "source_id": None if request.source_id is None else str(request.source_id),
+            },
             created_at=occurred_at,
             updated_at=occurred_at,
             id=order_id or uuid4(),
@@ -275,7 +288,7 @@ class OrderIntentService:
                 order_id=order.id,
                 from_status=None,
                 to_status=OrderStatus.CREATED,
-                actor_type=OrderActorType.LOCAL_USER,
+                actor_type=request.actor_type,
                 actor_id=request.actor_id,
                 correlation_id=request.correlation_id,
                 occurred_at=occurred_at,
@@ -318,6 +331,7 @@ class OrderIntentService:
             correlation_id=request.correlation_id,
             occurred_at=occurred_at,
             actor_id=request.actor_id,
+            actor_type=request.actor_type,
             details={
                 "warnings": [
                     "no executor dispatch occurs",
@@ -525,6 +539,32 @@ class OrderConfirmationService:
             )
             self._failure_injector("after_audit")
             self._failure_injector("before_outbox")
+            suppression_reason = request.suppress_outbox_reason
+            if suppression_reason is not None:
+                risk_decisions, _ = await uow.risk_decisions.list(
+                    offset=0,
+                    limit=100,
+                    account_id=order.account_id,
+                    order_id=order.id,
+                )
+                is_backtest_confirmation = (
+                    suppression_reason == "BACKTEST_ENGINE"
+                    and request.actor_type == OrderActorType.SYSTEM
+                    and request.actor_id == "BACKTEST_ENGINE"
+                    and account.metadata.get("scope") == "BT01"
+                    and bool(account.metadata.get("owner_id"))
+                    and order.intent_source == OrderIntentSource.STRATEGY
+                    and order.signal_id is not None
+                    and any(
+                        decision.overall_decision is RiskDecisionType.ALLOW
+                        for decision in risk_decisions
+                    )
+                )
+                if not is_backtest_confirmation:
+                    raise ApplicationError(
+                        "ORDER_OUTBOX_SUPPRESSION_NOT_ALLOWED",
+                        "outbox suppression requires a risk-approved BT01 strategy order",
+                    )
             await uow.outbox.add(
                 OutboxMessage(
                     event_id=command_event.event_id,
@@ -532,8 +572,14 @@ class OrderConfirmationService:
                     aggregate_id=order.id,
                     topic="order.commands.submit.v1",
                     payload=payload,
-                    status=OutboxStatus.PENDING,
+                    status=(
+                        OutboxStatus.SUPPRESSED
+                        if suppression_reason is not None
+                        else OutboxStatus.PENDING
+                    ),
                     available_at=occurred_at,
+                    suppressed_at=(occurred_at if suppression_reason is not None else None),
+                    suppression_reason=suppression_reason,
                     created_at=occurred_at,
                     updated_at=occurred_at,
                 )

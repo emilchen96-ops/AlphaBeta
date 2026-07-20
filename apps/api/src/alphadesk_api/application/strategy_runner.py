@@ -195,26 +195,35 @@ def _fingerprint_payload(
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _validate_draft(
+def validate_signal_draft(
     draft: SignalDraft,
     *,
     run: StrategyRun,
     current_bar_instrument_id: UUID,
     current_bar_timestamp: datetime,
+    expected_generated_at: datetime | None = None,
 ) -> None:
     if draft.strategy_key != run.strategy_key or draft.strategy_version != run.strategy_version:
         raise StrategyError("STRATEGY_INVALID_SIGNAL", "signal strategy identity differs from run")
     if draft.instrument_id != current_bar_instrument_id:
         raise StrategyError("STRATEGY_INVALID_SIGNAL", "signal instrument differs from current bar")
-    if draft.bar_timestamp != current_bar_timestamp or draft.generated_at != current_bar_timestamp:
-        raise StrategyError("STRATEGY_INVALID_SIGNAL", "signal time differs from current bar")
+    if draft.bar_timestamp != current_bar_timestamp:
+        raise StrategyError("STRATEGY_INVALID_SIGNAL", "signal bar time differs from current bar")
+    if draft.generated_at != (expected_generated_at or current_bar_timestamp):
+        raise StrategyError("STRATEGY_INVALID_SIGNAL", "signal generation time is invalid")
 
 
-def _persisted_signal(run: StrategyRun, draft: SignalDraft, sequence: int) -> Signal:
+def persisted_signal_from_draft(
+    run: StrategyRun,
+    draft: SignalDraft,
+    sequence: int,
+    *,
+    account_id: UUID | None = None,
+) -> Signal:
     return Signal(
         strategy_id=run.strategy_id,
         strategy_version_id=run.strategy_version_id,
-        account_id=None,
+        account_id=account_id,
         instrument_id=draft.instrument_id,
         signal_type=draft.signal_type,
         side=draft.side,
@@ -321,13 +330,13 @@ class StrategyRunner:
                 for bar in bars:
                     context.advance_time(bar.timestamp)
                     for draft in strategy.on_bar(context, bar):
-                        _validate_draft(
+                        validate_signal_draft(
                             draft,
                             run=run,
                             current_bar_instrument_id=bar.instrument_id,
                             current_bar_timestamp=bar.timestamp,
                         )
-                        signals.append(_persisted_signal(run, draft, len(signals) + 1))
+                        signals.append(persisted_signal_from_draft(run, draft, len(signals) + 1))
                 strategy.finalize(context)
                 await uow.signals.append_many(signals)
                 run.mark_completed(datetime.now(UTC), len(bars), len(signals))

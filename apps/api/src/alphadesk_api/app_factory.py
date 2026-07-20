@@ -82,13 +82,13 @@ def create_app(
 
     app = FastAPI(
         title="AlphaDesk API",
-        summary="AlphaDesk local market-data and simulated-account API",
+        summary="AlphaDesk local research, backtest and simulated-account API",
         description=(
             "Local-development market-data, watchlist and simulated-account ledger endpoints. "
-            "Strategy Signal endpoints expose historical research output only: Signal is not an "
-            "Order and never invokes risk, broker, fills, cash, or positions. "
-            "Only deterministic local simulated execution is available; no external broker "
-            "integration or real-trading capability exists."
+            "Research Strategy Signal endpoints never place orders. The separate BT01 daily "
+            "backtest pipeline may route historical signals through risk, local orders, the "
+            "deterministic simulated broker and isolated ledgers. It never reads live quotes, "
+            "publishes broker commands, connects to an external broker, or trades real funds."
         ),
         version=resolved_settings.app_version,
         debug=resolved_settings.debug,

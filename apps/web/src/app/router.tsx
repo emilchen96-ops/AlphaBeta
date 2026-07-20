@@ -4,7 +4,7 @@ import { createBrowserRouter } from "react-router-dom";
 
 import { AppLayout } from "../components/AppLayout/AppLayout";
 import { AuditPage } from "../pages/AuditPage";
-import { BacktestPage } from "../pages/BacktestPage";
+import { BacktestDetailPage, BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
@@ -115,6 +115,7 @@ export const routes: RouteObject[] = [
       },
       { path: "risk/limits", element: <RiskLimitsPage /> },
       { path: "backtest", element: <BacktestPage /> },
+      { path: "backtest/:backtestId", element: <BacktestDetailPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <NotFoundPage /> },

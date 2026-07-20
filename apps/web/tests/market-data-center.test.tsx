@@ -114,7 +114,7 @@ function installFetch() {
           scanner_ready: true,
           strategy_ready: true,
           backtest_data_ready: true,
-          backtest_code_status: "PARTIAL",
+          backtest_code_status: "WORKING",
         });
       if (url.endsWith("/market-data/coverage"))
         return response({
@@ -169,7 +169,7 @@ function installFetch() {
             warning_count: 1,
             reason: "299/300 个标的满足最低日线数量。",
             required_action: "先执行日线增量更新, 再运行数据质量检查。",
-            code_status: "PARTIAL",
+            code_status: "WORKING",
           },
         ]);
       if (url.includes("/market-data/sync-runs")) return response([syncRun]);
@@ -246,7 +246,7 @@ test("数据中心展示真实后端五区、覆盖不足和安全边界", async
   expect(screen.getByText("5. 功能可用性")).toBeInTheDocument();
   expect(await screen.findByText("浦发银行")).toBeInTheDocument();
   expect(screen.getByText("backtest_daily")).toBeInTheDocument();
-  expect(screen.getByText("BT01 仍为 PARTIAL")).toBeInTheDocument();
+  expect(screen.getByText("BT01 日线回测代码已完成")).toBeInTheDocument();
   expect(
     screen.getByText(/不提供实时行情，也不连接 MiniQMT/),
   ).toBeInTheDocument();

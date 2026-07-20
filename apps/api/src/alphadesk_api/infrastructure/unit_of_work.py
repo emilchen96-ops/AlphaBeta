@@ -10,6 +10,11 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyAccountSnapshotRepository,
     SqlAlchemyAIAnalysisRunRepository,
     SqlAlchemyAuditLogRepository,
+    SqlAlchemyBacktestEquityPointRepository,
+    SqlAlchemyBacktestEventRepository,
+    SqlAlchemyBacktestMetricRepository,
+    SqlAlchemyBacktestRunRepository,
+    SqlAlchemyBacktestTradeSummaryRepository,
     SqlAlchemyBrokerExecutionAttemptRepository,
     SqlAlchemyCashBalanceRepository,
     SqlAlchemyCashLedgerRepository,
@@ -117,6 +122,11 @@ class SqlAlchemyUnitOfWork:
         self.market_data_quality_runs = SqlAlchemyMarketDataQualityRunRepository(session)
         self.market_data_quality_issues = SqlAlchemyMarketDataQualityIssueRepository(session)
         self.market_realtime_runs = SqlAlchemyMarketRealtimeRunRepository(session)
+        self.backtest_runs = SqlAlchemyBacktestRunRepository(session)
+        self.backtest_equity_points = SqlAlchemyBacktestEquityPointRepository(session)
+        self.backtest_metrics = SqlAlchemyBacktestMetricRepository(session)
+        self.backtest_trades = SqlAlchemyBacktestTradeSummaryRepository(session)
+        self.backtest_events = SqlAlchemyBacktestEventRepository(session)
         return self
 
     async def __aexit__(

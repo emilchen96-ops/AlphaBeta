@@ -38,7 +38,7 @@
 | Information | 市场事件/资讯中心/查看原始事实 | 路由跳转 | 对应 GET | 打开列表/详情 | 查询错误 | InformationItem | WORKING |
 | AI Research | 创建研究分析 | 提交表单 | `POST /ai/analyses` | 跳转运行详情 | message.error | Evidence + Provider | NEEDS_CONFIG |
 | AI Research | 查看依据/Insight 目录/证据详情 | 路由跳转 | 对应 GET | 展示只读证据 | 查询错误 | 已有运行 | WORKING |
-| Backtest | 无启动按钮 | 无 | 无 | 显示 PARTIAL 原因 | 不适用 | BT01-R | PARTIAL |
+| Backtest | 创建回测/重新生成幂等键/查看详情 | 同步提交并路由到结果 | `POST /backtests` 与各结果 GET | 展示状态、指标、曲线、交易事实、Timeline 和 Integrity | 显示后端权威错误与 Correlation ID | D01 本地日线 | NEEDS_DATA |
 | Audit | 无查询/导出按钮 | 无 | 无 | 显示计划状态 | 不适用 | 统一审计 API 未实现 | PLACEHOLDER |
 | Settings | 无保存/应用按钮 | 无 | 无 | 显示只读说明 | 不适用 | 设置写 API 未实现 | PLACEHOLDER |
 
@@ -46,5 +46,5 @@
 
 - `TODO`、`FIXME`、仅 `console.log`、空 `onClick`：在 `apps/web/src` 与 `apps/api/src` 未发现。
 - 前端导航目标均存在于 `router.tsx`；条件动作根据后端状态显示。
-- AI Provider 为 disabled 时提交按钮现已禁用；订单、策略、批量实验和扫描器在 capability 明确报告前置数据缺失时禁用创建/运行按钮并展示原因；Backtest、Audit、Settings 不再暗示存在可执行动作。
+- AI Provider 为 disabled 时提交按钮现已禁用；订单、策略、批量实验和扫描器在 capability 明确报告前置数据缺失时禁用创建/运行按钮并展示原因；Backtest 提供真实同步运行入口，Audit 与 Settings 仍不暗示存在未实现动作。
 - 加载与失败：主要写操作均使用 React Query mutation 的 loading/error；列表使用 Table/Alert/Empty。个别只读导航无需网络加载状态。

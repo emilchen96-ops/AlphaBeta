@@ -40,7 +40,7 @@ test("Dashboard显示基础设施真实响应", async () => {
     await screen.findByText("功能可用性（后端权威检查）"),
   ).toBeInTheDocument();
   expect(screen.getByText("历史行情")).toBeInTheDocument();
-  expect(screen.getByText("部分完成")).toBeInTheDocument();
+  expect(screen.getAllByText("已实现").length).toBeGreaterThan(0);
 });
 
 test("Dashboard在API失败时保持可用", async () => {

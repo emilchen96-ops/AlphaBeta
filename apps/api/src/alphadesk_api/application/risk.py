@@ -15,7 +15,7 @@ from alphadesk_api.application.order_contracts import payload_hash
 from alphadesk_api.application.orders import CreateOrderRequest, OrderIntentService
 from alphadesk_api.core.config import Settings
 from alphadesk_domain.entities import AuditLog, DomainEvent, Order, RiskDecision, RiskRuleEvaluation
-from alphadesk_domain.enums import OrderSide, OrderType, RiskDecisionType
+from alphadesk_domain.enums import OrderIntentSource, OrderSide, OrderType, RiskDecisionType
 from alphadesk_domain.risk import (
     RiskAccountSnapshot,
     RiskEvaluationResult,
@@ -51,26 +51,29 @@ class RiskLimitsProvider(Protocol):
 
 class ConfiguredRiskLimitsProvider:
     def __init__(self, settings: Settings) -> None:
-        self._settings = settings
+        self._limits = RiskLimits(
+            max_order_notional=settings.risk_max_order_notional,
+            max_instrument_weight=settings.risk_max_instrument_weight,
+            max_total_exposure=settings.risk_max_total_exposure,
+            max_orders_per_window=settings.risk_max_orders_per_window,
+            order_frequency_window_seconds=settings.risk_order_frequency_window_seconds,
+            allow_market_orders=settings.risk_allow_market_orders,
+            require_reference_price_for_market_order=(
+                settings.risk_require_reference_price_for_market_order
+            ),
+            kill_switch_enabled=settings.risk_kill_switch_enabled,
+        )
+        limits_payload = _json(asdict(self._limits))
+        assert isinstance(limits_payload, dict)
+        self._version_marker = f"r01-config-v2:{payload_hash(limits_payload)[:24]}"
 
     @property
     def version_marker(self) -> str:
-        return "r01-config-v1"
+        return self._version_marker
 
     def get_limits(self, account_id: UUID) -> RiskLimits:
         del account_id
-        return RiskLimits(
-            max_order_notional=self._settings.risk_max_order_notional,
-            max_instrument_weight=self._settings.risk_max_instrument_weight,
-            max_total_exposure=self._settings.risk_max_total_exposure,
-            max_orders_per_window=self._settings.risk_max_orders_per_window,
-            order_frequency_window_seconds=self._settings.risk_order_frequency_window_seconds,
-            allow_market_orders=self._settings.risk_allow_market_orders,
-            require_reference_price_for_market_order=(
-                self._settings.risk_require_reference_price_for_market_order
-            ),
-            kill_switch_enabled=self._settings.risk_kill_switch_enabled,
-        )
+        return self._limits
 
 
 @dataclass(frozen=True, slots=True)
@@ -389,13 +392,25 @@ class RiskGatedOrderService:
         request = RiskRequest(
             request_id=uuid4(),
             correlation_id=order_request.correlation_id,
-            source_type=RiskRequestSource.MANUAL_ORDER,
+            source_type=(
+                RiskRequestSource.STRATEGY_SIGNAL
+                if order_request.intent_source == OrderIntentSource.STRATEGY
+                else RiskRequestSource.MANUAL_ORDER
+            ),
+            source_id=order_request.source_id,
+            signal_id=(
+                order_request.source_id
+                if order_request.intent_source == OrderIntentSource.STRATEGY
+                else None
+            ),
+            strategy_key=order_request.strategy_key,
             account_id=order_request.account_id,
             instrument_id=order_request.instrument_id,
             side=OrderSide(order_request.side),
             order_type=OrderType(order_request.order_type),
             quantity=order_request.quantity,
             limit_price=order_request.limit_price,
+            reference_price=order_request.reference_price,
             requested_at=requested_at,
         )
         order_id = uuid4()

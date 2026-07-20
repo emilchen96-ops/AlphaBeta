@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from alphadesk_api.api.v1 import (
     accounts,
     ai_research,
+    backtests,
     health,
     information,
     instruments,
@@ -31,6 +32,7 @@ api_router.include_router(strategies.router)
 api_router.include_router(scanners.router)
 api_router.include_router(information.router)
 api_router.include_router(ai_research.router)
+api_router.include_router(backtests.router)
 
 health_router = APIRouter()
 health_router.include_router(health.router)

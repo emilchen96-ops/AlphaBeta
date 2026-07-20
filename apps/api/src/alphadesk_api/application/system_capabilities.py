@@ -176,16 +176,16 @@ def assess_system_capabilities(
         ),
         SystemCapability(
             module_key="backtest",
-            implementation_status="PARTIAL",
+            implementation_status="WORKING",
             data_status=("READY" if bars_ready else ("MISSING" if database_ready else "UNKNOWN")),
             configuration_status="NOT_REQUIRED",
-            available=False,
+            available=bars_ready,
             reason=(
-                "历史日线数据已存在, 但数据就绪不代表 BT01 代码完成。"
+                "BT01 日线回测已完成, 可使用 PostgreSQL 本地历史日线同步运行。"
                 if bars_ready
-                else "BT01 代码仍为 PARTIAL, 且当前历史日线数据不足。"
+                else "BT01 日线回测代码已完成, 但当前缺少 Instrument 或历史日线。"
             ),
-            required_actions=("在后续 BT01-R 重建单一 Migration 链并完成专项验收",),
+            required_actions=(() if bars_ready else ("先完成 D01 历史日线补数与质量检查",)),
         ),
         SystemCapability(
             module_key="realtime_market_data",

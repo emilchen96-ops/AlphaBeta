@@ -9,13 +9,14 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-test("回测入口明确标记部分完成且没有虚假运行按钮", async () => {
+test("回测入口展示已完成的本地日线运行能力且没有实盘按钮", async () => {
   renderRoute("/backtest");
+  expect(await screen.findByText("A 股日线回测")).toBeInTheDocument();
   expect(
-    await screen.findByText("部分完成，当前分支不可用"),
+    screen.getByRole("button", { name: /同步运行回测/ }),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /启动|运行回测/ }),
+    screen.queryByRole("button", { name: /实盘|跟单|MiniQMT/ }),
   ).not.toBeInTheDocument();
 });
 

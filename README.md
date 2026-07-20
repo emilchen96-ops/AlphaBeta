@@ -1,10 +1,12 @@
 # AlphaDesk
 
-> **2026-07-19：D01-A/B 已完成。** BaoStock A 股 Instrument、300–500 只研究 Watchlist 与未复权历史日线可通过受控 CLI 幂等写入 PostgreSQL；详见 [D01 历史行情](docs/historical_market_data.md)。D01-C/D/E 尚未开始，系统仍不接实时行情、MiniQMT 或真实券商。
+> **2026-07-20：BT01-R 日线回测完成。** 系统可从 D01 本地 A 股日线运行确定性的 `BacktestClock → Strategy → Signal → RiskDecision → Order → B01 → Fill → M04` 闭环，并提供独立账户、T+1 开盘执行、绩效、Integrity、API、CLI 和 `/backtest` 页面。它不连接实时行情、Redis 订单发布、MiniQMT、券商或真实账户；分钟回测尚未实现。下一阶段仅为 **U01：一键初始化与系统可用性收口**。详见 [日线回测](docs/daily_backtest.md)。
 
-> **2026-07-19：I01 V0.1 集成基线已完成。** 当前功能、按钮、API、数据和配置状态以 [I01 集成说明](docs/integration_v0_1.md)、[功能盘点](docs/feature_inventory.md)、[UI 动作盘点](docs/ui_action_inventory.md)、[API 契约盘点](docs/api_contract_inventory.md) 与 [数据就绪度](docs/data_readiness.md) 为准。首页通过只读 `/api/v1/system/capabilities` 展示真实能力，不把“已实现”误报为“当前可运行”。下一步唯一主线是 **D01 历史行情数据中心**。
+> **2026-07-19：D01-A/B/C/D/E 已完成。** BaoStock A 股 Instrument、研究 Watchlist、未复权历史日线、每日增量、质量检查和 Readiness 均可通过受控 API/CLI 与数据中心页面操作；详见 [D01 历史行情](docs/historical_market_data.md)。系统仍不接交易级实时行情、MiniQMT 或真实券商。
 
-> SC01、N01、A01 已完成。BT01 独立提交因 Migration 与后续模块冲突，未并入当前稳定链；当前回测能力为 PARTIAL，需在 D01 后进入 BT01-R。系统仍无 Windows 执行器、MiniQMT、外部 Broker 或实盘能力。
+> **2026-07-19：I01 V0.1 集成基线已完成。** 功能、按钮、API、数据和配置状态以 [I01 集成说明](docs/integration_v0_1.md)、[功能盘点](docs/feature_inventory.md)、[UI 动作盘点](docs/ui_action_inventory.md)、[API 契约盘点](docs/api_contract_inventory.md) 与 [数据就绪度](docs/data_readiness.md) 为准；这些盘点已随 D01 和 BT01-R 更新。
+
+> SC01、N01、A01、D01 与 BT01-R 已完成。旧 BT01 独立提交没有合并；可复用实现被选择性移植到 `0014_d01 → 0015_bt01` 的单一迁移链。系统仍无 Windows 执行器、MiniQMT、外部 Broker 或实盘能力。
 
 > A01 文档：[AI 研究助手](docs/ai_research_assistant.md)；N01 文档：[资讯事件中心](docs/information_event_center.md)；SC01 文档：[历史条件扫描器](docs/scanners.md)。
 
@@ -18,7 +20,7 @@
 
 > M04 已加入本地模拟账户、资金/持仓只追加账本、成交记账、行情估值、账本核对与 `/portfolio` 网页。它不包含公开订单/成交写 API、撮合、Broker 或实盘。详见 [账本](docs/accounting.md)、[估值](docs/account_valuation.md) 和 [核对](docs/account_reconciliation.md)。
 
-当前封板里程碑为 M03：项目提供离线确定性的 DEMO 行情、受限本地 CSV 导入、标的目录、自选股与网页行情工作台。真实外部行情入口默认禁用；系统没有策略、Signal、订单、Broker 或实盘能力。详见 [M03 行情文档](docs/market_data.md) 与 [自选股规则](docs/watchlists.md)。
+当前封板里程碑为 BT01-R；M03 的离线 Demo 行情、CSV 导入、标的目录和自选股能力继续保留。详见 [M03 行情文档](docs/market_data.md)、[自选股规则](docs/watchlists.md) 与 [日线回测](docs/daily_backtest.md)。
 
 AlphaDesk 是一个面向个人使用的本地量化交易系统。项目以可审计、可恢复和安全边界清晰为首要目标，当前采用 React + TypeScript 前端、FastAPI 模块化单体后端、PostgreSQL 与 Redis 基础设施。
 
@@ -35,9 +37,20 @@ python -m alphadesk_api.cli.market_data show-readiness --universe research
 
 启动 Web/API 后打开 `http://127.0.0.1:5173/market-data-center`。该页面只维护 BaoStock 历史日线，不提供实时行情、不连接 MiniQMT，也不会自动创建 Signal、订单、成交或回测。
 
-## 当前阶段：M02
+## BT01 日线回测
 
-M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成。当前具备：
+启动服务并完成 D01 本地日线补数后，打开 `http://127.0.0.1:5173/backtest`。创建操作为同步执行，T 日收盘信号最早在下一根可用日线开盘成交。也可在 API 容器或已激活的后端环境运行：
+
+```powershell
+python -m alphadesk_api.cli.backtests run-demo
+python -m alphadesk_api.cli.backtests list
+```
+
+`run-demo` 只读取或建立明确标识的本地确定性 Demo 行情，不访问外部网络，也不会发送真实订单。
+
+## 基础工程：M01-M02
+
+M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成，并作为后续模块的基础：
 
 - 中文 React 管理后台、响应式侧栏、路由和明确的空页面；
 - FastAPI 应用工厂、统一配置、结构化日志和 Correlation ID；

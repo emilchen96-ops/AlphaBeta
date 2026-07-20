@@ -39,12 +39,12 @@ export const healthyCapabilities = {
     },
     {
       module_key: "backtest",
-      implementation_status: "PARTIAL",
-      data_status: "UNKNOWN",
+      implementation_status: "WORKING",
+      data_status: "READY",
       configuration_status: "NOT_REQUIRED",
-      available: false,
-      reason: "BT01 尚未安全整合。",
-      required_actions: ["完成 BT01-R"],
+      available: true,
+      reason: "BT01 日线回测已完成。",
+      required_actions: [],
     },
   ],
 };
@@ -63,7 +63,10 @@ export function mockStatusSuccess() {
       if (url.endsWith("/system/capabilities")) body = healthyCapabilities;
       else if (url.includes("/api/v1/watchlists")) body = [];
       else if (url.includes("/api/v1/market-data/sources")) body = [];
-      else if (url.includes("/api/v1/instruments?")) {
+      else if (url.includes("/api/v1/strategies/catalog")) body = [];
+      else if (url.includes("/api/v1/backtests?")) {
+        body = { items: [], page: 1, page_size: 20, total: 0 };
+      } else if (url.includes("/api/v1/instruments?")) {
         body = { items: [], page: 1, page_size: 50, total: 0 };
       } else if (url.includes("/api/v1/market-data/realtime/status")) {
         body = {

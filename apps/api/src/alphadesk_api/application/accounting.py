@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from alphadesk_api.application.common import (
     ApplicationError,
@@ -42,6 +42,7 @@ from alphadesk_domain.enums import (
     SettlementPolicy,
 )
 from alphadesk_domain.unit_of_work import UnitOfWork
+from alphadesk_domain.values import as_utc
 
 ZERO = Decimal("0")
 AMOUNT_TOLERANCE = Decimal("0.00000001")
@@ -73,10 +74,14 @@ class SimulatedAccountService:
         initial_cash: Decimal,
         settlement_policy: SettlementPolicy,
         idempotency_key: str,
-        correlation_id: UUID,
+        correlation_id: UUID | None = None,
+        occurred_at: datetime | None = None,
+        scope: str = "M04",
+        owner_id: UUID | None = None,
     ) -> TradingAccount:
         if initial_cash < ZERO:
             raise ApplicationError("INVALID_AMOUNT", "初始资金不能为负数")
+        correlation_id = correlation_id or uuid4()
         async with self._uow_factory() as uow:
             existing = await uow.accounts.get_by_creation_idempotency_key(idempotency_key)
             if existing is not None:
@@ -92,7 +97,7 @@ class SimulatedAccountService:
                 return existing
             if await uow.accounts.get_by_business_key(account_code) is not None:
                 raise ApplicationError("ACCOUNT_CODE_CONFLICT", "账户编码已存在")
-            now = _now()
+            now = as_utc(occurred_at, "occurred_at") if occurred_at is not None else _now()
             account = TradingAccount(
                 account_code=account_code,
                 name=name,
@@ -102,7 +107,11 @@ class SimulatedAccountService:
                 base_currency=base_currency,
                 settlement_policy=settlement_policy,
                 creation_idempotency_key=idempotency_key,
-                metadata={"scope": "M04", "real_trading": False},
+                metadata={
+                    "scope": scope,
+                    "owner_id": None if owner_id is None else str(owner_id),
+                    "real_trading": False,
+                },
                 created_at=now,
                 updated_at=now,
             )
@@ -128,7 +137,9 @@ class SimulatedAccountService:
                     occurred_at=now,
                     posted_at=now,
                     description="模拟账户初始入金",
-                    metadata={"scope": "M04"},
+                    metadata={"scope": scope},
+                    created_at=now,
+                    updated_at=now,
                 )
                 await uow.ledger_transactions.add(transaction)
                 await uow.cash_ledger.append(
@@ -145,7 +156,8 @@ class SimulatedAccountService:
                         frozen_cash_after=ZERO,
                         correlation_id=correlation_id,
                         occurred_at=now,
-                        metadata={"scope": "M04"},
+                        metadata={"scope": scope},
+                        created_at=now,
                     )
                 )
             await append_event_and_audit(
@@ -156,6 +168,7 @@ class SimulatedAccountService:
                 correlation_id=correlation_id,
                 payload={"account_code": account.account_code},
                 source="ALPHADESK_M04",
+                occurred_at=now,
             )
             await uow.commit()
             return account
@@ -462,7 +475,7 @@ class FillAccountingService:
             available_cash=cash.available_cash + cash_delta,
             row_version=cash.row_version + 1,
             as_of=occurred_at,
-            updated_at=_now(),
+            updated_at=occurred_at,
         )
         old_quantity = ZERO if position is None else position.total_quantity
         old_cost = ZERO if position is None else position.cost_basis
@@ -508,7 +521,7 @@ class FillAccountingService:
                 valuation_status=AccountValuationStatus.UNAVAILABLE,
                 as_of=occurred_at,
                 row_version=position.row_version + 1,
-                updated_at=_now(),
+                updated_at=occurred_at,
             )
             await uow.positions.update(updated_position)
         return await self._append_fill_ledgers(
@@ -550,7 +563,7 @@ class FillAccountingService:
             available_cash=cash.available_cash + net_amount,
             row_version=cash.row_version + 1,
             as_of=occurred_at,
-            updated_at=_now(),
+            updated_at=occurred_at,
         )
         updated_position = replace(
             position,
@@ -566,7 +579,7 @@ class FillAccountingService:
             valuation_status=AccountValuationStatus.UNAVAILABLE,
             as_of=occurred_at,
             row_version=position.row_version + 1,
-            updated_at=_now(),
+            updated_at=occurred_at,
         )
         await uow.positions.update(updated_position)
         return await self._append_fill_ledgers(
@@ -605,7 +618,7 @@ class FillAccountingService:
         old_realized: Decimal,
     ) -> FillAccountingResult:
         await uow.cash_balances.update(cash)
-        posted_at = max(_now(), fill.executed_at)
+        posted_at = fill.executed_at
         transaction = LedgerTransaction(
             account_id=account.id,
             transaction_type=transaction_type,
@@ -618,6 +631,8 @@ class FillAccountingService:
             posted_at=posted_at,
             description="模拟成交记账",
             metadata={"scope": "M04", "broker_type": fill.broker_type},
+            created_at=fill.executed_at,
+            updated_at=fill.executed_at,
         )
         await uow.ledger_transactions.add(transaction)
         await uow.cash_ledger.append(
@@ -638,6 +653,7 @@ class FillAccountingService:
                 correlation_id=fill.correlation_id,
                 occurred_at=fill.executed_at,
                 metadata={"net_cash_entry": True},
+                created_at=fill.executed_at,
             )
         )
         self._failure_injector("after_cash_ledger")
@@ -666,6 +682,7 @@ class FillAccountingService:
             correlation_id=fill.correlation_id,
             occurred_at=fill.executed_at,
             metadata={"scope": "M04"},
+            created_at=fill.executed_at,
         )
         await uow.position_ledger.append(position_entry)
         self._failure_injector("after_position_ledger")
@@ -681,6 +698,7 @@ class FillAccountingService:
                 "side": "BUY" if quantity_delta > ZERO else "SELL",
             },
             source="ALPHADESK_M04",
+            occurred_at=fill.executed_at,
         )
         return FillAccountingResult(
             ledger_transaction_id=transaction.id,
@@ -859,24 +877,142 @@ class AccountValuationService:
         )
 
 
+class KnownPriceAccountValuationService:
+    """Persist M04 valuation facts from caller-supplied, already-known historical prices."""
+
+    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
+        self._uow_factory = uow_factory
+
+    async def value(
+        self,
+        *,
+        account_id: UUID,
+        prices: dict[UUID, Decimal],
+        stale_instrument_ids: set[UUID],
+        as_of: datetime,
+        correlation_id: UUID,
+    ) -> AccountValuationResult:
+        occurred_at = as_utc(as_of, "as_of")
+        async with self._uow_factory() as uow:
+            account = await _require_account(uow, account_id)
+            cash = await uow.cash_balances.get(account.id, account.base_currency)
+            if cash is None:
+                raise ApplicationError("CASH_BALANCE_NOT_FOUND", "cash balance was not found")
+            positions = await uow.positions.list_for_account(account.id)
+            open_positions = [item for item in positions if item.total_quantity > ZERO]
+            missing = [
+                item.instrument_id for item in open_positions if item.instrument_id not in prices
+            ]
+            if missing:
+                raise ApplicationError(
+                    "BACKTEST_INTEGRITY_MISMATCH",
+                    "historical valuation lacks a previously known close",
+                )
+            market_value = ZERO
+            unrealized = ZERO
+            for position in open_positions:
+                price = prices[position.instrument_id]
+                value = position.total_quantity * price
+                pnl = value - position.cost_basis
+                market_value += value
+                unrealized += pnl
+                await uow.positions.update(
+                    replace(
+                        position,
+                        market_value=value,
+                        unrealized_pnl=pnl,
+                        last_price=price,
+                        last_price_at=occurred_at,
+                        valuation_status=(
+                            AccountValuationStatus.STALE
+                            if position.instrument_id in stale_instrument_ids
+                            else AccountValuationStatus.COMPLETE
+                        ),
+                        as_of=occurred_at,
+                        updated_at=occurred_at,
+                    )
+                )
+            status = (
+                AccountValuationStatus.STALE
+                if stale_instrument_ids.intersection(item.instrument_id for item in open_positions)
+                else AccountValuationStatus.COMPLETE
+            )
+            snapshot = AccountSnapshot(
+                account_id=account.id,
+                as_of=occurred_at,
+                cash_total=cash.total_cash,
+                cash_available=cash.available_cash,
+                cash_frozen=cash.frozen_cash,
+                positions_cost_basis=sum((item.cost_basis for item in positions), ZERO),
+                positions_market_value=market_value,
+                total_equity=cash.total_cash + market_value,
+                realized_pnl=sum((item.realized_pnl for item in positions), ZERO),
+                unrealized_pnl=unrealized,
+                valuation_status=status,
+                priced_position_count=len(open_positions),
+                unpriced_position_count=0,
+                latest_price_time=occurred_at if open_positions else None,
+                correlation_id=correlation_id,
+                metadata={
+                    "source_code": "BACKTEST_KNOWN_CLOSE",
+                    "stale_instrument_ids": [
+                        str(item) for item in sorted(stale_instrument_ids, key=str)
+                    ],
+                },
+                created_at=occurred_at,
+            )
+            await uow.account_snapshots.append(snapshot)
+            await append_event_and_audit(
+                uow,
+                event_type="ACCOUNT_VALUATION_COMPLETED",
+                entity_type="TRADING_ACCOUNT",
+                entity_id=account.id,
+                correlation_id=correlation_id,
+                payload={"valuation_status": status.value},
+                source="ALPHADESK_BT01",
+                actor_type="SYSTEM",
+                occurred_at=occurred_at,
+            )
+            await uow.commit()
+        return AccountValuationResult(
+            snapshot=snapshot,
+            unpriced_instrument_ids=(),
+            source_code="BACKTEST_KNOWN_CLOSE",
+        )
+
+
 class AccountReconciliationService:
     def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
         self._uow_factory = uow_factory
 
-    async def run(self, *, account_id: UUID, correlation_id: UUID) -> AccountReconciliationResult:
+    async def run(
+        self,
+        *,
+        account_id: UUID,
+        correlation_id: UUID,
+        occurred_at: datetime | None = None,
+    ) -> AccountReconciliationResult:
         async with self._uow_factory() as uow:
             result = await self.run_in_uow(
-                uow=uow, account_id=account_id, correlation_id=correlation_id
+                uow=uow,
+                account_id=account_id,
+                correlation_id=correlation_id,
+                occurred_at=occurred_at,
             )
             await uow.commit()
             return result
 
     async def run_in_uow(
-        self, *, uow: UnitOfWork, account_id: UUID, correlation_id: UUID
+        self,
+        *,
+        uow: UnitOfWork,
+        account_id: UUID,
+        correlation_id: UUID,
+        occurred_at: datetime | None = None,
     ) -> AccountReconciliationResult:
         """Reconcile projections in the caller's transaction without committing."""
 
-        started = _now()
+        started = as_utc(occurred_at, "occurred_at") if occurred_at is not None else _now()
         await _require_account(uow, account_id)
         balances = await uow.cash_balances.list_for_account(account_id)
         positions = await uow.positions.list_for_account(account_id)
@@ -917,7 +1053,7 @@ class AccountReconciliationService:
                     }
                 )
         discrepancies = discrepancies[:100]
-        completed = _now()
+        completed = started if occurred_at is not None else _now()
         run = AccountReconciliationRun(
             account_id=account_id,
             status=(
@@ -934,6 +1070,7 @@ class AccountReconciliationService:
             discrepancy_count=len(discrepancies),
             discrepancies=discrepancies,
             correlation_id=correlation_id,
+            created_at=started,
         )
         await uow.account_reconciliations.append(run)
         await append_event_and_audit(
@@ -944,5 +1081,6 @@ class AccountReconciliationService:
             correlation_id=correlation_id,
             payload={"status": run.status.value, "count": run.discrepancy_count},
             source="ALPHADESK_M04",
+            occurred_at=started,
         )
         return AccountReconciliationResult(run=run)

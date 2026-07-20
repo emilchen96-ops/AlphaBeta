@@ -1,10 +1,10 @@
 # I01 数据与配置就绪度
 
-> D01 完成（2026-07-19）：除 A/B 历史补数外，已具备每日增量、追加式质量运行、覆盖率和按能力最低 K 线要求计算的 Readiness。页面和 `/system/capabilities` 分开报告历史数据状态与 BT01 代码状态；数据 READY 不代表回测代码完成。
+> BT01-R 已完成：`backtest_daily` Readiness 继续由 D01 覆盖率提供，运行服务还会对请求时间范围内每个标的的实际日线和全局规模上限做权威校验。READY/PARTIAL 描述数据覆盖，不代表实时性，也不授权真实交易。
 
-检查时间：2026-07-19。可信验收库为 `alphadesk_sc01_test_20260719`，Alembic `0013_a01`。该库只包含已有 SC01/N01/A01 验收事实，没有为 I01 伪造账户、行情、订单、Fill 或回测结果。
+> D01 完成（2026-07-19）：除 A/B 历史补数外，已具备每日增量、追加式质量运行、覆盖率和按能力最低 K 线要求计算的 Readiness。页面和 `/system/capabilities` 分开报告历史数据状态与 BT01 代码状态；数据 READY 只表示满足历史数据门槛，不代表任何收益或实盘可用性。
 
-本机原默认开发库 `alphadesk` 当前记录为 `0011_bt01`，来源于此前独立 BT01 分支。当前稳定代码不包含该 revision，因此普通 API 容器会安全失败并报告 `Can't locate revision '0011_bt01'`。I01 不删除、不降级、不覆盖该数据库；它不计入 V0.1 可信基线。
+检查时间：2026-07-20。当前权威迁移链为 `0014_d01 → 0015_bt01`，只有一个 Alembic head。原默认开发库遗留的旧 `0011_bt01` 五张空回测表已在验收时移除，版本恢复到真实父节点后顺序升级；账户、行情、订单等其他业务数据未删除。独立测试库已验证空库升级、回退到 D01 及再次升级。
 
 | 功能 | 必需数据 | 最低数量/范围 | 当前验收库状态 | 缺失影响 | 下一阶段解决方式 |
 | --- | --- | --- | --- | --- | --- |
@@ -18,7 +18,7 @@
 | Simulated Broker | 已确认可执行 Order | 至少 1 QUEUED/BROKER_ACCEPTED/PARTIALLY_FILLED | 0；Fill 0 | 无模拟执行入口 | 先完成订单人工确认，不接真实 Broker |
 | Information Center | PostgreSQL | 手工录入无需预置；研究需至少 1 Item | Source 7；Item 2；Event 2 | 当前可用 | N01 已满足 |
 | AI Research | InformationItem/Event + Provider | 至少 1 Evidence；Provider configured | AIAnalysisRun 3；验收进程使用 Fake | 默认启动配置下不可创建 | 真实 Provider 不属于 I01；Fake 仅本地验收 |
-| Backtest | BT01 表、运行服务、历史行情 | 完整 Migration 链与确定性验收 | 当前稳定库无 BT01 表 | 当前分支不可运行 | 后续 BT01-R；数据由 D01 提供 |
+| Backtest | BT01 表、运行服务、D01 历史行情 | 所选标的在时间范围内均有 DAY_1 数据，且不超过 instruments/bars/sessions 上限 | BT01-R 已接入；实际运行仍取决于目标库数据 | 数据不足时返回明确错误，不静默截断 | 先执行 D01 补数、增量更新与质量检查 |
 
 ## 配置结论
 

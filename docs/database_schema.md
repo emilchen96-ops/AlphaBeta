@@ -1,5 +1,7 @@
 # PostgreSQL 持久化模型
 
+> BT01-R Migration `0015_bt01`（唯一前驱 `0014_d01`）新增 `backtest_runs`、`backtest_equity_points`、`backtest_metrics`、`backtest_trade_summaries` 与追加式 `backtest_events`。Run 通过 `strategy_run_id`、`account_id` 和 `correlation_id` 复用既有 Signal、RiskDecision、Order、Fill 与 M04 账本事实；不复制第二套交易事实表。指标 warnings 使用 JSONB，金额与比例使用 NUMERIC。
+
 > N01 Migration `0012_n01` 新增资讯来源、摄取运行、RawDocument、InformationItem、MarketEvent 和 Instrument/主题关联表。原始文档按同来源 external ID 和规范内容 SHA-256 去重；每个 InformationItem 至多一个 MarketEvent；confidence/importance 使用 NUMERIC。
 
 > SC01 Migration `0011_sc01` 新增 `scan_runs` 与追加式 `scan_results`。运行幂等键唯一；结果对 `(scan_run_id, instrument_id)` 和 `(scan_run_id, rank)` 唯一，rank 从 1 开始，评分与参考价使用 NUMERIC。Scanner 只读取既有 MarketBar，不写入 Signal、风控、订单、成交或账本表。

@@ -1,19 +1,21 @@
-# I01 V0.1 完整集成基线
+# I01 V0.1 完整集成基线与 BT01-R 后续整合
+
+> 2026-07-20 后续状态：D01 与 BT01-R 已在 I01 基线上完成。当前回测 Migration 为 `0015_bt01`，唯一前驱为 `0014_d01`；日线回测 API、CLI、页面、绩效与 Integrity 均已接入。下文的 “I01 当时” 描述保留用于说明旧 BT01 为什么没有直接合并，不再代表当前能力状态。
 
 ## 基线与范围
 
 - 来源分支/提交：`codex/scanner-information-ai` / `6d3aec6`。
 - 集成分支：`codex/integration-v0.1`。
 - 已整合：M01–M05、S01、S02、R01、B01、SC01、N01、A01。
-- I01 只做盘点、只读能力检查、明确状态和确定性接线修复；没有实施 D01、BT01-R、RT01、真实 AI、Windows Agent、MiniQMT 或真实 Broker。
+- I01 当时只做盘点、只读能力检查、明确状态和确定性接线修复；D01 与 BT01-R 后来分别完成。RT01、真实 AI、Windows Agent、MiniQMT 与真实 Broker 仍未实施。
 
 ## BT01 审查结论
 
 BT01 分支只有一个 `bfe72f8` 大提交，基于共同祖先 `4b4fee4`，跨 54 个文件、约 5,000 行，并新增 `0011_bt01`（down revision=`0010_b01`）。稳定分支已经使用 `0011_sc01 → 0012_n01 → 0013_a01`。
 
-因此没有满足“边界清晰、无后续依赖、无多 head、不覆盖 SC01/N01/A01”的可安全 cherry-pick 提交。I01 不整合 BT01；独立分支和本机已有 BT01 数据均被保留，回测状态为 PARTIAL。
+因此没有满足“边界清晰、无后续依赖、无多 head、不覆盖 SC01/N01/A01”的可安全 cherry-pick 提交。I01 当时没有整合 BT01。BT01-R 后来仅选择性复用领域、事件循环、API/CLI/UI 与测试思路，没有 merge 或 cherry-pick 旧大提交，也没有复用冲突的 `0011_bt01` Migration。
 
-BT01-R 至少需要：把回测 Migration 重定位到当前唯一 head 之后；重放与 SC01/N01/A01 的共享代码差异；证明日线时钟、事件循环、费用、滑点、涨跌停/T+1、结果指标和幂等；完成 API/CLI/UI、真实 PostgreSQL、Migration 往返和浏览器专项验收；不得把历史策略研究误称收益回测。
+BT01-R 已把 Migration 重定位到 D01 后的唯一 head，并完成日线时钟、T+1 open、既有事实管道、费用与滑点、结果指标、幂等、API/CLI/UI、PostgreSQL 往返和浏览器验收。历史策略研究与资金回测仍是两个独立能力。
 
 ## 当前可直接使用
 
@@ -31,14 +33,14 @@ BT01-R 至少需要：把回测 Migration 重定位到当前唯一 head 之后�
 
 ## 占位与未实现
 
-- Backtest：PARTIAL，当前分支无运行 API/按钮。
+- Backtest：BT01-R 已完成；需要所选标的在 D01 本地库中具备足够权威日线。
 - Audit、Settings：PLACEHOLDER；仅说明状态，无伪保存或查询动作。
 - Realtime market：管道存在但 Provider disabled。
 - MiniQMT/Windows Agent/真实 Broker：NOT_IMPLEMENTED。
 
 ## 可复现启动
 
-全新或 Alembic 为 `0013_a01` 的数据库：
+全新数据库可直接升级到当前唯一 head `0015_bt01`：
 
 ```powershell
 docker compose up --build -d
@@ -46,7 +48,7 @@ docker compose ps
 Invoke-RestMethod http://127.0.0.1:8000/api/v1/system/capabilities
 ```
 
-若本机默认 `alphadesk` 数据卷曾在 BT01 分支升级到 `0011_bt01`，不要删除或强制降级。保留旧项目后，用新的 Compose project/volume 建立干净基线（执行前先停止占用 5173/8000 的旧容器）：
+若旧数据卷仍停留在已删除的旧分支 revision `0011_bt01`，不要直接 stamp 或忽略错误。先核对旧回测表是否有数据并备份，再将其迁移到当前 `0014_d01 → 0015_bt01` 链；不确定时使用新的 Compose project/volume 建立干净基线：
 
 ```powershell
 docker compose down
@@ -69,4 +71,4 @@ docker compose -p alphadesk-i01 exec api alembic check
 
 ## 下一阶段
 
-D01 历史行情数据中心已在后续 `codex/d01-market-data` 分支完成：Instrument/研究池、历史补数、每日增量、质量事实、覆盖率、Readiness、API/CLI 和页面均已接入。没有引入权威交易日历、复权因子、实时行情、MiniQMT 或交易写入。下一阶段仅为 BT01-R 日线回测补全与封板。
+D01 历史行情数据中心已在后续 `codex/d01-market-data` 分支完成。BT01-R 随后从该稳定基线选择性移植旧回测代码，并以新 Migration `0015_bt01` 接到 `0014_d01`，未合并旧 `0011_bt01`。日线回测现已接入 D01、S01/S02、R01、M05、B01 与 M04；分钟行情、分钟回测、MiniQMT 和真实交易仍未实现。下一阶段仅为 U01 一键初始化与系统可用性收口。

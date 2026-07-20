@@ -172,7 +172,7 @@ export interface MarketDataOverview {
   scanner_ready: boolean;
   strategy_ready: boolean;
   backtest_data_ready: boolean;
-  backtest_code_status: "PARTIAL";
+  backtest_code_status: "WORKING";
 }
 
 export interface InstrumentCoverage {

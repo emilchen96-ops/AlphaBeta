@@ -240,9 +240,11 @@ export function MarketDataCenterPage() {
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="BT01">
-            <Tag color="warning">
+            <Tag
+              color={overview.data?.backtest_data_ready ? "success" : "warning"}
+            >
               数据 {overview.data?.backtest_data_ready ? "READY" : "NOT_READY"}{" "}
-              · 代码 PARTIAL
+              · 代码 WORKING
             </Tag>
           </Descriptions.Item>
         </Descriptions>
@@ -590,19 +592,24 @@ export function MarketDataCenterPage() {
                   >
                     Strategy
                   </Button>
+                ) : item.capability_key === "backtest_daily" ? (
+                  <Button
+                    type="link"
+                    onClick={() => void navigate("/backtest")}
+                  >
+                    日线回测
+                  </Button>
                 ) : (
-                  <Typography.Text type="secondary">
-                    数据已就绪也不代表回测代码完成
-                  </Typography.Text>
+                  <Typography.Text type="secondary">—</Typography.Text>
                 ),
             },
           ]}
         />
         <Alert
-          type="info"
+          type="success"
           showIcon
-          title="BT01 仍为 PARTIAL"
-          description="即使日线数据 READY，回测模块仍需 BT01-R 补全与封板。"
+          title="BT01 日线回测代码已完成"
+          description="能否运行取决于所选标的、时间范围和 D01 数据状态；分钟与 Tick 回测仍未实现。"
           style={{ marginTop: 12 }}
         />
       </Card>

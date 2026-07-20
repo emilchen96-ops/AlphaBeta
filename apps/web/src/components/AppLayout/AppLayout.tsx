@@ -55,7 +55,7 @@ const menuItems = [
       { key: "/risk/limits", label: "当前限制" },
     ],
   },
-  { key: "/backtest", icon: <DatabaseOutlined />, label: "回测（部分）" },
+  { key: "/backtest", icon: <DatabaseOutlined />, label: "日线回测" },
   { key: "/audit", icon: <AuditOutlined />, label: "审计（计划）" },
   { key: "/settings", icon: <SettingOutlined />, label: "设置（只读）" },
 ];

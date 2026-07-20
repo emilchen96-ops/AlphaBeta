@@ -653,7 +653,7 @@ class MarketDataReadinessService:
                         if status is MarketDataReadinessStatus.READY
                         else "先执行日线增量更新, 再运行数据质量检查。"
                     ),
-                    code_status="PARTIAL" if key == "backtest_daily" else "WORKING",
+                    code_status="WORKING",
                 )
             )
         return tuple(values)
@@ -703,7 +703,7 @@ class MarketDataReadinessService:
             backtest_data_ready=(
                 by_key["backtest_daily"].status is MarketDataReadinessStatus.READY
             ),
-            backtest_code_status="PARTIAL",
+            backtest_code_status="WORKING",
         )
 
     async def _coverage(

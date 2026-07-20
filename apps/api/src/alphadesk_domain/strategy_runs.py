@@ -10,7 +10,12 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID, uuid4
 
-from alphadesk_domain.enums import MarketTimeframe
+from alphadesk_domain.enums import (
+    AdjustmentType,
+    MarketDataQualityStatus,
+    MarketDataReadinessStatus,
+    MarketTimeframe,
+)
 from alphadesk_domain.strategy import (
     StrategyBar,
     StrategyEnvironment,
@@ -63,8 +68,8 @@ class StrategyRun:
         self.request_fingerprint = non_empty(self.request_fingerprint, "request_fingerprint")
         self.strategy_key = non_empty(self.strategy_key, "strategy_key")
         self.strategy_version = non_empty(self.strategy_version, "strategy_version")
-        if self.environment is not StrategyEnvironment.RESEARCH:
-            raise ValueError("S01-B strategy runs only support RESEARCH")
+        if self.environment not in (StrategyEnvironment.RESEARCH, StrategyEnvironment.BACKTEST):
+            raise ValueError("historical strategy runs only support RESEARCH or BACKTEST")
         self.start_at = as_utc(self.start_at, "start_at")
         self.end_at = as_utc(self.end_at, "end_at")
         if self.start_at >= self.end_at:
@@ -113,6 +118,53 @@ class StrategyRun:
         self.updated_at = now
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HistoricalDataReadiness:
+    """Deterministic readiness result for one bounded historical-bar request."""
+
+    status: MarketDataReadinessStatus
+    source_code: str
+    adjustment_type: AdjustmentType
+    accepted_quality_statuses: tuple[MarketDataQualityStatus, ...]
+    requested_instrument_count: int
+    ready_instrument_count: int
+    minimum_bars_per_instrument: int
+    total_bar_count: int
+    missing_instrument_ids: tuple[UUID, ...]
+    earliest_bar: datetime | None = None
+    latest_bar: datetime | None = None
+
+    def __post_init__(self) -> None:
+        source_code = self.source_code.strip().upper()
+        if not source_code:
+            raise ValueError("source_code must not be empty")
+        if self.requested_instrument_count < 0 or self.ready_instrument_count < 0:
+            raise ValueError("readiness instrument counts must be non-negative")
+        if self.ready_instrument_count > self.requested_instrument_count:
+            raise ValueError("ready_instrument_count exceeds requested count")
+        if self.minimum_bars_per_instrument < 1 or self.total_bar_count < 0:
+            raise ValueError("readiness bar counts are invalid")
+        qualities = tuple(sorted(set(self.accepted_quality_statuses), key=str))
+        if not qualities:
+            raise ValueError("accepted_quality_statuses must not be empty")
+        missing = tuple(sorted(set(self.missing_instrument_ids), key=str))
+        if len(missing) != self.requested_instrument_count - self.ready_instrument_count:
+            raise ValueError("missing instruments do not match readiness counts")
+        object.__setattr__(self, "source_code", source_code)
+        object.__setattr__(self, "accepted_quality_statuses", qualities)
+        object.__setattr__(self, "missing_instrument_ids", missing)
+        if self.earliest_bar is not None:
+            object.__setattr__(self, "earliest_bar", as_utc(self.earliest_bar, "earliest_bar"))
+        if self.latest_bar is not None:
+            object.__setattr__(self, "latest_bar", as_utc(self.latest_bar, "latest_bar"))
+        if (
+            self.earliest_bar is not None
+            and self.latest_bar is not None
+            and self.earliest_bar > self.latest_bar
+        ):
+            raise ValueError("earliest_bar must not follow latest_bar")
+
+
 class HistoricalBarProvider(Protocol):
     async def list_bars(
         self,
@@ -122,6 +174,35 @@ class HistoricalBarProvider(Protocol):
         start_at: datetime,
         end_at: datetime,
     ) -> list[StrategyBar]: ...
+
+    async def list_authoritative_bars(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        source_code: str,
+        adjustment_type: AdjustmentType = AdjustmentType.NONE,
+        accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
+            MarketDataQualityStatus.NORMAL,
+        ),
+    ) -> list[StrategyBar]: ...
+
+    async def readiness(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        source_code: str,
+        adjustment_type: AdjustmentType = AdjustmentType.NONE,
+        accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
+            MarketDataQualityStatus.NORMAL,
+        ),
+        minimum_bars_per_instrument: int = 1,
+    ) -> HistoricalDataReadiness: ...
 
 
 def stored_parameters(

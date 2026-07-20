@@ -18,6 +18,11 @@ from alphadesk_api.infrastructure.models import (
     AccountSnapshotModel,
     AIAnalysisRunModel,
     AuditLogModel,
+    BacktestEquityPointModel,
+    BacktestEventModel,
+    BacktestMetricModel,
+    BacktestRunModel,
+    BacktestTradeSummaryModel,
     BrokerExecutionAttemptModel,
     CashLedgerEntryModel,
     DomainEventModel,
@@ -72,6 +77,16 @@ from alphadesk_domain.accounting import (
     PositionLedgerEntry,
 )
 from alphadesk_domain.ai_research import AIAnalysisRun, ResearchEvidence, ResearchInsight
+from alphadesk_domain.backtest import (
+    BacktestEquityPoint,
+    BacktestEvent,
+    BacktestMetricSet,
+    BacktestRun,
+    BacktestRunStatus,
+    BacktestTradeSummary,
+    backtest_configuration_from_dict,
+    backtest_configuration_to_dict,
+)
 from alphadesk_domain.entities import (
     AuditLog,
     DomainEvent,
@@ -99,6 +114,8 @@ from alphadesk_domain.enums import (
     CommandType,
     MarketDataIssueSeverity,
     MarketDataQualityRunStatus,
+    MarketDataQualityStatus,
+    MarketDataReadinessStatus,
     MarketDataSourceStatus,
     MarketSyncStatus,
     MarketTimeframe,
@@ -129,7 +146,7 @@ from alphadesk_domain.scanners import ScanResult, ScanRun
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
-from alphadesk_domain.strategy_runs import StrategyRun
+from alphadesk_domain.strategy_runs import HistoricalDataReadiness, StrategyRun
 
 
 def model_values(model: DeclarativeBase) -> dict[str, Any]:
@@ -157,6 +174,219 @@ class SqlAlchemyRepository[EntityT, OrmT: DeclarativeBase]:
     async def _get_by_id(self, entity_id: UUID) -> EntityT | None:
         row = await self._session.get(self.model_type, entity_id)
         return None if row is None else entity_from_model(self.entity_type, row)
+
+
+def _backtest_run_from_model(model: BacktestRunModel) -> BacktestRun:
+    return BacktestRun(
+        id=model.id,
+        idempotency_key=model.idempotency_key,
+        request_fingerprint=model.request_fingerprint,
+        configuration=backtest_configuration_from_dict(model.configuration),
+        strategy_run_id=model.strategy_run_id,
+        account_id=model.account_id,
+        status=BacktestRunStatus(model.status),
+        bars_processed=model.bars_processed,
+        sessions_processed=model.sessions_processed,
+        signals_generated=model.signals_generated,
+        risk_passed=model.risk_passed,
+        risk_rejected=model.risk_rejected,
+        risk_reviewed=model.risk_reviewed,
+        orders_created=model.orders_created,
+        fills_generated=model.fills_generated,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        failed_at=model.failed_at,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        correlation_id=model.correlation_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _backtest_run_values(entity: BacktestRun) -> dict[str, Any]:
+    return {
+        "id": entity.id,
+        "idempotency_key": entity.idempotency_key,
+        "request_fingerprint": entity.request_fingerprint,
+        "configuration": backtest_configuration_to_dict(entity.configuration),
+        "strategy_run_id": entity.strategy_run_id,
+        "account_id": entity.account_id,
+        "status": entity.status.value,
+        "bars_processed": entity.bars_processed,
+        "sessions_processed": entity.sessions_processed,
+        "signals_generated": entity.signals_generated,
+        "risk_passed": entity.risk_passed,
+        "risk_rejected": entity.risk_rejected,
+        "risk_reviewed": entity.risk_reviewed,
+        "orders_created": entity.orders_created,
+        "fills_generated": entity.fills_generated,
+        "started_at": entity.started_at,
+        "completed_at": entity.completed_at,
+        "failed_at": entity.failed_at,
+        "error_code": entity.error_code,
+        "error_message": entity.error_message,
+        "correlation_id": entity.correlation_id,
+        "created_at": entity.created_at,
+        "updated_at": entity.updated_at,
+    }
+
+
+class SqlAlchemyBacktestRunRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def lock_idempotency_key(self, key: str) -> None:
+        """Serialize creation attempts for one caller-supplied idempotency key."""
+
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"backtest:{key}", 0)))
+        )
+
+    async def add(self, entity: BacktestRun) -> None:
+        self._session.add(BacktestRunModel(**_backtest_run_values(entity)))
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> BacktestRun | None:
+        row = await self._session.get(BacktestRunModel, entity_id)
+        return None if row is None else _backtest_run_from_model(row)
+
+    async def get_by_idempotency_key(self, key: str) -> BacktestRun | None:
+        row = await self._session.scalar(
+            select(BacktestRunModel).where(BacktestRunModel.idempotency_key == key)
+        )
+        return None if row is None else _backtest_run_from_model(row)
+
+    async def get_for_update(self, entity_id: UUID) -> BacktestRun | None:
+        row = await self._session.scalar(
+            select(BacktestRunModel).where(BacktestRunModel.id == entity_id).with_for_update()
+        )
+        return None if row is None else _backtest_run_from_model(row)
+
+    async def update_status(self, entity: BacktestRun) -> None:
+        values = _backtest_run_values(entity)
+        values.pop("id")
+        values.pop("created_at")
+        await self._session.execute(
+            update(BacktestRunModel).where(BacktestRunModel.id == entity.id).values(**values)
+        )
+        await self._session.flush()
+
+    async def list(
+        self, *, status: str | None, offset: int, limit: int
+    ) -> tuple[list[BacktestRun], int]:
+        conditions = [] if status is None else [BacktestRunModel.status == status]
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(BacktestRunModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(BacktestRunModel)
+            .where(*conditions)
+            .order_by(BacktestRunModel.created_at.desc(), BacktestRunModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [_backtest_run_from_model(row) for row in rows], total
+
+
+class SqlAlchemyBacktestEquityPointRepository(
+    SqlAlchemyRepository[BacktestEquityPoint, BacktestEquityPointModel]
+):
+    entity_type = BacktestEquityPoint
+    model_type = BacktestEquityPointModel
+
+    async def append(self, entity: BacktestEquityPoint) -> None:
+        await self._add(entity)
+
+    async def list_by_run(self, run_id: UUID) -> list[BacktestEquityPoint]:
+        rows = await self._session.scalars(
+            select(BacktestEquityPointModel)
+            .where(BacktestEquityPointModel.run_id == run_id)
+            .order_by(BacktestEquityPointModel.timestamp, BacktestEquityPointModel.id)
+        )
+        return [entity_from_model(BacktestEquityPoint, row) for row in rows]
+
+    async def get_latest(self, run_id: UUID) -> BacktestEquityPoint | None:
+        row = await self._session.scalar(
+            select(BacktestEquityPointModel)
+            .where(BacktestEquityPointModel.run_id == run_id)
+            .order_by(BacktestEquityPointModel.timestamp.desc())
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(BacktestEquityPoint, row)
+
+    async def count_by_run(self, run_id: UUID) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(BacktestEquityPointModel)
+                .where(BacktestEquityPointModel.run_id == run_id)
+            )
+            or 0
+        )
+
+
+class SqlAlchemyBacktestMetricRepository(
+    SqlAlchemyRepository[BacktestMetricSet, BacktestMetricModel]
+):
+    entity_type = BacktestMetricSet
+    model_type = BacktestMetricModel
+
+    async def save(self, entity: BacktestMetricSet) -> None:
+        values = model_values(model_from_entity(BacktestMetricModel, entity))
+        updates = {key: value for key, value in values.items() if key not in ("id", "run_id")}
+        await self._session.execute(
+            pg_insert(BacktestMetricModel)
+            .values(**values)
+            .on_conflict_do_update(index_elements=["run_id"], set_=updates)
+        )
+        await self._session.flush()
+
+    async def get_by_run(self, run_id: UUID) -> BacktestMetricSet | None:
+        row = await self._session.scalar(
+            select(BacktestMetricModel).where(BacktestMetricModel.run_id == run_id)
+        )
+        return None if row is None else entity_from_model(BacktestMetricSet, row)
+
+
+class SqlAlchemyBacktestTradeSummaryRepository(
+    SqlAlchemyRepository[BacktestTradeSummary, BacktestTradeSummaryModel]
+):
+    entity_type = BacktestTradeSummary
+    model_type = BacktestTradeSummaryModel
+
+    async def append_many(self, entities: list[BacktestTradeSummary]) -> None:
+        self._session.add_all(
+            [model_from_entity(BacktestTradeSummaryModel, entity) for entity in entities]
+        )
+        await self._session.flush()
+
+    async def list_by_run(self, run_id: UUID) -> list[BacktestTradeSummary]:
+        rows = await self._session.scalars(
+            select(BacktestTradeSummaryModel)
+            .where(BacktestTradeSummaryModel.run_id == run_id)
+            .order_by(BacktestTradeSummaryModel.closed_at, BacktestTradeSummaryModel.id)
+        )
+        return [entity_from_model(BacktestTradeSummary, row) for row in rows]
+
+
+class SqlAlchemyBacktestEventRepository(SqlAlchemyRepository[BacktestEvent, BacktestEventModel]):
+    entity_type = BacktestEvent
+    model_type = BacktestEventModel
+
+    async def append(self, entity: BacktestEvent) -> None:
+        await self._add(entity)
+
+    async def list_by_run(self, run_id: UUID) -> list[BacktestEvent]:
+        rows = await self._session.scalars(
+            select(BacktestEventModel)
+            .where(BacktestEventModel.run_id == run_id)
+            .order_by(BacktestEventModel.sequence_number)
+        )
+        return [entity_from_model(BacktestEvent, row) for row in rows]
 
 
 class SqlAlchemyInstrumentRepository(SqlAlchemyRepository[Instrument, InstrumentModel]):
@@ -827,6 +1057,14 @@ class SqlAlchemySignalRepository(SqlAlchemyRepository[Signal, SignalModel]):
             )
             or 0
         )
+
+    async def list_all_by_run(self, run_id: UUID) -> list[Signal]:
+        rows = await self._session.scalars(
+            select(SignalModel)
+            .where(SignalModel.strategy_run_id == run_id)
+            .order_by(SignalModel.sequence_number, SignalModel.id)
+        )
+        return [entity_from_model(Signal, row) for row in rows]
 
 
 class SqlAlchemyStrategyRunRepository(SqlAlchemyRepository[StrategyRun, StrategyRunModel]):
@@ -1518,6 +1756,154 @@ class SqlAlchemyHistoricalBarProvider:
             )
         return bars
 
+    async def list_authoritative_bars(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        source_code: str,
+        adjustment_type: AdjustmentType = AdjustmentType.NONE,
+        accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
+            MarketDataQualityStatus.NORMAL,
+        ),
+    ) -> list[StrategyBar]:
+        """Read one explicit source/adjustment/quality slice in stable fact order."""
+
+        code = source_code.strip().upper()
+        qualities = tuple(sorted(set(accepted_quality_statuses), key=str))
+        if not code or not qualities:
+            raise StrategyError(
+                "STRATEGY_INVALID_BAR", "authoritative source and quality statuses are required"
+            )
+        result = await self._session.execute(
+            select(MarketBarModel, InstrumentModel)
+            .join(InstrumentModel, InstrumentModel.id == MarketBarModel.instrument_id)
+            .join(MarketDataSourceModel, MarketDataSourceModel.id == MarketBarModel.source_id)
+            .where(
+                MarketBarModel.instrument_id.in_(instrument_ids),
+                MarketBarModel.timeframe == timeframe.value,
+                MarketBarModel.adjustment_type == adjustment_type.value,
+                MarketBarModel.quality_status.in_(tuple(item.value for item in qualities)),
+                MarketBarModel.bar_time >= start_at,
+                MarketBarModel.bar_time < end_at,
+                MarketDataSourceModel.source_code == code,
+                MarketDataSourceModel.status == MarketDataSourceStatus.ACTIVE.value,
+            )
+            .order_by(
+                MarketBarModel.bar_time,
+                MarketBarModel.instrument_id,
+                MarketBarModel.id,
+            )
+        )
+        return [
+            StrategyBar(
+                instrument_id=row.instrument_id,
+                symbol=instrument.symbol,
+                exchange=instrument.exchange,
+                timeframe=timeframe,
+                timestamp=row.bar_time,
+                open=row.open,
+                high=row.high,
+                low=row.low,
+                close=row.close,
+                volume=row.volume,
+                amount=row.amount,
+            )
+            for row, instrument in result.tuples()
+        ]
+
+    async def readiness(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        source_code: str,
+        adjustment_type: AdjustmentType = AdjustmentType.NONE,
+        accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
+            MarketDataQualityStatus.NORMAL,
+        ),
+        minimum_bars_per_instrument: int = 1,
+    ) -> HistoricalDataReadiness:
+        code = source_code.strip().upper()
+        ids = tuple(sorted(set(instrument_ids), key=str))
+        qualities = tuple(sorted(set(accepted_quality_statuses), key=str))
+        if not code or not qualities or minimum_bars_per_instrument < 1:
+            raise ValueError("historical readiness request is invalid")
+        source = await self._session.scalar(
+            select(MarketDataSourceModel).where(MarketDataSourceModel.source_code == code)
+        )
+        if source is None or source.status != MarketDataSourceStatus.ACTIVE.value:
+            return HistoricalDataReadiness(
+                status=(
+                    MarketDataReadinessStatus.UNKNOWN
+                    if not ids
+                    else MarketDataReadinessStatus.NOT_READY
+                ),
+                source_code=code,
+                adjustment_type=adjustment_type,
+                accepted_quality_statuses=qualities,
+                requested_instrument_count=len(ids),
+                ready_instrument_count=0,
+                minimum_bars_per_instrument=minimum_bars_per_instrument,
+                total_bar_count=0,
+                missing_instrument_ids=ids,
+            )
+        rows = await self._session.execute(
+            select(
+                MarketBarModel.instrument_id,
+                func.count(MarketBarModel.id).label("bar_count"),
+                func.min(MarketBarModel.bar_time).label("earliest_bar"),
+                func.max(MarketBarModel.bar_time).label("latest_bar"),
+            )
+            .where(
+                MarketBarModel.instrument_id.in_(ids),
+                MarketBarModel.source_id == source.id,
+                MarketBarModel.timeframe == timeframe.value,
+                MarketBarModel.adjustment_type == adjustment_type.value,
+                MarketBarModel.quality_status.in_(tuple(item.value for item in qualities)),
+                MarketBarModel.bar_time >= start_at,
+                MarketBarModel.bar_time < end_at,
+            )
+            .group_by(MarketBarModel.instrument_id)
+        )
+        coverage = list(rows)
+        counts = {row.instrument_id: int(row.bar_count) for row in coverage}
+        ready_ids = {item for item in ids if counts.get(item, 0) >= minimum_bars_per_instrument}
+        missing = tuple(item for item in ids if item not in ready_ids)
+        total_bars = sum(counts.values())
+        status = (
+            MarketDataReadinessStatus.UNKNOWN
+            if not ids
+            else MarketDataReadinessStatus.READY
+            if len(ready_ids) == len(ids)
+            else MarketDataReadinessStatus.PARTIAL
+            if total_bars > 0
+            else MarketDataReadinessStatus.NOT_READY
+        )
+        return HistoricalDataReadiness(
+            status=status,
+            source_code=code,
+            adjustment_type=adjustment_type,
+            accepted_quality_statuses=qualities,
+            requested_instrument_count=len(ids),
+            ready_instrument_count=len(ready_ids),
+            minimum_bars_per_instrument=minimum_bars_per_instrument,
+            total_bar_count=total_bars,
+            missing_instrument_ids=missing,
+            earliest_bar=min(
+                (row.earliest_bar for row in coverage if row.earliest_bar is not None),
+                default=None,
+            ),
+            latest_bar=max(
+                (row.latest_bar for row in coverage if row.latest_bar is not None),
+                default=None,
+            ),
+        )
+
 
 class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):
     entity_type = Order
@@ -1634,6 +2020,14 @@ class SqlAlchemyOrderRepository(SqlAlchemyRepository[Order, OrderModel]):
             )
             or 0
         )
+
+    async def list_all_by_account(self, account_id: UUID) -> builtins.list[Order]:
+        rows = await self._session.scalars(
+            select(OrderModel)
+            .where(OrderModel.account_id == account_id)
+            .order_by(OrderModel.created_at, OrderModel.id)
+        )
+        return [entity_from_model(Order, row) for row in rows]
 
     async def update_projection(self, entity: Order) -> None:
         await self._session.execute(
@@ -1854,6 +2248,14 @@ class SqlAlchemyFillRepository(SqlAlchemyRepository[Fill, FillModel]):
         )
         return [entity_from_model(Fill, row) for row in rows], total
 
+    async def list_all_by_account(self, account_id: UUID) -> builtins.list[Fill]:
+        rows = await self._session.scalars(
+            select(FillModel)
+            .where(FillModel.account_id == account_id)
+            .order_by(FillModel.executed_at, FillModel.sequence_number, FillModel.id)
+        )
+        return [entity_from_model(Fill, row) for row in rows]
+
 
 class SqlAlchemyBrokerExecutionAttemptRepository(
     SqlAlchemyRepository[BrokerExecutionAttempt, BrokerExecutionAttemptModel]
@@ -1985,6 +2387,14 @@ class SqlAlchemyRiskDecisionRepository(SqlAlchemyRepository[RiskDecision, RiskDe
             .limit(limit)
         )
         return [entity_from_model(RiskDecision, row) for row in rows], total
+
+    async def list_all_by_account(self, account_id: UUID) -> builtins.list[RiskDecision]:
+        rows = await self._session.scalars(
+            select(RiskDecisionModel)
+            .where(RiskDecisionModel.account_id == account_id)
+            .order_by(RiskDecisionModel.evaluated_at, RiskDecisionModel.id)
+        )
+        return [entity_from_model(RiskDecision, row) for row in rows]
 
 
 class SqlAlchemyRiskRuleEvaluationRepository(
