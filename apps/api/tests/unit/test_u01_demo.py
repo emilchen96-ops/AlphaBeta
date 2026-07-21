@@ -74,12 +74,13 @@ async def test_verification_separates_ready_disabled_and_not_implemented() -> No
         SnapshotProvider(
             CapabilityDataSnapshot(
                 database_reachable=True,
-                migration_head="0015_bt01",
+                migration_head="0016_rt01",
                 daily_market_bar_count=260,
                 scan_run_count=2,
                 strategy_run_count=3,
                 strategy_experiment_count=1,
                 backtest_run_count=1,
+                replay_run_count=1,
                 information_item_count=1,
                 market_event_count=1,
                 ai_analysis_run_count=1,

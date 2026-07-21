@@ -28,7 +28,7 @@ docker compose exec api python -m alphadesk_api.cli.demo verify-research --json
 
 ## 3. 推荐使用顺序
 
-依次查看数据中心、自选行情、扫描运行、策略研究、批量研究、日线回测、资讯事件、
+依次查看数据中心、自选行情、扫描运行、策略研究、批量研究、日线回测、历史回放、资讯事件、
 AI 研究、风控决策、订单、成交和持仓。U01 演示中的 AI 是 Fake Provider，订单只进入本地
 模拟 Broker，绝不连接真实券商。
 
@@ -46,6 +46,12 @@ Signal，不会创建订单。结果在“研究运行”和“研究 Signal”�
 
 打开“日线回测”，选择本地日线标的和 `sma_crossover`。回测使用独立账户，并按 T 日
 收盘 Signal、下一有效交易日开盘执行。详情应包含指标、权益曲线、Order、Fill 和 Integrity。
+
+### 第一次运行历史回放
+
+打开“历史回放”，选择与回测相同的本地日线、策略和参数。建议先选 MANUAL：创建后点“单步”
+逐日观察 Session、K 线、Signal、风控、订单、成交、账户和 Timeline；再用 X10 验证自动 Worker。
+完成后检查最终指标与 Integrity。页面中的历史时间不是实时市场，回放不会连接 MiniQMT 或券商。
 
 ### 资讯、AI 与模拟订单
 

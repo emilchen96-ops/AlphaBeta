@@ -1,5 +1,10 @@
 # PostgreSQL 持久化模型
 
+> RT01 Migration `0016_rt01`（唯一前驱 `0015_bt01`）新增 `replay_runs`、
+> `replay_control_actions`、`replay_events`、`replay_equity_points`。Run 保存配置快照、Session 游标、
+> 版本与 Worker lease；控制动作和事件追加写入并有稳定幂等/序号约束。Signal、RiskDecision、
+> Order、Fill 与账本继续复用既有事实表，不建立第二套交易事实。
+
 > BT01-R Migration `0015_bt01`（唯一前驱 `0014_d01`）新增 `backtest_runs`、`backtest_equity_points`、`backtest_metrics`、`backtest_trade_summaries` 与追加式 `backtest_events`。Run 通过 `strategy_run_id`、`account_id` 和 `correlation_id` 复用既有 Signal、RiskDecision、Order、Fill 与 M04 账本事实；不复制第二套交易事实表。指标 warnings 使用 JSONB，金额与比例使用 NUMERIC。
 
 > N01 Migration `0012_n01` 新增资讯来源、摄取运行、RawDocument、InformationItem、MarketEvent 和 Instrument/主题关联表。原始文档按同来源 external ID 和规范内容 SHA-256 去重；每个 InformationItem 至多一个 MarketEvent；confidence/importance 使用 NUMERIC。

@@ -51,6 +51,7 @@ class CapabilityDataCountsResponse(BaseModel):
     fill_count: int | None = None
     risk_decision_count: int | None = None
     backtest_run_count: int | None = None
+    replay_run_count: int | None = None
 
 
 class SystemCapabilityResponse(BaseModel):
@@ -86,6 +87,7 @@ class SystemCapabilityResponse(BaseModel):
     last_success_at: datetime | None = None
     provider: str | None = None
     mode: str
+    worker_status: Literal["ONLINE", "OFFLINE", "NOT_REQUIRED"] = "NOT_REQUIRED"
 
 
 class SystemCapabilitiesResponse(BaseModel):

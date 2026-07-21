@@ -285,3 +285,13 @@ body {
   border-radius: 8px;
   background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
 }
+.form-grid,
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.form-grid .ant-form-item {
+  margin-bottom: 8px;
+}

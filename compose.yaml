@@ -79,6 +79,11 @@ services:
       ALPHADESK_AI_COST_INPUT_PER_MILLION: ${ALPHADESK_AI_COST_INPUT_PER_MILLION:-}
       ALPHADESK_AI_COST_OUTPUT_PER_MILLION: ${ALPHADESK_AI_COST_OUTPUT_PER_MILLION:-}
       ALPHADESK_AI_STRUCTURED_OUTPUT_ENABLED: ${ALPHADESK_AI_STRUCTURED_OUTPUT_ENABLED:-true}
+      ALPHADESK_REPLAY_INTERVAL_X1_MS: ${ALPHADESK_REPLAY_INTERVAL_X1_MS:-1000}
+      ALPHADESK_REPLAY_INTERVAL_X10_MS: ${ALPHADESK_REPLAY_INTERVAL_X10_MS:-250}
+      ALPHADESK_REPLAY_INTERVAL_X100_MS: ${ALPHADESK_REPLAY_INTERVAL_X100_MS:-50}
+      ALPHADESK_REPLAY_MAX_INSTRUMENTS: ${ALPHADESK_REPLAY_MAX_INSTRUMENTS:-20}
+      ALPHADESK_REPLAY_MAX_SESSIONS: ${ALPHADESK_REPLAY_MAX_SESSIONS:-5000}
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
@@ -138,6 +143,45 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  replay_worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "alphadesk_api.workers.replay"]
+    environment:
+      ALPHADESK_ENVIRONMENT: ${ALPHADESK_ENVIRONMENT:-development}
+      ALPHADESK_POSTGRES_HOST: postgres
+      ALPHADESK_POSTGRES_PORT: 5432
+      ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+      ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_REDIS_HOST: redis
+      ALPHADESK_REDIS_PORT: 6379
+      ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
+      ALPHADESK_REPLAY_INTERVAL_X1_MS: ${ALPHADESK_REPLAY_INTERVAL_X1_MS:-1000}
+      ALPHADESK_REPLAY_INTERVAL_X10_MS: ${ALPHADESK_REPLAY_INTERVAL_X10_MS:-250}
+      ALPHADESK_REPLAY_INTERVAL_X100_MS: ${ALPHADESK_REPLAY_INTERVAL_X100_MS:-50}
+      ALPHADESK_REPLAY_WORKER_POLL_MS: ${ALPHADESK_REPLAY_WORKER_POLL_MS:-250}
+      ALPHADESK_REPLAY_WORKER_LEASE_SECONDS: ${ALPHADESK_REPLAY_WORKER_LEASE_SECONDS:-15}
+      ALPHADESK_REPLAY_WORKER_HEARTBEAT_SECONDS: ${ALPHADESK_REPLAY_WORKER_HEARTBEAT_SECONDS:-5}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:replays:v1:worker:heartbeat'); x.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   web:

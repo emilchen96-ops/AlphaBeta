@@ -62,6 +62,7 @@ ZERO = Decimal("0")
 LOCAL_CONSUMER = "LOCAL_SIMULATED_BROKER"
 LOCAL_SUPPRESSION_REASON = "LOCAL_SIMULATED_EXECUTION"
 BACKTEST_SUPPRESSION_REASON = "BACKTEST_ENGINE"
+REPLAY_SUPPRESSION_REASON = "REPLAY_ENGINE"
 EXECUTABLE_STATUSES = frozenset(
     {OrderStatus.QUEUED, OrderStatus.BROKER_ACCEPTED, OrderStatus.PARTIALLY_FILLED}
 )
@@ -567,7 +568,8 @@ class SimulatedBrokerExecutionService:
                 outbox.status is OutboxStatus.PENDING
                 or (
                     outbox.status is OutboxStatus.SUPPRESSED
-                    and outbox.suppression_reason == BACKTEST_SUPPRESSION_REASON
+                    and outbox.suppression_reason
+                    in (BACKTEST_SUPPRESSION_REASON, REPLAY_SUPPRESSION_REASON)
                 )
             ):
                 raise ApplicationError(
@@ -581,6 +583,7 @@ class SimulatedBrokerExecutionService:
         if outbox.status is not OutboxStatus.SUPPRESSED or outbox.suppression_reason not in (
             LOCAL_SUPPRESSION_REASON,
             BACKTEST_SUPPRESSION_REASON,
+            REPLAY_SUPPRESSION_REASON,
         ):
             raise ApplicationError(
                 "BROKER_OUTBOX_NOT_SUPPRESSED", "local submit outbox is not suppressed"

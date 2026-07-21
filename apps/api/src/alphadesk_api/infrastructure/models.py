@@ -1,6 +1,6 @@
 """SQLAlchemy persistence models kept separate from domain entities."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -9,6 +9,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -73,6 +74,12 @@ from alphadesk_domain.information import (
     MarketEventDirection,
     MarketEventStatus,
     MarketEventType,
+)
+from alphadesk_domain.replay import (
+    ReplayActorType,
+    ReplayControlActionType,
+    ReplayRunStatus,
+    ReplaySpeedMode,
 )
 from alphadesk_domain.scanners import ScanRunStatus
 from alphadesk_domain.strategy import StrategyEnvironment
@@ -2245,3 +2252,157 @@ class BacktestEventModel(Base):
     sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
     summary: Mapped[str] = mapped_column(String(256), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ReplayRunModel(MutableTimestampedModel, Base):
+    __tablename__ = "replay_runs"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_replay_runs_idempotency_key"),
+        UniqueConstraint("strategy_run_id", name="uq_replay_runs_strategy_run"),
+        UniqueConstraint("account_id", name="uq_replay_runs_account"),
+        CheckConstraint(
+            f"status IN ({enum_values(ReplayRunStatus)})", name="replay_run_status_valid"
+        ),
+        CheckConstraint(
+            f"speed_mode IN ({enum_values(ReplaySpeedMode)})", name="replay_speed_valid"
+        ),
+        CheckConstraint(
+            "row_version >= 0 AND total_sessions > 0 AND current_session_index >= 0 "
+            "AND current_session_index <= total_sessions AND bars_processed >= 0 "
+            "AND signals_generated >= 0 AND orders_created >= 0 AND fills_generated >= 0",
+            name="replay_run_counters_valid",
+        ),
+        CheckConstraint("length(request_fingerprint) = 64", name="replay_fingerprint_length"),
+        Index("ix_replay_runs_status_created", "status", "created_at"),
+        Index("ix_replay_runs_lease", "status", "lease_expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    account_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT")
+    )
+    strategy_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_runs.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    row_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_session_date: Mapped[date | None] = mapped_column(Date)
+    current_session_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_sessions: Mapped[int] = mapped_column(Integer, nullable=False)
+    speed_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    bars_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    signals_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    orders_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fills_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    final_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    integrity_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ReplayControlActionModel(TimestampedModel, Base):
+    __tablename__ = "replay_control_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "replay_run_id", "idempotency_key", name="uq_replay_actions_run_idempotency"
+        ),
+        CheckConstraint(
+            f"action_type IN ({enum_values(ReplayControlActionType)})",
+            name="replay_action_type_valid",
+        ),
+        CheckConstraint(
+            f"requested_speed IS NULL OR requested_speed IN ({enum_values(ReplaySpeedMode)})",
+            name="replay_action_speed_valid",
+        ),
+        CheckConstraint(
+            f"actor_type IN ({enum_values(ReplayActorType)})", name="replay_actor_type_valid"
+        ),
+        CheckConstraint(
+            "expected_run_version >= 0 AND applied_run_version >= 0",
+            name="replay_action_versions_valid",
+        ),
+        Index("ix_replay_actions_run_occurred", "replay_run_id", "occurred_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    replay_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("replay_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    action_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_run_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    applied_run_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_speed: Mapped[str | None] = mapped_column(String(16))
+    actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(String(128))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ReplayEventModel(TimestampedModel, Base):
+    __tablename__ = "replay_events"
+    __table_args__ = (
+        UniqueConstraint("replay_run_id", "sequence_number", name="uq_replay_events_run_sequence"),
+        CheckConstraint("sequence_number >= 1", name="sequence_positive"),
+        Index("ix_replay_events_run_sequence", "replay_run_id", "sequence_number"),
+        Index("ix_replay_events_type", "replay_run_id", "event_type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    replay_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("replay_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    business_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    instrument_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT")
+    )
+    related_entity_type: Mapped[str | None] = mapped_column(String(64))
+    related_entity_id: Mapped[UUID | None] = mapped_column(Uuid)
+    summary: Mapped[str] = mapped_column(String(256), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ReplayEquityPointModel(TimestampedModel, Base):
+    __tablename__ = "replay_equity_points"
+    __table_args__ = (
+        UniqueConstraint("run_id", "timestamp", name="uq_replay_equity_run_timestamp"),
+        CheckConstraint(
+            "cash >= 0 AND market_value >= 0 AND total_equity = cash + market_value "
+            "AND gross_exposure >= 0 AND drawdown <= 0 AND positions_count >= 0",
+            name="values_valid",
+        ),
+        Index("ix_replay_equity_run_timestamp", "run_id", "timestamp"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("replay_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cash: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    market_value: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    total_equity: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    gross_exposure: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    net_exposure: Mapped[Decimal] = mapped_column(AMOUNT, nullable=False)
+    daily_return: Mapped[Decimal | None] = mapped_column(RATIO)
+    cumulative_return: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    drawdown: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    positions_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)

@@ -58,6 +58,13 @@ const journey = [
     "指标与 Integrity 通过",
   ],
   [
+    "运行历史回放",
+    "/replays",
+    "historical_replay",
+    "历史日线和 replay_worker 已就绪",
+    "可启动、暂停、单步并查看权益与事件",
+  ],
+  [
     "录入资讯",
     "/information",
     "information_center",

@@ -11,7 +11,7 @@
 - 来源分支/提交：`codex/scanner-information-ai` / `6d3aec6`。
 - 集成分支：`codex/integration-v0.1`。
 - 已整合：M01–M05、S01、S02、R01、B01、SC01、N01、A01。
-- I01 当时只做盘点、只读能力检查、明确状态和确定性接线修复；D01 与 BT01-R 后来分别完成。RT01、真实 AI、Windows Agent、MiniQMT 与真实 Broker 仍未实施。
+- I01 当时只做盘点、只读能力检查、明确状态和确定性接线修复；D01、BT01-R、A01-P 与 RT01 后来分别完成。Windows Agent、MiniQMT 与真实 Broker 仍未实施。
 
 ## BT01 审查结论
 
@@ -44,7 +44,7 @@ BT01-R 已把 Migration 重定位到 D01 后的唯一 head，并完成日线时�
 
 ## 可复现启动
 
-全新数据库可直接升级到当前唯一 head `0015_bt01`：
+全新数据库可直接升级到当前唯一 head `0016_rt01`：
 
 ```powershell
 docker compose up --build -d

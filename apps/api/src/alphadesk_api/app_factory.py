@@ -12,6 +12,7 @@ from alphadesk_api.api.v1.market_websocket import (
     MarketDataWebSocketHub,
     market_data_websocket,
 )
+from alphadesk_api.api.v1.replay_websocket import replay_websocket
 from alphadesk_api.api.v1.router import api_router, health_router
 from alphadesk_api.api.v1.system import system_websocket
 from alphadesk_api.core.config import Settings, get_settings
@@ -127,4 +128,5 @@ def create_app(
     # WebSocket stays outside the versioned HTTP prefix and is display-only.
     app.add_api_websocket_route("/ws/system", system_websocket)
     app.add_api_websocket_route("/ws/v1/market-data", market_data_websocket)
+    app.add_api_websocket_route("/ws/replays/{replay_id}", replay_websocket)
     return app

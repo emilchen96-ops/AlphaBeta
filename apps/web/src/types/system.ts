@@ -44,6 +44,7 @@ export interface SystemCapability {
   last_success_at?: string | null;
   provider?: string | null;
   mode?: string;
+  worker_status?: "ONLINE" | "OFFLINE" | "NOT_REQUIRED";
 }
 
 export interface CapabilityDataCounts {
@@ -66,6 +67,7 @@ export interface CapabilityDataCounts {
   fill_count: number | null;
   risk_decision_count: number | null;
   backtest_run_count: number | null;
+  replay_run_count: number | null;
 }
 
 export interface SystemCapabilities {

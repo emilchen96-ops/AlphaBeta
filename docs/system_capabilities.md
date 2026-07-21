@@ -17,3 +17,7 @@ A01-P 后，`ai_research.configuration_status` 区分 `DISABLED`、`FAKE`、
 `REAL_CONFIGURED`、`REAL_AVAILABLE`、`REAL_UNAVAILABLE`；面向用户的 availability 分别映射为
 `NOT_AVAILABLE`、`DEMO_ONLY`、`DEGRADED`、`AVAILABLE`、`DEGRADED`。只有本进程真实连通成功才
 显示 `AVAILABLE`，Fake 永远不显示为真实 AI 可用。状态接口不包含 API Key。
+
+RT01 新增 `historical_replay`：代码、D01 日线、配置、`replay_worker` 心跳分别报告，避免把
+“代码已实现”误写成“当前自动播放可用”。MANUAL 单步不依赖 Worker；自动 X1/X10/X100 需要
+Worker ONLINE。回放计数进入 `data_counts.replay_run_count`。

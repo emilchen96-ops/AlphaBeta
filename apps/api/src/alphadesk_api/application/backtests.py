@@ -56,6 +56,7 @@ from alphadesk_domain.backtest import (
     BacktestRunStatus,
     BacktestSession,
     BacktestTradeSummary,
+    HistoricalSessionProcessor,
     backtest_configuration_to_dict,
     backtest_request_fingerprint,
     backtest_risk_configuration_marker,
@@ -416,6 +417,7 @@ class BacktestService:
                 "BACKTEST_TOO_MANY_SESSIONS", "session count exceeds configured limit"
             )
         clock = BacktestClock(sessions)
+        session_processor = HistoricalSessionProcessor(sessions)
 
         account = await SimulatedAccountService(self._uow_factory).create(
             account_code=f"BT-{str(run.id)[:12].upper()}",
@@ -760,6 +762,10 @@ class BacktestService:
                         )
                     )
                     await uow.commit()
+                # BT01 and RT01 advance the same validated session cursor.  BT01
+                # still loops synchronously; RT01 persists this cursor per step.
+                processed_session = session_processor.process_next_session()
+                assert processed_session.session.trading_date == session.trading_date
             clock.advance()
 
         strategy.finalize(context)

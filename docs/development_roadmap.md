@@ -1,5 +1,10 @@
 # 开发路线图
 
+> 2026-07-21：RT01 已完成：D01 日线可按 Session 启动、暂停、恢复、单步和倍速回放；
+> 独立 Worker、lease 恢复、既有 Strategy/R01/M05/B01/M04 事实链、BT01 一致性、API、CLI、
+> WebSocket、页面和 Integrity 均已接入。无 MiniQMT 或实盘能力。下一阶段仅为 **D02：交易日历、
+> 复权因子和停复牌数据增强**。
+
 > 2026-07-21：A01-P 真实 Provider Adapter 已完成：OpenAI 兼容 HTTP、服务端 Secret、结构化
 > Schema/Evidence 校验、有限重试、usage/成本、状态/API/CLI/页面均已接入。默认 Disabled，
 > 未配置 Key 时不访问外网；外部凭据联调未执行。下一阶段仅为 **RT01 历史回放模拟运行**。

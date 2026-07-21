@@ -1,8 +1,12 @@
 # AlphaDesk 文档索引
 
+> 当前回放里程碑为 **RT01 完成**：总览见 [历史日线回放](historical_replay.md)，控制与恢复见
+> [回放控制模型](replay_control_model.md)，Worker 见 [Replay Worker](replay_worker.md)，页面见
+> [回放页面](replay_ui.md)。仅使用 D01 历史日线，不连接 MiniQMT 或券商。下一阶段仅为 D02。
+
 > 当前 AI 增量里程碑为 **A01-P 完成**：真实 OpenAI 兼容 Adapter、Secret 配置、连通状态、
 > Prompt/Schema/Evidence 边界、usage 与成本见 [真实 AI Provider](real_ai_provider.md) 和
-> [AI 研究助手](ai_research_assistant.md)。默认 Disabled；外部凭据未联调。下一阶段仅为 RT01。
+> [AI 研究助手](ai_research_assistant.md)。默认 Disabled；外部凭据未联调。其后 RT01 已完成。
 
 > U01 使用入口：[快速开始](quick_start.md)、[演示研究环境](demo_research_environment.md)、
 > [系统能力状态](system_capabilities.md) 与 [可用性收口状态](usability_status.md)。
@@ -73,6 +77,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
 | BT01 A 股日线回测               | `daily_backtest.md`、`backtest_time_model.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0017 |
+| RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |

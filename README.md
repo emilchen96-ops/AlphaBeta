@@ -1,5 +1,11 @@
 # AlphaDesk
 
+> **2026-07-21：RT01 日线历史回放完成。** 系统可从 D01 日线逐 Session 回放并执行
+> `ReplayClock → Strategy → Risk → Order → Fill → M04`，支持启动、暂停、恢复、单步、倍速、
+> Worker 崩溃恢复、WebSocket Timeline、权益与完整性检查。回放与 BT01 共用时间和指标口径，
+> 不连接实时行情、MiniQMT 或券商。入口：<http://127.0.0.1:5173/replays>；详见
+> [RT01 文档](docs/historical_replay.md)。下一阶段仅为 D02。
+
 > **2026-07-21：U01 一键研究初始化与系统可用性收口。** 首次使用请打开
 > <http://127.0.0.1:5173/getting-started>，或阅读 [快速开始](docs/quick_start.md)。
 > `fixture` 模式不访问外部网络、不连接真实券商；真实实时行情与 MiniQMT 仍不可用。
@@ -24,7 +30,7 @@
 
 > M04 已加入本地模拟账户、资金/持仓只追加账本、成交记账、行情估值、账本核对与 `/portfolio` 网页。它不包含公开订单/成交写 API、撮合、Broker 或实盘。详见 [账本](docs/accounting.md)、[估值](docs/account_valuation.md) 和 [核对](docs/account_reconciliation.md)。
 
-当前封板里程碑为 BT01-R；M03 的离线 Demo 行情、CSV 导入、标的目录和自选股能力继续保留。详见 [M03 行情文档](docs/market_data.md)、[自选股规则](docs/watchlists.md) 与 [日线回测](docs/daily_backtest.md)。
+当前封板里程碑为 RT01；M03 的离线 Demo 行情、CSV 导入、标的目录和自选股能力继续保留。详见 [M03 行情文档](docs/market_data.md)、[自选股规则](docs/watchlists.md)、[日线回测](docs/daily_backtest.md) 与 [历史回放](docs/historical_replay.md)。
 
 AlphaDesk 是一个面向个人使用的本地量化交易系统。项目以可审计、可恢复和安全边界清晰为首要目标，当前采用 React + TypeScript 前端、FastAPI 模块化单体后端、PostgreSQL 与 Redis 基础设施。
 
@@ -51,6 +57,16 @@ python -m alphadesk_api.cli.backtests list
 ```
 
 `run-demo` 只读取或建立明确标识的本地确定性 Demo 行情，不访问外部网络，也不会发送真实订单。
+
+## RT01 日线历史回放
+
+启动完整 compose 后打开 `http://127.0.0.1:5173/replays`。MANUAL 可逐日单步，X1/X10/X100
+由独立 `replay_worker` 推进；倍速只影响等待时间，不改变业务结果。也可运行：
+
+```powershell
+docker compose exec api python -m alphadesk_api.cli.replays run-demo
+docker compose exec api python -m alphadesk_api.cli.replays list
+```
 
 ## 基础工程：M01-M02
 

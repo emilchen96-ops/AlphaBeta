@@ -52,6 +52,10 @@ from alphadesk_api.infrastructure.models import (
     PositionLedgerEntryModel,
     PositionModel,
     RawDocumentModel,
+    ReplayControlActionModel,
+    ReplayEquityPointModel,
+    ReplayEventModel,
+    ReplayRunModel,
     ResearchEvidenceModel,
     ResearchInsightModel,
     RiskDecisionModel,
@@ -142,6 +146,15 @@ from alphadesk_domain.market import (
     MarketSyncRun,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
+from alphadesk_domain.replay import (
+    ReplayControlAction,
+    ReplayEvent,
+    ReplayRun,
+    ReplayRunStatus,
+    ReplaySpeedMode,
+    replay_configuration_from_dict,
+    replay_configuration_to_dict,
+)
 from alphadesk_domain.scanners import ScanResult, ScanRun
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
@@ -387,6 +400,271 @@ class SqlAlchemyBacktestEventRepository(SqlAlchemyRepository[BacktestEvent, Back
             .order_by(BacktestEventModel.sequence_number)
         )
         return [entity_from_model(BacktestEvent, row) for row in rows]
+
+
+def _replay_run_from_model(model: ReplayRunModel) -> ReplayRun:
+    return ReplayRun(
+        id=model.id,
+        idempotency_key=model.idempotency_key,
+        request_fingerprint=model.request_fingerprint,
+        configuration=replay_configuration_from_dict(model.configuration),
+        account_id=model.account_id,
+        strategy_run_id=model.strategy_run_id,
+        status=ReplayRunStatus(model.status),
+        row_version=model.row_version,
+        current_session_date=model.current_session_date,
+        current_session_index=model.current_session_index,
+        total_sessions=model.total_sessions,
+        speed_mode=ReplaySpeedMode(model.speed_mode),
+        bars_processed=model.bars_processed,
+        signals_generated=model.signals_generated,
+        orders_created=model.orders_created,
+        fills_generated=model.fills_generated,
+        started_at=model.started_at,
+        paused_at=model.paused_at,
+        completed_at=model.completed_at,
+        stopped_at=model.stopped_at,
+        failed_at=model.failed_at,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        last_heartbeat_at=model.last_heartbeat_at,
+        lease_owner=model.lease_owner,
+        lease_expires_at=model.lease_expires_at,
+        final_summary=model.final_summary,
+        integrity_summary=model.integrity_summary,
+        correlation_id=model.correlation_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _replay_run_values(entity: ReplayRun) -> dict[str, Any]:
+    return {
+        "id": entity.id,
+        "idempotency_key": entity.idempotency_key,
+        "request_fingerprint": entity.request_fingerprint,
+        "configuration": replay_configuration_to_dict(entity.configuration),
+        "account_id": entity.account_id,
+        "strategy_run_id": entity.strategy_run_id,
+        "status": entity.status.value,
+        "row_version": entity.row_version,
+        "current_session_date": entity.current_session_date,
+        "current_session_index": entity.current_session_index,
+        "total_sessions": entity.total_sessions,
+        "speed_mode": entity.speed_mode.value,
+        "bars_processed": entity.bars_processed,
+        "signals_generated": entity.signals_generated,
+        "orders_created": entity.orders_created,
+        "fills_generated": entity.fills_generated,
+        "started_at": entity.started_at,
+        "paused_at": entity.paused_at,
+        "completed_at": entity.completed_at,
+        "stopped_at": entity.stopped_at,
+        "failed_at": entity.failed_at,
+        "error_code": entity.error_code,
+        "error_message": entity.error_message,
+        "last_heartbeat_at": entity.last_heartbeat_at,
+        "lease_owner": entity.lease_owner,
+        "lease_expires_at": entity.lease_expires_at,
+        "final_summary": dict(entity.final_summary),
+        "integrity_summary": dict(entity.integrity_summary),
+        "correlation_id": entity.correlation_id,
+        "created_at": entity.created_at,
+        "updated_at": entity.updated_at,
+    }
+
+
+class SqlAlchemyReplayRunRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def lock_idempotency_key(self, key: str) -> None:
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"replay:{key}", 0)))
+        )
+
+    async def add(self, entity: ReplayRun) -> None:
+        self._session.add(ReplayRunModel(**_replay_run_values(entity)))
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> ReplayRun | None:
+        row = await self._session.get(ReplayRunModel, entity_id)
+        return None if row is None else _replay_run_from_model(row)
+
+    async def get_by_idempotency_key(self, key: str) -> ReplayRun | None:
+        row = await self._session.scalar(
+            select(ReplayRunModel).where(ReplayRunModel.idempotency_key == key)
+        )
+        return None if row is None else _replay_run_from_model(row)
+
+    async def get_for_update(self, entity_id: UUID) -> ReplayRun | None:
+        row = await self._session.scalar(
+            select(ReplayRunModel).where(ReplayRunModel.id == entity_id).with_for_update()
+        )
+        return None if row is None else _replay_run_from_model(row)
+
+    async def update(self, entity: ReplayRun) -> None:
+        values = _replay_run_values(entity)
+        values.pop("id")
+        values.pop("created_at")
+        await self._session.execute(
+            update(ReplayRunModel).where(ReplayRunModel.id == entity.id).values(**values)
+        )
+        await self._session.flush()
+
+    async def list(
+        self, *, status: str | None, offset: int, limit: int
+    ) -> tuple[list[ReplayRun], int]:
+        conditions = [] if status is None else [ReplayRunModel.status == status]
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(ReplayRunModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(ReplayRunModel)
+            .where(*conditions)
+            .order_by(ReplayRunModel.created_at.desc(), ReplayRunModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [_replay_run_from_model(row) for row in rows], total
+
+    async def list_runnable(self, now: datetime, limit: int) -> builtins.list[ReplayRun]:
+        rows = await self._session.scalars(
+            select(ReplayRunModel)
+            .where(
+                ReplayRunModel.status == ReplayRunStatus.RUNNING.value,
+                or_(
+                    ReplayRunModel.lease_expires_at.is_(None),
+                    ReplayRunModel.lease_expires_at < now,
+                ),
+            )
+            .order_by(ReplayRunModel.updated_at, ReplayRunModel.id)
+            .limit(limit)
+        )
+        return [_replay_run_from_model(row) for row in rows]
+
+    async def acquire_lease(
+        self, entity_id: UUID, owner: str, now: datetime, expires_at: datetime
+    ) -> bool:
+        result = await self._session.execute(
+            update(ReplayRunModel)
+            .where(
+                ReplayRunModel.id == entity_id,
+                ReplayRunModel.status == ReplayRunStatus.RUNNING.value,
+                or_(
+                    ReplayRunModel.lease_owner == owner,
+                    ReplayRunModel.lease_expires_at.is_(None),
+                    ReplayRunModel.lease_expires_at < now,
+                ),
+            )
+            .values(
+                lease_owner=owner,
+                lease_expires_at=expires_at,
+                last_heartbeat_at=now,
+                updated_at=now,
+            )
+        )
+        await self._session.flush()
+        return bool(getattr(result, "rowcount", 0))
+
+
+class SqlAlchemyReplayControlActionRepository(
+    SqlAlchemyRepository[ReplayControlAction, ReplayControlActionModel]
+):
+    entity_type = ReplayControlAction
+    model_type = ReplayControlActionModel
+
+    async def append(self, entity: ReplayControlAction) -> None:
+        await self._add(entity)
+
+    async def get_by_idempotency_key(
+        self, replay_run_id: UUID, key: str
+    ) -> ReplayControlAction | None:
+        row = await self._session.scalar(
+            select(ReplayControlActionModel).where(
+                ReplayControlActionModel.replay_run_id == replay_run_id,
+                ReplayControlActionModel.idempotency_key == key,
+            )
+        )
+        return None if row is None else entity_from_model(ReplayControlAction, row)
+
+    async def list_by_run(self, replay_run_id: UUID) -> list[ReplayControlAction]:
+        rows = await self._session.scalars(
+            select(ReplayControlActionModel)
+            .where(ReplayControlActionModel.replay_run_id == replay_run_id)
+            .order_by(ReplayControlActionModel.occurred_at, ReplayControlActionModel.id)
+        )
+        return [entity_from_model(ReplayControlAction, row) for row in rows]
+
+
+class SqlAlchemyReplayEventRepository(SqlAlchemyRepository[ReplayEvent, ReplayEventModel]):
+    entity_type = ReplayEvent
+    model_type = ReplayEventModel
+
+    async def append(self, entity: ReplayEvent) -> None:
+        await self._add(entity)
+
+    async def next_sequence(self, replay_run_id: UUID) -> int:
+        current = await self._session.scalar(
+            select(func.max(ReplayEventModel.sequence_number)).where(
+                ReplayEventModel.replay_run_id == replay_run_id
+            )
+        )
+        return int(current or 0) + 1
+
+    async def list_by_run(
+        self,
+        replay_run_id: UUID,
+        *,
+        after_sequence: int = 0,
+        event_type: str | None = None,
+        instrument_id: UUID | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[list[ReplayEvent], int]:
+        conditions = [
+            ReplayEventModel.replay_run_id == replay_run_id,
+            ReplayEventModel.sequence_number > after_sequence,
+        ]
+        if event_type is not None:
+            conditions.append(ReplayEventModel.event_type == event_type)
+        if instrument_id is not None:
+            conditions.append(ReplayEventModel.instrument_id == instrument_id)
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(ReplayEventModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(ReplayEventModel)
+            .where(*conditions)
+            .order_by(ReplayEventModel.sequence_number)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(ReplayEvent, row) for row in rows], total
+
+
+class SqlAlchemyReplayEquityPointRepository(
+    SqlAlchemyRepository[BacktestEquityPoint, ReplayEquityPointModel]
+):
+    entity_type = BacktestEquityPoint
+    model_type = ReplayEquityPointModel
+
+    async def append(self, entity: BacktestEquityPoint) -> None:
+        await self._add(entity)
+
+    async def list_by_run(self, run_id: UUID) -> list[BacktestEquityPoint]:
+        rows = await self._session.scalars(
+            select(ReplayEquityPointModel)
+            .where(ReplayEquityPointModel.run_id == run_id)
+            .order_by(ReplayEquityPointModel.timestamp, ReplayEquityPointModel.id)
+        )
+        return [entity_from_model(BacktestEquityPoint, row) for row in rows]
 
 
 class SqlAlchemyInstrumentRepository(SqlAlchemyRepository[Instrument, InstrumentModel]):

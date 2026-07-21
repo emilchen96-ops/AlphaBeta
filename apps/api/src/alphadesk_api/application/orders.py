@@ -547,11 +547,12 @@ class OrderConfirmationService:
                     account_id=order.account_id,
                     order_id=order.id,
                 )
-                is_backtest_confirmation = (
-                    suppression_reason == "BACKTEST_ENGINE"
+                is_internal_historical_confirmation = (
+                    suppression_reason in {"BACKTEST_ENGINE", "REPLAY_ENGINE"}
                     and request.actor_type == OrderActorType.SYSTEM
-                    and request.actor_id == "BACKTEST_ENGINE"
-                    and account.metadata.get("scope") == "BT01"
+                    and request.actor_id == suppression_reason
+                    and account.metadata.get("scope")
+                    == ("BT01" if suppression_reason == "BACKTEST_ENGINE" else "RT01")
                     and bool(account.metadata.get("owner_id"))
                     and order.intent_source == OrderIntentSource.STRATEGY
                     and order.signal_id is not None
@@ -560,10 +561,10 @@ class OrderConfirmationService:
                         for decision in risk_decisions
                     )
                 )
-                if not is_backtest_confirmation:
+                if not is_internal_historical_confirmation:
                     raise ApplicationError(
                         "ORDER_OUTBOX_SUPPRESSION_NOT_ALLOWED",
-                        "outbox suppression requires a risk-approved BT01 strategy order",
+                        "outbox suppression requires a risk-approved historical strategy order",
                     )
             await uow.outbox.add(
                 OutboxMessage(

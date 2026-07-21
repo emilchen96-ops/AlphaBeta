@@ -58,6 +58,7 @@ const menuItems = [
     ],
   },
   { key: "/backtest", icon: <DatabaseOutlined />, label: "日线回测" },
+  { key: "/replays", icon: <PlayCircleOutlined />, label: "历史回放" },
   { key: "/audit", icon: <AuditOutlined />, label: "审计（计划）" },
   { key: "/settings", icon: <SettingOutlined />, label: "设置（只读）" },
 ];

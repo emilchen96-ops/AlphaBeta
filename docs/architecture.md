@@ -1,5 +1,24 @@
 # 架构总览
 
+> RT01 增量：API 保存控制动作，独立 `replay_worker` 用 PostgreSQL lease 逐 Session 推进；
+> Redis 只保存心跳和已提交事件通知。RT01 与 BT01 共用 `HistoricalSessionProcessor`、T+1 时间
+> 边界和绩效口径，并复用既有交易事实表。订单外发固定抑制为 `REPLAY_ENGINE`。详见
+> [historical_replay.md](historical_replay.md)、[replay_control_model.md](replay_control_model.md) 和
+> [replay_worker.md](replay_worker.md)。
+
+```mermaid
+flowchart LR
+  UI[Replay UI / CLI] --> API[FastAPI control]
+  API --> PG[(PostgreSQL replay facts)]
+  Worker[replay_worker] --> Lease[Run lease + cursor]
+  Lease --> Clock[Shared historical Session processor]
+  Clock --> Pipeline[Strategy → Risk → Order → Fill → Ledger]
+  Pipeline --> PG
+  PG --> WS[DB sequence WebSocket]
+  Worker -. heartbeat / notify .-> Redis[(Redis)]
+  Pipeline -. SUPPRESSED .-> External[MiniQMT / Broker]
+```
+
 > BT01-R 增量：同步回测服务只读取 D01 PostgreSQL 日线，按 `SESSION_OPEN → SESSION_CLOSE → SESSION_END` 驱动既有 Strategy、R01、M05、B01 与 M04。每个运行拥有独立 BT01 模拟账户；回测订单 Outbox 固定为 `SUPPRESSED/BACKTEST_ENGINE`，不会进入 Redis Publisher、Windows Agent、MiniQMT 或券商。详见 [daily_backtest.md](daily_backtest.md) 与 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。
 
 ```mermaid

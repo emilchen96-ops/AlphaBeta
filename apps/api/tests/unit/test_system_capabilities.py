@@ -16,6 +16,7 @@ EXPECTED_MODULES = {
     "risk",
     "simulated_broker",
     "daily_backtest",
+    "historical_replay",
     "realtime_market_data",
     "miniqmt",
     "audit",

@@ -44,6 +44,7 @@ class CapabilityDataSnapshot:
     fill_count: int | None = None
     risk_decision_count: int | None = None
     backtest_run_count: int | None = None
+    replay_run_count: int | None = None
 
 
 class CapabilityDataProvider(Protocol):
@@ -59,6 +60,7 @@ class SystemCapability:
     available: bool
     reason: str
     required_actions: tuple[str, ...] = field(default_factory=tuple)
+    worker_status: Literal["ONLINE", "OFFLINE", "NOT_REQUIRED"] = "NOT_REQUIRED"
 
 
 def _has(value: int | None) -> bool:
@@ -73,6 +75,7 @@ def assess_system_capabilities(
     ai_provider_key: str,
     ai_provider_available: bool | None = None,
     ai_provider_mode: str = "DISABLED",
+    replay_worker_available: bool = False,
 ) -> tuple[SystemCapability, ...]:
     """Assess what can be used now without mutating business facts."""
 
@@ -232,6 +235,31 @@ def assess_system_capabilities(
                 else "BT01 日线回测代码已完成, 但当前缺少 Instrument 或历史日线。"
             ),
             required_actions=(() if bars_ready else ("先完成 D01 历史日线补数与质量检查",)),
+        ),
+        SystemCapability(
+            module_key="historical_replay",
+            implementation_status="WORKING",
+            data_status=("READY" if bars_ready else ("MISSING" if database_ready else "UNKNOWN")),
+            configuration_status="READY" if replay_worker_available else "MISSING",
+            available=bars_ready and replay_worker_available,
+            reason=(
+                "RT01 日线历史回放、控制动作和独立 Worker 已就绪。"
+                if bars_ready and replay_worker_available
+                else (
+                    "RT01 已实现且历史数据就绪; replay_worker 当前离线。"
+                    if bars_ready
+                    else "RT01 已实现; 但需要先完成 D01 历史日线准备。"
+                )
+            ),
+            required_actions=tuple(
+                action
+                for needed, action in (
+                    (not bars_ready, "先完成 D01 历史日线补数与质量检查"),
+                    (not replay_worker_available, "启动 replay_worker 服务"),
+                )
+                if needed
+            ),
+            worker_status="ONLINE" if replay_worker_available else "OFFLINE",
         ),
         SystemCapability(
             module_key="realtime_market_data",

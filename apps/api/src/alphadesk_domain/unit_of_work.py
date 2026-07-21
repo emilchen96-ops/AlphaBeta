@@ -42,6 +42,10 @@ from alphadesk_domain.repositories import (
     PositionLedgerRepository,
     PositionRepository,
     RawDocumentRepository,
+    ReplayControlActionRepository,
+    ReplayEquityPointRepository,
+    ReplayEventRepository,
+    ReplayRunRepository,
     ResearchEvidenceRepository,
     ResearchInsightRepository,
     RiskDecisionRepository,
@@ -112,6 +116,10 @@ class UnitOfWork(Protocol):
     backtest_metrics: BacktestMetricRepository
     backtest_trades: BacktestTradeSummaryRepository
     backtest_events: BacktestEventRepository
+    replay_runs: ReplayRunRepository
+    replay_control_actions: ReplayControlActionRepository
+    replay_events: ReplayEventRepository
+    replay_equity_points: ReplayEquityPointRepository
 
     async def __aenter__(self) -> Self: ...
     async def __aexit__(

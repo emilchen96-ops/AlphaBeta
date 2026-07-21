@@ -45,6 +45,10 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyPositionLedgerRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRawDocumentRepository,
+    SqlAlchemyReplayControlActionRepository,
+    SqlAlchemyReplayEquityPointRepository,
+    SqlAlchemyReplayEventRepository,
+    SqlAlchemyReplayRunRepository,
     SqlAlchemyResearchEvidenceRepository,
     SqlAlchemyResearchInsightRepository,
     SqlAlchemyRiskDecisionRepository,
@@ -127,6 +131,10 @@ class SqlAlchemyUnitOfWork:
         self.backtest_metrics = SqlAlchemyBacktestMetricRepository(session)
         self.backtest_trades = SqlAlchemyBacktestTradeSummaryRepository(session)
         self.backtest_events = SqlAlchemyBacktestEventRepository(session)
+        self.replay_runs = SqlAlchemyReplayRunRepository(session)
+        self.replay_control_actions = SqlAlchemyReplayControlActionRepository(session)
+        self.replay_events = SqlAlchemyReplayEventRepository(session)
+        self.replay_equity_points = SqlAlchemyReplayEquityPointRepository(session)
         return self
 
     async def __aexit__(

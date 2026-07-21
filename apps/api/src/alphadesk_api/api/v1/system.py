@@ -62,6 +62,13 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
     data = await request.app.state.capability_data_provider.snapshot()
     selected_provider = request.app.state.ai_research_provider
     ai_snapshot = describe_ai_provider(selected_provider)
+    replay_worker_available = False
+    try:
+        replay_worker_available = bool(
+            await request.app.state.redis.client.get("alphadesk:replays:v1:worker:heartbeat")
+        )
+    except Exception:
+        replay_worker_available = False
     items = assess_system_capabilities(
         request.app.state.settings,
         data,
@@ -69,6 +76,7 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
         ai_provider_key=selected_provider.provider_key,
         ai_provider_available=ai_snapshot.available,
         ai_provider_mode=ai_snapshot.mode,
+        replay_worker_available=replay_worker_available,
     )
     count_fields = {name: getattr(data, name) for name in CapabilityDataCountsResponse.model_fields}
 
@@ -125,6 +133,7 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
                     "strategy_research",
                     "strategy_experiments",
                     "daily_backtest",
+                    "historical_replay",
                 }
                 else None
             )

@@ -8,6 +8,7 @@ import { BacktestDetailPage, BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
 import { GettingStartedPage } from "../pages/GettingStartedPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
+import { ReplayRunDetailPage, ReplayRunsPage } from "../pages/ReplayPages";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
 import {
   InformationCenterPage,
@@ -118,6 +119,8 @@ export const routes: RouteObject[] = [
       { path: "risk/limits", element: <RiskLimitsPage /> },
       { path: "backtest", element: <BacktestPage /> },
       { path: "backtest/:backtestId", element: <BacktestDetailPage /> },
+      { path: "replays", element: <ReplayRunsPage /> },
+      { path: "replays/:replayId", element: <ReplayRunDetailPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <NotFoundPage /> },

@@ -523,6 +523,60 @@ class BacktestClock:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SessionProcessingResult:
+    """Framework-neutral result of advancing one complete historical session."""
+
+    session: BacktestSession
+    session_index: int
+    next_session_index: int
+    completed: bool
+
+
+class HistoricalSessionProcessor:
+    """Shared BT01/RT01 deterministic, session-granular cursor.
+
+    Business adapters perform OPEN, CLOSE and END work in that fixed order; this
+    object owns only the validated ordering and durable cursor semantics.
+    """
+
+    __slots__ = ("_cursor", "_sessions")
+
+    def __init__(self, sessions: Sequence[BacktestSession], cursor: int = 0) -> None:
+        clock = BacktestClock(sessions)
+        ordered: list[BacktestSession] = []
+        while not clock.is_complete:
+            session = clock.current_session
+            if not ordered or ordered[-1].trading_date != session.trading_date:
+                ordered.append(session)
+            clock.advance()
+        if cursor < 0 or cursor > len(ordered):
+            raise BacktestError("BACKTEST_INVALID_CONFIGURATION", "session cursor is invalid")
+        self._sessions = tuple(ordered)
+        self._cursor = cursor
+
+    @property
+    def has_next_session(self) -> bool:
+        return self._cursor < len(self._sessions)
+
+    @property
+    def total_sessions(self) -> int:
+        return len(self._sessions)
+
+    def process_next_session(self) -> SessionProcessingResult:
+        if not self.has_next_session:
+            raise BacktestError("BACKTEST_INVALID_CONFIGURATION", "session cursor is complete")
+        index = self._cursor
+        session = self._sessions[index]
+        self._cursor += 1
+        return SessionProcessingResult(
+            session=session,
+            session_index=index,
+            next_session_index=self._cursor,
+            completed=not self.has_next_session,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class BacktestEquityPoint:
     run_id: UUID
     timestamp: datetime

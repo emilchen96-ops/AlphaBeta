@@ -47,6 +47,7 @@ markers = [
   "r01: risk decision and order safety-gate milestone tests",
   "b01: simulated Broker execution and accounting milestone tests",
   "bt01: deterministic A-share daily backtesting milestone tests",
+  "rt01: controllable historical daily replay milestone tests",
   "sc01: deterministic historical market scanner milestone tests",
   "n01: information source and market-event center milestone tests",
   "a01: grounded AI research assistant milestone tests",

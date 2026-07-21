@@ -648,7 +648,7 @@ class ResearchDemoVerificationService:
                 "/",
             )
         )
-        migration_ready = data.migration_head == "0015_bt01"
+        migration_ready = data.migration_head == "0016_rt01"
         items.append(
             VerificationItem(
                 "migrations",
@@ -659,7 +659,7 @@ class ResearchDemoVerificationService:
                     if data.migration_head
                     else "无法读取 Alembic head"
                 ),
-                {"current": data.migration_head, "expected": "0015_bt01"},
+                {"current": data.migration_head, "expected": "0016_rt01"},
                 () if migration_ready else ("执行 alembic upgrade head",),
                 "/getting-started",
             )
@@ -693,6 +693,13 @@ class ResearchDemoVerificationService:
             bool(data.backtest_run_count),
             data.backtest_run_count,
             "/backtest",
+        )
+        add(
+            "historical_replay",
+            "日线历史回放",
+            bool(data.replay_run_count),
+            data.replay_run_count,
+            "/replays",
         )
         add(
             "information_center",

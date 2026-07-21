@@ -22,7 +22,8 @@ FastAPI OpenAPI 生成结果包含 77 个 HTTP path；前端只使用现有 `app
 | `scanners.ts` | Catalog、ScanRun、results GET/POST | 存在 | 一致 |
 | `information.ts` | Sources、manual、items、events GET/POST | 存在 | 一致 |
 | `aiResearch.ts` | Provider、analyses、insights GET/POST | 存在 | 一致 |
-| WebSocket | `/ws/system`、`/ws/v1/market-data` | 应用显式注册 | 一致 |
+| `replays.ts` | Replay 创建/列表/详情/控制/state/equity/events/交易事实/integrity | 存在 | 一致 |
+| WebSocket | `/ws/system`、`/ws/v1/market-data`、`/ws/replays/{id}` | 应用显式注册 | 一致 |
 
 ## 通用契约结论
 

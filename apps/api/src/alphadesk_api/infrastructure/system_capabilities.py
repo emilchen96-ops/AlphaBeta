@@ -15,6 +15,7 @@ from alphadesk_api.infrastructure.models import (
     MarketBarModel,
     MarketEventModel,
     OrderModel,
+    ReplayRunModel,
     RiskDecisionModel,
     ScanRunModel,
     StrategyExperimentModel,
@@ -120,6 +121,10 @@ class SqlAlchemyCapabilityDataProvider:
                             .select_from(BacktestRunModel)
                             .scalar_subquery()
                             .label("backtest_run_count"),
+                            select(func.count())
+                            .select_from(ReplayRunModel)
+                            .scalar_subquery()
+                            .label("replay_run_count"),
                         )
                     )
                 ).one()
