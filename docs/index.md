@@ -1,5 +1,9 @@
 # AlphaDesk 文档索引
 
+> 当前 AI 增量里程碑为 **A01-P 完成**：真实 OpenAI 兼容 Adapter、Secret 配置、连通状态、
+> Prompt/Schema/Evidence 边界、usage 与成本见 [真实 AI Provider](real_ai_provider.md) 和
+> [AI 研究助手](ai_research_assistant.md)。默认 Disabled；外部凭据未联调。下一阶段仅为 RT01。
+
 > U01 使用入口：[快速开始](quick_start.md)、[演示研究环境](demo_research_environment.md)、
 > [系统能力状态](system_capabilities.md) 与 [可用性收口状态](usability_status.md)。
 
@@ -11,7 +15,7 @@
 
 > **I01 V0.1 集成基线已完成**。盘点见 [集成说明](integration_v0_1.md)、[功能盘点](feature_inventory.md)、[UI 动作盘点](ui_action_inventory.md)、[API 契约盘点](api_contract_inventory.md) 与 [数据就绪度](data_readiness.md)；相关状态已随 D01 和 BT01-R 更新。
 
-> 当前研究里程碑为 **A01 完成**：版本化 Prompt、Disabled/Fake Provider、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和页面见 [ai_research_assistant.md](ai_research_assistant.md)。真实 Provider 当前不可用且默认禁用；AI 输出仅供研究，不创建 Signal 或订单。
+> 当前研究基线为 **A01 + A01-P 完成**：版本化 Prompt、Disabled/Fake/真实兼容 Provider、AIAnalysisRun、ResearchInsight、Evidence、API、CLI 和页面见 [ai_research_assistant.md](ai_research_assistant.md)。真实 Provider 默认禁用且依赖本地凭据；AI 输出仅供研究，不创建 Signal 或订单。
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
@@ -72,7 +76,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
-| A01 AI 研究助手                 | `ai_research_assistant.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
+| A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
 | M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016            |
 | B01 模拟 Broker 与执行事实 | `simulated_broker.md`、`simulated_execution_pipeline.md`、`accounting.md`、`order_state_machine.md` |

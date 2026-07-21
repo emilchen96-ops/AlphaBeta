@@ -13,6 +13,7 @@ dependencies = [
   "asyncpg>=0.30,<1",
   "baostock==0.9.3",
   "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
   "pydantic>=2.11,<3",
   "pydantic-settings>=2.9,<3",
   "redis>=6,<7",
@@ -23,7 +24,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<1",
   "mypy>=1.15,<2",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.26,<1",

@@ -26,7 +26,8 @@
 
 ## 配置结论
 
-- `ALPHADESK_AI_RESEARCH_PROVIDER` 默认 `disabled`；仅 `fake` 可用于确定性本地验收，没有真实 Provider。
+- `ALPHADESK_AI_RESEARCH_PROVIDER` 默认 `disabled`；`fake` 用于确定性本地验收，A01-P 的
+  `openai_compatible` 只有在服务端配置本地 Secret 并通过连通测试后才显示真实可用。
 - `ALPHADESK_REALTIME_MARKET_PROVIDER` 固定 `disabled`，免费实时源不是交易级数据。
 - `ALPHADESK_FREE_MARKET_DATA_ENABLED` 默认 false；I01 不启动外部 Worker 和网络补数。
 - R01 限额来自服务端环境配置；网页只读，不能覆盖。

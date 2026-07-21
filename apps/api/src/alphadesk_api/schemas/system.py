@@ -57,7 +57,17 @@ class SystemCapabilityResponse(BaseModel):
     module_key: str
     implementation_status: Literal["WORKING", "PARTIAL", "PLACEHOLDER", "NOT_IMPLEMENTED"]
     data_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
-    configuration_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
+    configuration_status: Literal[
+        "READY",
+        "MISSING",
+        "DISABLED",
+        "NOT_REQUIRED",
+        "UNKNOWN",
+        "FAKE",
+        "REAL_CONFIGURED",
+        "REAL_AVAILABLE",
+        "REAL_UNAVAILABLE",
+    ]
     available: bool
     availability: Literal[
         "READY",
@@ -67,6 +77,9 @@ class SystemCapabilityResponse(BaseModel):
         "DISABLED",
         "PARTIAL",
         "NOT_IMPLEMENTED",
+        "AVAILABLE",
+        "DEGRADED",
+        "NOT_AVAILABLE",
     ]
     reason: str
     required_actions: list[str]

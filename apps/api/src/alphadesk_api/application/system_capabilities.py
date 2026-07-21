@@ -8,6 +8,17 @@ from alphadesk_api.core.config import Settings
 
 ImplementationStatus = Literal["WORKING", "PARTIAL", "PLACEHOLDER", "NOT_IMPLEMENTED"]
 ReadinessStatus = Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
+ConfigurationStatus = Literal[
+    "READY",
+    "MISSING",
+    "DISABLED",
+    "NOT_REQUIRED",
+    "UNKNOWN",
+    "FAKE",
+    "REAL_CONFIGURED",
+    "REAL_AVAILABLE",
+    "REAL_UNAVAILABLE",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +55,7 @@ class SystemCapability:
     module_key: str
     implementation_status: ImplementationStatus
     data_status: ReadinessStatus
-    configuration_status: ReadinessStatus
+    configuration_status: ConfigurationStatus
     available: bool
     reason: str
     required_actions: tuple[str, ...] = field(default_factory=tuple)
@@ -60,6 +71,8 @@ def assess_system_capabilities(
     *,
     ai_provider_configured: bool,
     ai_provider_key: str,
+    ai_provider_available: bool | None = None,
+    ai_provider_mode: str = "DISABLED",
 ) -> tuple[SystemCapability, ...]:
     """Assess what can be used now without mutating business facts."""
 
@@ -95,7 +108,21 @@ def assess_system_capabilities(
         )
 
     orders_ready = accounts_ready and instruments_ready
-    ai_config_status: ReadinessStatus = "READY" if ai_provider_configured else "DISABLED"
+    effective_ai_mode = (
+        "FAKE"
+        if ai_provider_mode == "DISABLED" and ai_provider_configured and ai_provider_key == "fake"
+        else ai_provider_mode
+    )
+    ai_configuration_by_mode: dict[str, ConfigurationStatus] = {
+        "FAKE": "FAKE",
+        "REAL_CONFIGURED": "REAL_CONFIGURED",
+        "REAL_AVAILABLE": "REAL_AVAILABLE",
+        "REAL_UNAVAILABLE": "REAL_UNAVAILABLE",
+    }
+    ai_config_status: ConfigurationStatus = ai_configuration_by_mode.get(
+        effective_ai_mode, "DISABLED"
+    )
+    ai_available = information_ready and (ai_provider_key == "fake" or bool(ai_provider_available))
     return (
         SystemCapability(
             module_key="infrastructure",
@@ -128,19 +155,27 @@ def assess_system_capabilities(
                 "READY" if information_ready else ("MISSING" if database_ready else "UNKNOWN")
             ),
             configuration_status=ai_config_status,
-            available=information_ready and ai_provider_configured,
+            available=ai_available,
             reason=(
                 f"Provider {ai_provider_key} 已启用, 并存在可选资讯事实。"
-                if information_ready and ai_provider_configured
-                else "AI 研究需要已启用 Provider 和至少一条 InformationItem。"
+                if ai_available
+                else (
+                    f"Provider {ai_provider_key} 已配置但尚不可用。"
+                    if ai_provider_configured
+                    else "AI 研究需要已启用 Provider 和至少一条 InformationItem。"
+                )
             ),
             required_actions=tuple(
                 action
                 for needed, action in (
                     (not information_ready, "先在资讯中心创建 InformationItem"),
                     (
-                        not ai_provider_configured,
-                        "显式启用受支持的 AI Provider; 当前仅支持本地 Fake 验收",
+                        not ai_provider_configured
+                        or (
+                            ai_provider_key == "openai_compatible"
+                            and not bool(ai_provider_available)
+                        ),
+                        "配置并测试 OpenAI 兼容 Provider, 或显式使用本地 Fake 演示",
                     ),
                 )
                 if needed

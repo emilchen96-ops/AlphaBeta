@@ -14,12 +14,18 @@ from alphadesk_api.application.ai_research import (
     InsightDetail,
 )
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.infrastructure.ai_research_provider import (
+    describe_ai_provider,
+    test_ai_provider,
+)
 from alphadesk_api.schemas.ai_research import (
     AIAnalysisCreateBody,
     AIAnalysisRunPageResponse,
     AIAnalysisRunResponse,
     AIIntegrityResponse,
     AIProviderStatusResponse,
+    AIProviderTestBody,
+    AIProviderTestResponse,
     ResearchEvidenceResponse,
     ResearchInsightPageResponse,
     ResearchInsightResponse,
@@ -93,9 +99,12 @@ def run_response(
         status=run.status.value,
         input_token_count=run.input_token_count,
         output_token_count=run.output_token_count,
+        total_token_count=run.total_token_count,
         estimated_cost=(
             None if run.estimated_cost is None else format(run.estimated_cost.normalize(), "f")
         ),
+        cost_currency="USD" if run.estimated_cost is not None else None,
+        is_real_provider=run.provider_key == "openai_compatible",
         started_at=run.started_at,
         completed_at=run.completed_at,
         failed_at=run.failed_at,
@@ -122,17 +131,53 @@ def run_response(
 
 @router.get("/ai/providers/status", response_model=AIProviderStatusResponse)
 async def ai_provider_status(request: Request) -> AIProviderStatusResponse:
-    selected = provider(request)
+    snapshot = describe_ai_provider(provider(request))
+    message = {
+        "DISABLED": "真实 AI Provider 尚未配置; 默认安全禁用",
+        "FAKE": "Fake Provider 仅用于测试和明确的本地演示",
+        "REAL_CONFIGURED": "真实 AI Provider 已配置, 尚未完成本进程连通测试",
+        "REAL_AVAILABLE": "真实 AI Provider 已配置且最近连通成功",
+        "REAL_UNAVAILABLE": "真实 AI Provider 配置不完整或最近连通失败",
+    }[snapshot.mode]
     return AIProviderStatusResponse(
-        provider_key=selected.provider_key,
-        model_name=selected.model_name,
-        configured=selected.configured,
-        real_provider_available=False,
-        message=(
-            "Fake Provider 仅用于测试"
-            if selected.configured
-            else "真实 AI Provider 尚未配置; 默认安全禁用"
-        ),
+        provider_key=snapshot.provider_key,
+        model=snapshot.model_name,
+        model_name=snapshot.model_name,
+        configured=snapshot.configured,
+        available=snapshot.available,
+        mode=snapshot.mode,
+        real_provider_available=snapshot.mode == "REAL_AVAILABLE",
+        base_url_summary=snapshot.base_url_summary,
+        last_success_at=snapshot.last_success_at,
+        last_failure_at=snapshot.last_failure_at,
+        last_error_code=snapshot.last_error_code,
+        capabilities=list(snapshot.capabilities),
+        warnings=list(snapshot.warnings),
+        message=message,
+    )
+
+
+@router.post("/ai/providers/test", response_model=AIProviderTestResponse)
+async def test_ai_provider_connection(
+    request: Request, body: AIProviderTestBody
+) -> AIProviderTestResponse:
+    del body
+    if request.app.state.settings.environment not in {"development", "test"}:
+        raise to_app_error(
+            ApplicationError(
+                "AI_PROVIDER_TEST_FORBIDDEN",
+                "provider connectivity test is only available in development or test",
+            )
+        )
+    result = await test_ai_provider(provider(request))
+    return AIProviderTestResponse(
+        success=result.success,
+        provider_key=result.provider_key,
+        model_name=result.model_name,
+        mode=result.mode,
+        latency_ms=result.latency_ms,
+        error_code=result.error_code,
+        warnings=list(result.warnings),
     )
 
 

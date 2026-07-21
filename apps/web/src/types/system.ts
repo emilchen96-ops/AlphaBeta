@@ -15,12 +15,18 @@ export type CapabilityImplementationStatus =
   "WORKING" | "PARTIAL" | "PLACEHOLDER" | "NOT_IMPLEMENTED";
 export type CapabilityReadinessStatus =
   "READY" | "MISSING" | "DISABLED" | "NOT_REQUIRED" | "UNKNOWN";
+export type CapabilityConfigurationStatus =
+  | CapabilityReadinessStatus
+  | "FAKE"
+  | "REAL_CONFIGURED"
+  | "REAL_AVAILABLE"
+  | "REAL_UNAVAILABLE";
 
 export interface SystemCapability {
   module_key: string;
   implementation_status: CapabilityImplementationStatus;
   data_status: CapabilityReadinessStatus;
-  configuration_status: CapabilityReadinessStatus;
+  configuration_status: CapabilityConfigurationStatus;
   available: boolean;
   availability?:
     | "READY"
@@ -29,7 +35,10 @@ export interface SystemCapability {
     | "DEMO_ONLY"
     | "DISABLED"
     | "PARTIAL"
-    | "NOT_IMPLEMENTED";
+    | "NOT_IMPLEMENTED"
+    | "AVAILABLE"
+    | "DEGRADED"
+    | "NOT_AVAILABLE";
   reason: string;
   required_actions: string[];
   last_success_at?: string | null;

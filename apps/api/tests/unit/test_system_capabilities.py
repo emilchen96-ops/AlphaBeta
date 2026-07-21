@@ -69,7 +69,7 @@ def test_capability_assessment_separates_data_config_and_implementation() -> Non
 
     assert items["scanner"].available is True
     assert items["strategy_experiments"].data_status == "READY"
-    assert items["ai_research"].configuration_status == "READY"
+    assert items["ai_research"].configuration_status == "FAKE"
     assert items["simulated_broker"].available is True
     assert items["daily_backtest"].implementation_status == "WORKING"
     assert items["daily_backtest"].available is True
@@ -92,3 +92,20 @@ def test_disabled_ai_and_missing_market_data_are_not_reported_available() -> Non
     assert items["scanner"].available is False
     assert items["ai_research"].configuration_status == "DISABLED"
     assert items["ai_research"].available is False
+
+
+def test_real_ai_capability_requires_provider_and_information_data() -> None:
+    settings = Settings(environment="test", postgres_host="unused", redis_host="unused")
+    items = {
+        item.module_key: item
+        for item in assess_system_capabilities(
+            settings,
+            CapabilityDataSnapshot(database_reachable=True, information_item_count=1),
+            ai_provider_configured=True,
+            ai_provider_key="openai_compatible",
+            ai_provider_available=True,
+            ai_provider_mode="REAL_AVAILABLE",
+        )
+    }
+    assert items["ai_research"].configuration_status == "REAL_AVAILABLE"
+    assert items["ai_research"].available is True

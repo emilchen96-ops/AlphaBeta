@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { healthyStatus, renderRoute } from "./test-utils";
 
@@ -67,11 +68,11 @@ const insight = {
 };
 const run = {
   analysis_id: analysisId,
-  provider_key: "fake",
-  model_name: "alphadesk-fake-v1",
+  provider_key: "openai_compatible",
+  model_name: "research-model",
   analysis_type: "EVENT_SUMMARY",
   prompt_template_key: "alphadesk_research_grounded",
-  prompt_version: "1.0.0",
+  prompt_version: "1.1.0",
   input_document_ids: [information.raw_document_id],
   input_event_ids: [eventId],
   instrument_ids: [],
@@ -79,7 +80,10 @@ const run = {
   status: "COMPLETED",
   input_token_count: 100,
   output_token_count: 80,
+  total_token_count: 180,
   estimated_cost: "0",
+  cost_currency: "USD",
+  is_real_provider: true,
   started_at: "2026-07-19T01:01:00Z",
   completed_at: "2026-07-19T01:02:00Z",
   failed_at: null,
@@ -95,7 +99,10 @@ const run = {
   },
 };
 
-function installFetch() {
+function installFetch(
+  providerMode:
+    "DISABLED" | "FAKE" | "REAL_AVAILABLE" | "REAL_UNAVAILABLE" = "DISABLED",
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: string | URL | Request) => {
@@ -108,11 +115,52 @@ function installFetch() {
       let body: unknown = healthyStatus;
       if (url.endsWith("/ai/providers/status"))
         body = {
-          provider_key: "disabled",
-          model_name: "none",
-          configured: false,
-          real_provider_available: false,
-          message: "真实 AI Provider 尚未配置; 默认安全禁用",
+          provider_key: providerMode.startsWith("REAL")
+            ? "openai_compatible"
+            : providerMode === "FAKE"
+              ? "fake"
+              : "disabled",
+          model_name: providerMode.startsWith("REAL")
+            ? "research-model"
+            : providerMode === "FAKE"
+              ? "alphadesk-fake-v1"
+              : "none",
+          model: providerMode.startsWith("REAL")
+            ? "research-model"
+            : providerMode === "FAKE"
+              ? "alphadesk-fake-v1"
+              : "none",
+          configured: providerMode !== "DISABLED",
+          available: providerMode === "REAL_AVAILABLE",
+          mode: providerMode,
+          real_provider_available: providerMode === "REAL_AVAILABLE",
+          base_url_summary:
+            providerMode === "REAL_AVAILABLE"
+              ? "https://ai.example.test"
+              : null,
+          last_success_at:
+            providerMode === "REAL_AVAILABLE" ? "2026-07-21T01:00:00Z" : null,
+          last_failure_at: null,
+          last_error_code:
+            providerMode === "REAL_UNAVAILABLE" ? "AI_PROVIDER_TIMEOUT" : null,
+          capabilities: [],
+          warnings: [],
+          message: {
+            DISABLED: "真实 AI Provider 尚未配置; 默认安全禁用",
+            FAKE: "Fake Provider 仅用于测试和明确的本地演示",
+            REAL_AVAILABLE: "真实 AI Provider 已配置且最近连通成功",
+            REAL_UNAVAILABLE: "真实 AI Provider 配置不完整或最近连通失败",
+          }[providerMode],
+        };
+      else if (url.endsWith("/ai/providers/test"))
+        body = {
+          success: true,
+          provider_key: "openai_compatible",
+          model_name: "research-model",
+          mode: "REAL_AVAILABLE",
+          latency_ms: 12,
+          error_code: null,
+          warnings: [],
         };
       else if (url.includes("/information-items?"))
         body = { items: [information], page: 1, page_size: 50, total: 1 };
@@ -153,7 +201,9 @@ test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", as
   expect(screen.getByText("资讯原始事实")).toBeInTheDocument();
   expect(screen.getByText("市场事件事实")).toBeInTheDocument();
   expect(screen.getAllByText("EVENT_SUMMARY").length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: /创建研究分析/ })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: /创建真实研究分析/ }),
+  ).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: /买入|卖出|下单|自动交易/ }),
   ).not.toBeInTheDocument();
@@ -168,7 +218,50 @@ test("分析详情区分 AI 推断、不确定性和可追溯原始证据", asyn
     "href",
     `/information/${itemId}`,
   );
-  expect(screen.getByText("100 / 80")).toBeInTheDocument();
+  expect(screen.getByText("100 / 80 / 合计 180")).toBeInTheDocument();
+  expect(screen.getByText("REAL · 真实 Provider")).toBeInTheDocument();
+  expect(screen.getByText("0 USD")).toBeInTheDocument();
+});
+
+test("真实 Provider 可用时显示安全端点并允许连接测试", async () => {
+  installFetch("REAL_AVAILABLE");
+  renderRoute("/ai-research");
+  expect(await screen.findByText(/最近连通成功/)).toBeInTheDocument();
+  expect(
+    screen.getByText("Endpoint：https://ai.example.test"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /创建真实研究分析/ }),
+  ).toBeEnabled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "测试真实 Provider 连通性" }),
+  );
+  expect(await screen.findByText(/Provider 连通成功/)).toBeInTheDocument();
+  expect(screen.queryByText(/super-secret|api_key/i)).not.toBeInTheDocument();
+});
+
+test("Fake 模式明确标为演示并保留独立入口", async () => {
+  installFetch("FAKE");
+  renderRoute("/ai-research");
+  expect(
+    await screen.findByText(/Fake Provider 仅用于测试/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /运行 Fake AI 演示/ }),
+  ).toBeEnabled();
+  expect(
+    screen.queryByText(/真实 Provider 已配置且最近连通成功/),
+  ).not.toBeInTheDocument();
+});
+
+test("真实 Provider 不可用时禁用分析且只显示稳定错误码", async () => {
+  installFetch("REAL_UNAVAILABLE");
+  renderRoute("/ai-research");
+  expect(await screen.findByText(/最近连通失败/)).toBeInTheDocument();
+  expect(screen.getByText(/AI_PROVIDER_TIMEOUT/)).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /创建真实研究分析/ }),
+  ).toBeDisabled();
 });
 
 test("ResearchInsight 目录和证据详情均为只读研究页面", async () => {

@@ -4,6 +4,7 @@ import type {
   AIAnalysisPage,
   AIAnalysisRun,
   AIProviderStatus,
+  AIProviderTestResult,
   ResearchInsight,
   ResearchInsightPage,
 } from "../types/aiResearch";
@@ -12,6 +13,13 @@ const jsonHeaders = { "Content-Type": "application/json" };
 
 export const getAIProviderStatus = () =>
   apiRequest<AIProviderStatus>("/api/v1/ai/providers/status");
+
+export const testAIProvider = () =>
+  apiRequest<AIProviderTestResult>("/api/v1/ai/providers/test", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({}),
+  });
 
 export const createAIAnalysis = (body: AIAnalysisCreateBody) =>
   apiRequest<AIAnalysisRun>("/api/v1/ai/analyses", {

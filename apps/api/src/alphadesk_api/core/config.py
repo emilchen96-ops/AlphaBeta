@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal, Self
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -97,7 +97,18 @@ class Settings(BaseSettings):
     risk_allow_market_orders: bool = False
     risk_require_reference_price_for_market_order: bool = True
     risk_kill_switch_enabled: bool = False
-    ai_research_provider: Literal["disabled", "fake"] = "disabled"
+    ai_research_provider: Literal["disabled", "fake", "openai_compatible"] = "disabled"
+    ai_base_url: str | None = None
+    ai_api_key: SecretStr | None = None
+    ai_model: str | None = None
+    ai_request_timeout_seconds: float = Field(default=30, gt=0, le=300)
+    ai_max_retries: int = Field(default=1, ge=0, le=3)
+    ai_max_input_characters: int = Field(default=50_000, ge=1_000, le=1_000_000)
+    ai_max_output_tokens: int = Field(default=2_000, ge=64, le=128_000)
+    ai_temperature: Decimal = Field(default=Decimal("0.1"), ge=0, le=2)
+    ai_cost_input_per_million: Decimal | None = Field(default=None, ge=0)
+    ai_cost_output_per_million: Decimal | None = Field(default=None, ge=0)
+    ai_structured_output_enabled: bool = True
 
     @field_validator("api_prefix")
     @classmethod
@@ -112,6 +123,54 @@ class Settings(BaseSettings):
         if not value or any(char.isspace() for char in value):
             raise ValueError("correlation_id_header must be a valid non-empty header name")
         return value
+
+    @field_validator("ai_base_url")
+    @classmethod
+    def validate_ai_base_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "ai_base_url must be an http(s) URL without credentials, query or fragment"
+            )
+        return normalized
+
+    @field_validator(
+        "ai_cost_input_per_million",
+        "ai_cost_output_per_million",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_ai_price(cls, value: object) -> object | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
+
+    @field_validator("ai_api_key", mode="before")
+    @classmethod
+    def normalize_optional_ai_api_key(cls, value: object) -> object | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
+
+    @field_validator("ai_model")
+    @classmethod
+    def validate_ai_model(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        if len(normalized) > 128 or any(char.isspace() for char in normalized):
+            raise ValueError("ai_model must be a non-empty model identifier")
+        return normalized
 
     @model_validator(mode="after")
     def validate_required_connections(self) -> Self:

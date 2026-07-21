@@ -45,7 +45,7 @@ async def test_fake_provider_is_structured_versioned_and_grounded() -> None:
         == provider_request.documents[0].information_item_id
     )
     assert response.input_token_count == 100 and response.estimated_cost == Decimal("0")
-    assert PROMPT_VERSION == "1.0.0"
+    assert PROMPT_VERSION == "1.1.0"
     assert "untrusted data" in SYSTEM_PROMPT and "MiniQMT" in SYSTEM_PROMPT
 
 

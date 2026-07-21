@@ -27,3 +27,28 @@ def test_local_cors_accepts_both_loopback_hostnames() -> None:
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+
+def test_ai_provider_defaults_fake_and_incomplete_real_configuration() -> None:
+    assert Settings().ai_research_provider == "disabled"
+    assert Settings(ai_research_provider="fake").ai_research_provider == "fake"
+    incomplete = Settings(
+        ai_research_provider="openai_compatible",
+        ai_base_url="https://ai.example.test/v1",
+        ai_model="model",
+    )
+    assert incomplete.ai_api_key is None
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "not-a-url",
+        "file:///tmp/provider",
+        "https://user:password@ai.example.test/v1",
+        "https://ai.example.test/v1?api_key=secret",
+    ],
+)
+def test_ai_provider_rejects_unsafe_base_url(base_url: str) -> None:
+    with pytest.raises(ValidationError, match="ai_base_url"):
+        Settings(ai_base_url=base_url)

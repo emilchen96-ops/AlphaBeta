@@ -50,6 +50,9 @@ Signal，不会创建订单。结果在“研究运行”和“研究 Signal”�
 ### 资讯、AI 与模拟订单
 
 在“资讯中心”手工录入来源后，可从“AI 研究”选择事实运行 Fake 演示。AI 输出仅供研究。
+若要启用真实 AI，按 [真实 AI Provider](real_ai_provider.md) 把 Provider、Base URL、Key 和模型
+写入本地 `.env`，重新构建/启动 API，再先运行 `provider-status` 和 `test-provider`。不要把 Key
+写入 `.env.example`、前端或浏览器请求。
 在“订单”创建 U01-DEMO 的 LIMIT 订单，经过 R01 后人工确认，再从模拟执行入口提供本地
 快照；成交可在“成交记录”，现金、持仓和对账可在“持仓”查看。
 
@@ -67,4 +70,5 @@ healthy；再访问 <http://127.0.0.1:8000/health/ready>。若页面仍旧，执
 `docker compose up --build -d` 后刷新。Correlation ID 可用于定位受控错误，但不要粘贴密码、
 Token 或连接串。
 
-当前不连接 MiniQMT，不是真实交易；AI 默认为 Fake 或 Disabled，实时行情默认为 Disabled。
+当前不连接 MiniQMT，不是真实交易；AI 默认为 Disabled（U01 fixture 可显式使用 Fake），实时
+行情默认为 Disabled。A01-P 已具备真实 AI Adapter，但是否可用取决于本地凭据与兼容服务。

@@ -1,5 +1,5 @@
 import { RobotOutlined } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   App,
@@ -8,7 +8,6 @@ import {
   Descriptions,
   Form,
   Input,
-  List,
   Select,
   Space,
   Table,
@@ -25,6 +24,7 @@ import {
   getAIProviderStatus,
   getResearchInsight,
   getResearchInsights,
+  testAIProvider,
 } from "../api/aiResearch";
 import { getInformationItems, getMarketEvents } from "../api/information";
 import { getInstruments } from "../api/market";
@@ -69,6 +69,7 @@ interface FormValues {
 export function AIResearchPage() {
   const { message } = App.useApp();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [form] = Form.useForm<FormValues>();
   const [page, setPage] = useState(1);
   const [analysisType, setAnalysisType] =
@@ -76,6 +77,20 @@ export function AIResearchPage() {
   const provider = useQuery({
     queryKey: ["ai-provider-status"],
     queryFn: getAIProviderStatus,
+  });
+  const selectedInformation = Form.useWatch("information_item_ids", form) ?? [];
+  const selectedEvents = Form.useWatch("event_ids", form) ?? [];
+  const providerTest = useMutation({
+    mutationFn: testAIProvider,
+    onSuccess: async (result) => {
+      if (result.success) {
+        void message.success(`Provider 连通成功：${result.latency_ms ?? 0}ms`);
+      } else {
+        void message.error(result.error_code ?? "Provider 连通失败");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["ai-provider-status"] });
+    },
+    onError: (error: Error) => void message.error(error.message),
   });
   const information = useQuery({
     queryKey: ["ai-information-options"],
@@ -123,9 +138,48 @@ export function AIResearchPage() {
       <Alert
         style={{ marginTop: 16 }}
         showIcon
-        type={provider.data?.configured ? "info" : "error"}
+        type={
+          provider.data?.mode === "REAL_AVAILABLE"
+            ? "success"
+            : provider.data?.mode === "FAKE"
+              ? "info"
+              : provider.data?.configured
+                ? "warning"
+                : "error"
+        }
         title={`Provider: ${provider.data?.provider_key ?? "检查中"} / ${provider.data?.model_name ?? "-"}`}
-        description={provider.data?.message ?? "正在读取 Provider 状态"}
+        description={
+          <Space orientation="vertical" size="small">
+            <Typography.Text>
+              {provider.data?.message ?? "正在读取 Provider 状态"}
+            </Typography.Text>
+            {provider.data?.base_url_summary ? (
+              <Typography.Text type="secondary">
+                Endpoint：{provider.data.base_url_summary}
+              </Typography.Text>
+            ) : null}
+            {provider.data?.last_error_code ? (
+              <Typography.Text type="danger">
+                最近错误：{provider.data.last_error_code}
+              </Typography.Text>
+            ) : null}
+            {(provider.data?.warnings ?? []).map((warning) => (
+              <Typography.Text key={warning} type="secondary">
+                {warning}
+              </Typography.Text>
+            ))}
+            {provider.data?.provider_key === "openai_compatible" ? (
+              <Button
+                size="small"
+                loading={providerTest.isPending}
+                disabled={providerTest.isPending}
+                onClick={() => providerTest.mutate()}
+              >
+                测试真实 Provider 连通性
+              </Button>
+            ) : null}
+          </Space>
+        }
       />
       <Card title="创建有依据的研究" style={{ marginTop: 16 }}>
         <Form
@@ -182,18 +236,24 @@ export function AIResearchPage() {
               <Input.TextArea rows={3} maxLength={4000} />
             </Form.Item>
           ) : null}
+          <Typography.Paragraph type="secondary">
+            当前选择 {selectedInformation.length + selectedEvents.length}{" "}
+            条输入资料；外部文本按不可信数据隔离处理。
+          </Typography.Paragraph>
           <Button
             type="primary"
             icon={<RobotOutlined />}
             loading={mutation.isPending}
             disabled={
               provider.isLoading ||
-              !provider.data?.configured ||
+              !["FAKE", "REAL_AVAILABLE"].includes(provider.data?.mode ?? "") ||
               mutation.isPending
             }
             onClick={() => void submit()}
           >
-            创建研究分析
+            {provider.data?.mode === "FAKE"
+              ? "运行 Fake AI 演示"
+              : "创建真实研究分析"}
           </Button>
         </Form>
       </Card>
@@ -272,36 +332,44 @@ function InsightCard({ insight }: { insight: ResearchInsight }) {
       <Typography.Title level={4}>AI 摘要 / 推断</Typography.Title>
       <Typography.Paragraph>{insight.summary}</Typography.Paragraph>
       <Typography.Title level={5}>AI 提取的关键事实</Typography.Title>
-      <List
-        dataSource={insight.key_facts}
-        renderItem={(item) => <List.Item>{item}</List.Item>}
-      />
+      {insight.key_facts.length ? (
+        <ul>
+          {insight.key_facts.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <Typography.Text type="secondary">暂无关键事实</Typography.Text>
+      )}
       <Typography.Title level={5}>不确定性</Typography.Title>
-      <List
-        dataSource={insight.uncertainties}
-        locale={{ emptyText: "未声明不确定性" }}
-        renderItem={(item) => <List.Item>{item}</List.Item>}
-      />
+      {insight.uncertainties.length ? (
+        <ul>
+          {insight.uncertainties.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <Typography.Text type="secondary">未声明不确定性</Typography.Text>
+      )}
       <Typography.Title level={5}>原始来源证据（需人工核对）</Typography.Title>
-      <List
-        dataSource={insight.evidence}
-        renderItem={(evidence) => {
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {insight.evidence.map((evidence) => {
           const href = evidence.information_item_id
             ? `/information/${evidence.information_item_id}`
             : `/market-events/${evidence.market_event_id}`;
           return (
-            <List.Item>
-              <Space direction="vertical">
+            <Card key={evidence.evidence_id} size="small">
+              <Space orientation="vertical">
                 <Link to={href}>打开原始事实</Link>
                 <Typography.Text>{evidence.evidence_text}</Typography.Text>
                 <Typography.Text type="secondary">
                   {evidence.evidence_location ?? "未标注位置"}
                 </Typography.Text>
               </Space>
-            </List.Item>
+            </Card>
           );
-        }}
-      />
+        })}
+      </Space>
     </Card>
   );
 }
@@ -317,7 +385,7 @@ export function AIAnalysisDetailPage() {
     <section>
       <PageHeader title="AI 分析运行详情" description={analysisId} />
       {run.data ? (
-        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <Card>
             <Descriptions
               bordered
@@ -334,6 +402,13 @@ export function AIAnalysisDetailPage() {
                   children: `${run.data.provider_key} / ${run.data.model_name}`,
                 },
                 {
+                  key: "provider-mode",
+                  label: "分析来源",
+                  children: run.data.is_real_provider
+                    ? "REAL · 真实 Provider"
+                    : "FAKE / DISABLED · 非真实 Provider",
+                },
+                {
                   key: "prompt",
                   label: "Prompt 契约",
                   children: `${run.data.prompt_template_key} v${run.data.prompt_version}`,
@@ -341,12 +416,15 @@ export function AIAnalysisDetailPage() {
                 {
                   key: "tokens",
                   label: "Token 用量",
-                  children: `${run.data.input_token_count ?? "-"} / ${run.data.output_token_count ?? "-"}`,
+                  children: `${run.data.input_token_count ?? "-"} / ${run.data.output_token_count ?? "-"} / 合计 ${run.data.total_token_count ?? "-"}`,
                 },
                 {
                   key: "cost",
-                  label: "估算成本",
-                  children: run.data.estimated_cost ?? "-",
+                  label: "估算成本（非账单）",
+                  children:
+                    run.data.estimated_cost === null
+                      ? "Provider 未返回 usage 或未配置价格"
+                      : `${run.data.estimated_cost} ${run.data.cost_currency ?? "USD"}`,
                 },
                 {
                   key: "correlation",

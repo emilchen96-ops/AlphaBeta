@@ -8,10 +8,35 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class AIProviderStatusResponse(BaseModel):
     provider_key: str
+    model: str
     model_name: str
     configured: bool
+    available: bool
+    mode: str
     real_provider_available: bool
+    base_url_summary: str | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_error_code: str | None
+    capabilities: list[str]
+    warnings: list[str]
     message: str
+
+
+class AIProviderTestResponse(BaseModel):
+    success: bool
+    provider_key: str
+    model_name: str
+    mode: str
+    latency_ms: int | None
+    error_code: str | None
+    warnings: list[str]
+
+
+class AIProviderTestBody(BaseModel):
+    """Intentionally empty: clients cannot override provider settings or secrets."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class AIAnalysisCreateBody(BaseModel):
@@ -67,7 +92,10 @@ class AIAnalysisRunResponse(BaseModel):
     status: str
     input_token_count: int | None
     output_token_count: int | None
+    total_token_count: int | None
     estimated_cost: str | None
+    cost_currency: str | None
+    is_real_provider: bool
     started_at: datetime | None
     completed_at: datetime | None
     failed_at: datetime | None

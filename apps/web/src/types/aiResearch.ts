@@ -6,10 +6,34 @@ export type AIAnalysisType =
 
 export interface AIProviderStatus {
   provider_key: string;
+  model: string;
   model_name: string;
   configured: boolean;
+  available: boolean;
+  mode:
+    | "DISABLED"
+    | "FAKE"
+    | "REAL_CONFIGURED"
+    | "REAL_AVAILABLE"
+    | "REAL_UNAVAILABLE";
   real_provider_available: boolean;
+  base_url_summary: string | null;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_error_code: string | null;
+  capabilities: string[];
+  warnings: string[];
   message: string;
+}
+
+export interface AIProviderTestResult {
+  success: boolean;
+  provider_key: string;
+  model_name: string;
+  mode: AIProviderStatus["mode"];
+  latency_ms: number | null;
+  error_code: string | null;
+  warnings: string[];
 }
 
 export interface ResearchEvidence {
@@ -54,7 +78,10 @@ export interface AIAnalysisRun {
   status: "CREATED" | "RUNNING" | "COMPLETED" | "FAILED";
   input_token_count: number | null;
   output_token_count: number | null;
+  total_token_count: number | null;
   estimated_cost: string | null;
+  cost_currency: string | null;
+  is_real_provider: boolean;
   started_at: string | null;
   completed_at: string | null;
   failed_at: string | null;

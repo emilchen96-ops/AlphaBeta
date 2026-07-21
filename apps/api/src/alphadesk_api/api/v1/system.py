@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, cast
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
@@ -12,6 +12,7 @@ from alphadesk_api.application.system_capabilities import (
     SystemCapability,
     assess_system_capabilities,
 )
+from alphadesk_api.infrastructure.ai_research_provider import describe_ai_provider
 from alphadesk_api.schemas.system import (
     CapabilityDataCountsResponse,
     SystemCapabilitiesResponse,
@@ -22,6 +23,18 @@ from alphadesk_api.schemas.system import (
 
 LOGGER = logging.getLogger(__name__)
 router = APIRouter(tags=["system"])
+Availability = Literal[
+    "READY",
+    "NEEDS_DATA",
+    "NEEDS_CONFIG",
+    "DEMO_ONLY",
+    "DISABLED",
+    "PARTIAL",
+    "NOT_IMPLEMENTED",
+    "AVAILABLE",
+    "DEGRADED",
+    "NOT_AVAILABLE",
+]
 
 
 @router.get("/system/status", response_model=SystemStatusResponse)
@@ -48,30 +61,34 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
 
     data = await request.app.state.capability_data_provider.snapshot()
     selected_provider = request.app.state.ai_research_provider
+    ai_snapshot = describe_ai_provider(selected_provider)
     items = assess_system_capabilities(
         request.app.state.settings,
         data,
         ai_provider_configured=selected_provider.configured,
         ai_provider_key=selected_provider.provider_key,
+        ai_provider_available=ai_snapshot.available,
+        ai_provider_mode=ai_snapshot.mode,
     )
     count_fields = {name: getattr(data, name) for name in CapabilityDataCountsResponse.model_fields}
 
     def response_item(item: SystemCapability) -> SystemCapabilityResponse:
         raw = asdict(item)
         module_key = raw["module_key"]
-        availability: Literal[
-            "READY",
-            "NEEDS_DATA",
-            "NEEDS_CONFIG",
-            "DEMO_ONLY",
-            "DISABLED",
-            "PARTIAL",
-            "NOT_IMPLEMENTED",
-        ]
-        if module_key == "ai_research" and selected_provider.provider_key == "fake":
-            availability = "DEMO_ONLY"
-            provider = "fake"
-            mode = "DEMO"
+        availability: Availability
+        provider: str | None
+        mode: str
+        if module_key == "ai_research":
+            provider_availability = {
+                "FAKE": "DEMO_ONLY",
+                "REAL_AVAILABLE": "AVAILABLE" if raw["available"] else "DEGRADED",
+                "REAL_CONFIGURED": "DEGRADED",
+                "REAL_UNAVAILABLE": "DEGRADED",
+                "DISABLED": "NOT_AVAILABLE",
+            }[ai_snapshot.mode]
+            availability = cast(Availability, provider_availability)
+            provider = ai_snapshot.provider_key
+            mode = ai_snapshot.mode
         elif raw["implementation_status"] == "NOT_IMPLEMENTED":
             availability = "NOT_IMPLEMENTED"
             provider = None
@@ -97,16 +114,20 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
             provider = None
             mode = "LOCAL"
         last_success_at = (
-            data.latest_market_bar_at
-            if module_key
-            in {
-                "historical_market_data",
-                "scanner",
-                "strategy_research",
-                "strategy_experiments",
-                "daily_backtest",
-            }
-            else None
+            ai_snapshot.last_success_at
+            if module_key == "ai_research"
+            else (
+                data.latest_market_bar_at
+                if module_key
+                in {
+                    "historical_market_data",
+                    "scanner",
+                    "strategy_research",
+                    "strategy_experiments",
+                    "daily_backtest",
+                }
+                else None
+            )
         )
         return SystemCapabilityResponse(
             **raw,

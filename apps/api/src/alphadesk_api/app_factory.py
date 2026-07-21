@@ -18,13 +18,16 @@ from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.core.errors import register_exception_handlers
 from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.core.middleware import CorrelationIdMiddleware
+from alphadesk_api.infrastructure.ai_research_provider import (
+    OpenAICompatibleResearchProvider,
+    build_ai_research_provider,
+)
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
 from alphadesk_api.infrastructure.system_capabilities import (
     SqlAlchemyCapabilityDataProvider,
     UnavailableCapabilityDataProvider,
 )
-from alphadesk_domain.ai_research import DisabledAIResearchProvider, FakeAIResearchProvider
 from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_examples import register_builtin_strategies
@@ -52,11 +55,7 @@ def create_app(
     register_builtin_strategies(strategy_registry)
     scanner_registry = ScannerRegistry()
     register_builtin_scanners(scanner_registry)
-    ai_provider = (
-        FakeAIResearchProvider()
-        if resolved_settings.ai_research_provider == "fake"
-        else DisabledAIResearchProvider()
-    )
+    ai_provider = build_ai_research_provider(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -77,6 +76,8 @@ def create_app(
         finally:
             if market_ws_hub is not None:
                 await market_ws_hub.stop()
+            if isinstance(ai_provider, OpenAICompatibleResearchProvider):
+                await ai_provider.close()
             await resolved_redis_service.close()
             await database_service.close()
 

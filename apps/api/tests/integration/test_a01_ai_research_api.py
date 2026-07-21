@@ -71,12 +71,24 @@ def test_ai_api_status_create_replay_queries_evidence_and_integrity() -> None:
         assert provider.status_code == 200
         assert provider.json()["provider_key"] == "fake"
         assert provider.json()["real_provider_available"] is False
+        assert provider.json()["mode"] == "FAKE"
+
+        provider_test = test_client.post("/api/v1/ai/providers/test", json={})
+        assert provider_test.status_code == 200
+        assert provider_test.json()["success"] is True
+        forbidden_provider_test = test_client.post(
+            "/api/v1/ai/providers/test", json={"api_key": "must-not-pass"}
+        )
+        assert forbidden_provider_test.status_code == 422
 
         request_body = body(item_id, event_id, f"a01-api-{uuid4()}")
         created = test_client.post("/api/v1/ai/analyses", json=request_body)
         assert created.status_code == 201
         payload = created.json()
         assert payload["status"] == "COMPLETED"
+        assert payload["total_token_count"] == 180
+        assert payload["cost_currency"] == "USD"
+        assert payload["is_real_provider"] is False
         assert payload["insight"]["label"] == "AI生成，仅供研究参考。"  # noqa: RUF001
         assert payload["insight"]["evidence"][0]["information_item_id"] == str(item_id)
         assert payload["capabilities"]["creates_orders"] is False

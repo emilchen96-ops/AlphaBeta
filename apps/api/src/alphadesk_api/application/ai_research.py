@@ -222,6 +222,19 @@ class AIResearchAnalysisService:
 
     async def _persist_success(self, run_id: UUID, response: AIProviderResponse) -> AnalysisOutcome:
         output = response.output
+        structured_output = output.structured()
+        structured_output["provider_warnings"] = list(response.warnings)
+        structured_output["usage"] = {
+            "input_token_count": response.input_token_count,
+            "output_token_count": response.output_token_count,
+            "total_token_count": response.total_token_count,
+            "estimated_cost": (
+                None
+                if response.estimated_cost is None
+                else format(response.estimated_cost.normalize(), "f")
+            ),
+            "cost_currency": response.cost_currency,
+        }
         async with self._uow_factory() as uow:
             run = await uow.ai_analysis_runs.get_by_id(run_id)
             if run is None:
@@ -235,9 +248,9 @@ class AIResearchAnalysisService:
                 importance_score=output.importance_score,
                 confidence=output.confidence,
                 key_facts=output.key_facts,
-                uncertainties=output.uncertainties,
+                uncertainties=tuple((*output.uncertainties, *response.warnings)),
                 research_questions=output.research_questions,
-                structured_output=output.structured(),
+                structured_output=structured_output,
             )
             evidence = [
                 ResearchEvidence(
