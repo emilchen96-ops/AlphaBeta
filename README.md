@@ -161,7 +161,7 @@ docker compose exec api alembic current
 
 经过 R01 风控和 M05 人工确认的订单，可在订单中心显式输入测试市场快照并执行本地模拟成交。结果会写入 Attempt、Fill 和 M04 模拟账本；成交记录页面只读展示费用及现金影响。完整操作说明见 [B01-C 模拟执行界面](docs/simulated_broker_ui.md)。该能力不读取真实行情、不连接券商，也不会产生真实交易。
 
-完整文档从 [docs/index.md](docs/index.md) 开始；开发任务必须遵守 [AGENTS.md](AGENTS.md)。
+第一次使用请阅读图文版 [AlphaDesk 使用指南](docs/user_guide.md)；完整开发文档从 [docs/index.md](docs/index.md) 开始，开发任务必须遵守 [AGENTS.md](AGENTS.md)。
 
 ## D01 历史日线
 

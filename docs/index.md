@@ -1,5 +1,7 @@
 # AlphaDesk 文档索引
 
+> 第一次使用请先阅读 [AlphaDesk 使用指南](user_guide.md)：包含开机启动、首次数据准备、菜单与按钮说明、推荐业务流程、真实页面截图和常见故障排查。
+
 > 当前回测里程碑为 **BT01-R 完成**：日线回测总览见 [daily_backtest.md](daily_backtest.md)，严格时间边界见 [backtest_time_model.md](backtest_time_model.md)，指标口径见 [backtest_metrics.md](backtest_metrics.md)，页面见 [backtest_ui.md](backtest_ui.md)，决策见 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。分钟回测尚未完成，下一阶段仅为 U01。
 
 > 数据里程碑 **D01 已完成**：BaoStock A 股 Instrument/研究池、历史补数、每日增量、质量事实、覆盖率、Readiness、API/CLI 和数据中心页面见 [D01 历史行情](historical_market_data.md)、[每日增量](daily_market_data_update.md)、[质量检查](market_data_quality.md) 与 [数据中心页面](market_data_center_ui.md)。D01 本身不包含实时行情、MiniQMT 或交易写入；其历史日线现已被 BT01-R 使用。
