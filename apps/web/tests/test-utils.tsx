@@ -20,7 +20,7 @@ export const healthyCapabilities = {
   counts: {},
   items: [
     {
-      module_key: "market_data",
+      module_key: "historical_market_data",
       implementation_status: "WORKING",
       data_status: "READY",
       configuration_status: "NOT_REQUIRED",
@@ -38,7 +38,7 @@ export const healthyCapabilities = {
       required_actions: [],
     },
     {
-      module_key: "backtest",
+      module_key: "daily_backtest",
       implementation_status: "WORKING",
       data_status: "READY",
       configuration_status: "NOT_REQUIRED",

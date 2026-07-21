@@ -6,6 +6,7 @@ import { AppLayout } from "../components/AppLayout/AppLayout";
 import { AuditPage } from "../pages/AuditPage";
 import { BacktestDetailPage, BacktestPage } from "../pages/BacktestPage";
 import { DashboardPage } from "../pages/DashboardPage";
+import { GettingStartedPage } from "../pages/GettingStartedPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
 import {
@@ -58,6 +59,7 @@ export const routes: RouteObject[] = [
     element: <AppLayout />,
     children: [
       { index: true, element: <DashboardPage /> },
+      { path: "getting-started", element: <GettingStartedPage /> },
       {
         path: "market",
         element: (

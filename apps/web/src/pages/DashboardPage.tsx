@@ -13,12 +13,12 @@ import {
   Descriptions,
   Row,
   Skeleton,
-  Table,
+  Space,
   Tag,
   Typography,
 } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { useOutletContext } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
 
 import type { AppOutletContext } from "../components/AppLayout/AppLayout";
 import { PageHeader } from "../components/PageHeader/PageHeader";
@@ -27,7 +27,8 @@ import { systemCapabilitiesQueryOptions } from "../api/system";
 import type { SystemCapability } from "../types/system";
 
 const moduleLabels: Record<string, string> = {
-  market_data: "历史行情",
+  infrastructure: "基础设施",
+  historical_market_data: "历史行情",
   scanner: "条件扫描",
   strategy_research: "策略研究",
   strategy_experiments: "批量研究",
@@ -36,9 +37,11 @@ const moduleLabels: Record<string, string> = {
   orders: "订单",
   risk: "风控",
   simulated_broker: "模拟 Broker",
-  backtest: "回测",
+  daily_backtest: "日线回测",
   realtime_market_data: "实时行情",
   miniqmt: "MiniQMT",
+  audit: "审计中心",
+  settings: "设置",
 };
 
 const capabilityStatusLabels: Record<string, string> = {
@@ -51,6 +54,27 @@ const capabilityStatusLabels: Record<string, string> = {
   DISABLED: "未启用",
   NOT_REQUIRED: "不需要",
   UNKNOWN: "未知",
+  NEEDS_DATA: "需要数据",
+  NEEDS_CONFIG: "需要配置",
+  DEMO_ONLY: "仅演示",
+};
+
+const moduleLinks: Record<string, string> = {
+  infrastructure: "/",
+  historical_market_data: "/market-data-center",
+  scanner: "/scanners",
+  strategy_research: "/strategies",
+  strategy_experiments: "/strategy-experiments",
+  information_center: "/information",
+  ai_research: "/ai-research",
+  orders: "/orders",
+  risk: "/risk/decisions",
+  simulated_broker: "/fills",
+  daily_backtest: "/backtest",
+  realtime_market_data: "/market",
+  miniqmt: "/settings",
+  audit: "/audit",
+  settings: "/settings",
 };
 
 function formatUtc(value: string | number | undefined): string {
@@ -78,15 +102,20 @@ export function DashboardPage() {
     <section>
       <PageHeader
         title="系统总览"
-        description="查看 AlphaDesk 本地基础设施的真实连接状态。"
+        description="查看基础设施和研究功能的真实可用状态。"
         action={
-          <Button
-            icon={<SyncOutlined />}
-            onClick={() => void refresh()}
-            loading={isLoading}
-          >
-            刷新状态
-          </Button>
+          <Space wrap>
+            <Link to="/getting-started">
+              <Button type="primary">开始使用</Button>
+            </Link>
+            <Button
+              icon={<SyncOutlined />}
+              onClick={() => void refresh()}
+              loading={isLoading}
+            >
+              刷新状态
+            </Button>
+          </Space>
         }
       />
 
@@ -183,44 +212,62 @@ export function DashboardPage() {
                 description={capabilities.error.message}
               />
             ) : null}
-            <Table<SystemCapability>
-              rowKey="module_key"
-              size="small"
-              loading={capabilities.isLoading}
-              dataSource={capabilities.data?.items ?? []}
-              pagination={false}
-              scroll={{ x: 900 }}
-              columns={[
-                {
-                  title: "模块",
-                  render: (_, item) =>
-                    moduleLabels[item.module_key] ?? item.module_key,
-                },
-                {
-                  title: "实现",
-                  render: (_, item) =>
-                    capabilityStatusLabels[item.implementation_status],
-                },
-                {
-                  title: "数据",
-                  render: (_, item) => capabilityStatusLabels[item.data_status],
-                },
-                {
-                  title: "配置",
-                  render: (_, item) =>
-                    capabilityStatusLabels[item.configuration_status],
-                },
-                {
-                  title: "当前可用",
-                  render: (_, item) => (
-                    <Tag color={item.available ? "success" : "default"}>
-                      {item.available ? "可用" : "不可用"}
-                    </Tag>
-                  ),
-                },
-                { title: "说明", dataIndex: "reason" },
-              ]}
-            />
+            <Row gutter={[16, 16]}>
+              {(capabilities.data?.items ?? []).map(
+                (item: SystemCapability) => (
+                  <Col xs={24} md={12} xl={8} key={item.module_key}>
+                    <Card size="small" className="capability-card">
+                      <Space
+                        orientation="vertical"
+                        size={6}
+                        style={{ width: "100%" }}
+                      >
+                        <Space wrap>
+                          <Typography.Text strong>
+                            {moduleLabels[item.module_key] ?? item.module_key}
+                          </Typography.Text>
+                          <Tag color={item.available ? "success" : "default"}>
+                            {
+                              capabilityStatusLabels[
+                                item.availability ?? item.data_status
+                              ]
+                            }
+                          </Tag>
+                        </Space>
+                        <Typography.Text type="secondary">
+                          {item.reason}
+                        </Typography.Text>
+                        <Typography.Text type="secondary">
+                          实现：
+                          {capabilityStatusLabels[item.implementation_status]} ·
+                          数据：
+                          {capabilityStatusLabels[item.data_status]} · 配置：
+                          {capabilityStatusLabels[item.configuration_status]}
+                        </Typography.Text>
+                        <Typography.Text type="secondary">
+                          最近成功：
+                          {formatUtc(item.last_success_at ?? undefined)} ·
+                          Provider：
+                          {item.provider ?? "—"} · 模式：{item.mode ?? "—"}
+                        </Typography.Text>
+                        {item.required_actions[0] ? (
+                          <Typography.Text>
+                            下一步：{item.required_actions[0]}
+                          </Typography.Text>
+                        ) : null}
+                        <Link
+                          to={
+                            moduleLinks[item.module_key] ?? "/getting-started"
+                          }
+                        >
+                          打开模块
+                        </Link>
+                      </Space>
+                    </Card>
+                  </Col>
+                ),
+              )}
+            </Row>
           </Card>
         </>
       ) : null}

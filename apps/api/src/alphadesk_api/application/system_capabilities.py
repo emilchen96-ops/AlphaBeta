@@ -13,6 +13,7 @@ ReadinessStatus = Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNO
 @dataclass(frozen=True, slots=True)
 class CapabilityDataSnapshot:
     database_reachable: bool
+    migration_head: str | None = None
     instrument_count: int | None = None
     market_bar_count: int | None = None
     daily_market_bar_count: int | None = None
@@ -31,6 +32,7 @@ class CapabilityDataSnapshot:
     executable_order_count: int | None = None
     fill_count: int | None = None
     risk_decision_count: int | None = None
+    backtest_run_count: int | None = None
 
 
 class CapabilityDataProvider(Protocol):
@@ -95,7 +97,16 @@ def assess_system_capabilities(
     orders_ready = accounts_ready and instruments_ready
     ai_config_status: ReadinessStatus = "READY" if ai_provider_configured else "DISABLED"
     return (
-        historical_capability("market_data", "历史行情查询"),
+        SystemCapability(
+            module_key="infrastructure",
+            implementation_status="WORKING",
+            data_status="READY" if database_ready else "UNKNOWN",
+            configuration_status="READY" if database_ready else "UNKNOWN",
+            available=database_ready,
+            reason="PostgreSQL 能力快照可读取。" if database_ready else "PostgreSQL 当前不可达。",
+            required_actions=() if database_ready else ("启动 PostgreSQL 与 Redis",),
+        ),
+        historical_capability("historical_market_data", "历史行情查询"),
         historical_capability("scanner", "条件扫描"),
         historical_capability("strategy_research", "历史策略研究"),
         historical_capability("strategy_experiments", "批量策略研究"),
@@ -175,7 +186,7 @@ def assess_system_capabilities(
             ),
         ),
         SystemCapability(
-            module_key="backtest",
+            module_key="daily_backtest",
             implementation_status="WORKING",
             data_status=("READY" if bars_ready else ("MISSING" if database_ready else "UNKNOWN")),
             configuration_status="NOT_REQUIRED",
@@ -207,5 +218,22 @@ def assess_system_capabilities(
             available=False,
             reason="Windows Agent、XtQuant Adapter 与真实券商链路尚未实现。",
             required_actions=("完成 Windows Agent、安全命令回执、最终风控与对账后再接入",),
+        ),
+        SystemCapability(
+            module_key="audit",
+            implementation_status="PARTIAL",
+            data_status="READY" if database_ready else "UNKNOWN",
+            configuration_status="NOT_REQUIRED",
+            available=False,
+            reason="各业务链路已有审计事实; 统一审计中心仍是计划功能。",
+            required_actions=("后续实现统一审计查询 API 与页面",),
+        ),
+        SystemCapability(
+            module_key="settings",
+            implementation_status="WORKING",
+            data_status="NOT_REQUIRED",
+            configuration_status="READY",
+            available=True,
+            reason="只读设置与安全边界说明可查看。",
         ),
     )

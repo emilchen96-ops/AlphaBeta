@@ -22,8 +22,19 @@ export interface SystemCapability {
   data_status: CapabilityReadinessStatus;
   configuration_status: CapabilityReadinessStatus;
   available: boolean;
+  availability?:
+    | "READY"
+    | "NEEDS_DATA"
+    | "NEEDS_CONFIG"
+    | "DEMO_ONLY"
+    | "DISABLED"
+    | "PARTIAL"
+    | "NOT_IMPLEMENTED";
   reason: string;
   required_actions: string[];
+  last_success_at?: string | null;
+  provider?: string | null;
+  mode?: string;
 }
 
 export interface CapabilityDataCounts {
@@ -45,6 +56,7 @@ export interface CapabilityDataCounts {
   executable_order_count: number | null;
   fill_count: number | null;
   risk_decision_count: number | null;
+  backtest_run_count: number | null;
 }
 
 export interface SystemCapabilities {

@@ -1,5 +1,9 @@
 # AlphaDesk
 
+> **2026-07-21：U01 一键研究初始化与系统可用性收口。** 首次使用请打开
+> <http://127.0.0.1:5173/getting-started>，或阅读 [快速开始](docs/quick_start.md)。
+> `fixture` 模式不访问外部网络、不连接真实券商；真实实时行情与 MiniQMT 仍不可用。
+
 > **2026-07-20：BT01-R 日线回测完成。** 系统可从 D01 本地 A 股日线运行确定性的 `BacktestClock → Strategy → Signal → RiskDecision → Order → B01 → Fill → M04` 闭环，并提供独立账户、T+1 开盘执行、绩效、Integrity、API、CLI 和 `/backtest` 页面。它不连接实时行情、Redis 订单发布、MiniQMT、券商或真实账户；分钟回测尚未实现。下一阶段仅为 **U01：一键初始化与系统可用性收口**。详见 [日线回测](docs/daily_backtest.md)。
 
 > **2026-07-19：D01-A/B/C/D/E 已完成。** BaoStock A 股 Instrument、研究 Watchlist、未复权历史日线、每日增量、质量检查和 Readiness 均可通过受控 API/CLI 与数据中心页面操作；详见 [D01 历史行情](docs/historical_market_data.md)。系统仍不接交易级实时行情、MiniQMT 或真实券商。

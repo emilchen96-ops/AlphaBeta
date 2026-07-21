@@ -1,5 +1,9 @@
 # I01 API 契约盘点
 
+> U01 新增开发/测试专用 `/api/v1/demo/initialize-research`、`/demo/research-status` 与
+> `/demo/verify-research`；`/system/capabilities` 新增 `availability`、`provider`、`mode`、
+> `last_success_at`，同时保留原有字段兼容前端。
+
 FastAPI OpenAPI 生成结果包含 77 个 HTTP path；前端只使用现有 `apps/web/src/api` 客户端，没有第二套客户端。I01 新增一个只读接口：`GET /api/v1/system/capabilities`。
 
 ## 前端调用与 OpenAPI 对应

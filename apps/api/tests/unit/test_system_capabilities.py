@@ -5,7 +5,8 @@ from alphadesk_api.application.system_capabilities import (
 from alphadesk_api.core.config import Settings
 
 EXPECTED_MODULES = {
-    "market_data",
+    "infrastructure",
+    "historical_market_data",
     "scanner",
     "strategy_research",
     "strategy_experiments",
@@ -14,9 +15,11 @@ EXPECTED_MODULES = {
     "orders",
     "risk",
     "simulated_broker",
-    "backtest",
+    "daily_backtest",
     "realtime_market_data",
     "miniqmt",
+    "audit",
+    "settings",
 }
 
 
@@ -29,7 +32,7 @@ def test_capability_endpoint_is_read_only_complete_and_secret_free(client) -> No
     assert all(
         item["available"] is False
         for item in body["items"]
-        if item["module_key"] != "information_center"
+        if item["module_key"] not in {"information_center", "settings"}
     )
     assert body["counts"]["instrument_count"] is None
     serialized = response.text.lower()
@@ -68,8 +71,8 @@ def test_capability_assessment_separates_data_config_and_implementation() -> Non
     assert items["strategy_experiments"].data_status == "READY"
     assert items["ai_research"].configuration_status == "READY"
     assert items["simulated_broker"].available is True
-    assert items["backtest"].implementation_status == "WORKING"
-    assert items["backtest"].available is True
+    assert items["daily_backtest"].implementation_status == "WORKING"
+    assert items["daily_backtest"].available is True
     assert items["miniqmt"].implementation_status == "NOT_IMPLEMENTED"
 
 
@@ -85,7 +88,7 @@ def test_disabled_ai_and_missing_market_data_are_not_reported_available() -> Non
         )
     }
 
-    assert items["market_data"].data_status == "MISSING"
+    assert items["historical_market_data"].data_status == "MISSING"
     assert items["scanner"].available is False
     assert items["ai_research"].configuration_status == "DISABLED"
     assert items["ai_research"].available is False

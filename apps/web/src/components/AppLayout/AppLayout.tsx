@@ -8,6 +8,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   NotificationOutlined,
+  PlayCircleOutlined,
   OrderedListOutlined,
   PieChartOutlined,
   RobotOutlined,
@@ -28,6 +29,7 @@ const { Header, Sider, Content, Footer } = Layout;
 
 const menuItems = [
   { key: "/", icon: <AppstoreOutlined />, label: "总览" },
+  { key: "/getting-started", icon: <PlayCircleOutlined />, label: "开始使用" },
   { key: "/market-data-center", icon: <DatabaseOutlined />, label: "数据中心" },
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },

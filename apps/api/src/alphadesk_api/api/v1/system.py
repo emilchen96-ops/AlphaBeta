@@ -4,10 +4,14 @@ import asyncio
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
-from alphadesk_api.application.system_capabilities import assess_system_capabilities
+from alphadesk_api.application.system_capabilities import (
+    SystemCapability,
+    assess_system_capabilities,
+)
 from alphadesk_api.schemas.system import (
     CapabilityDataCountsResponse,
     SystemCapabilitiesResponse,
@@ -51,11 +55,72 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
         ai_provider_key=selected_provider.provider_key,
     )
     count_fields = {name: getattr(data, name) for name in CapabilityDataCountsResponse.model_fields}
+
+    def response_item(item: SystemCapability) -> SystemCapabilityResponse:
+        raw = asdict(item)
+        module_key = raw["module_key"]
+        availability: Literal[
+            "READY",
+            "NEEDS_DATA",
+            "NEEDS_CONFIG",
+            "DEMO_ONLY",
+            "DISABLED",
+            "PARTIAL",
+            "NOT_IMPLEMENTED",
+        ]
+        if module_key == "ai_research" and selected_provider.provider_key == "fake":
+            availability = "DEMO_ONLY"
+            provider = "fake"
+            mode = "DEMO"
+        elif raw["implementation_status"] == "NOT_IMPLEMENTED":
+            availability = "NOT_IMPLEMENTED"
+            provider = None
+            mode = "PLANNED"
+        elif raw["implementation_status"] == "PARTIAL" and module_key == "audit":
+            availability = "PARTIAL"
+            provider = "postgresql"
+            mode = "READ_ONLY"
+        elif raw["configuration_status"] == "DISABLED":
+            availability = "DISABLED"
+            provider = request.app.state.settings.realtime_market_provider
+            mode = "DISABLED"
+        elif raw["available"]:
+            availability = "READY"
+            provider = "postgresql"
+            mode = "LOCAL"
+        elif raw["data_status"] in ("MISSING", "UNKNOWN"):
+            availability = "NEEDS_DATA"
+            provider = "postgresql"
+            mode = "LOCAL"
+        else:
+            availability = "NEEDS_CONFIG"
+            provider = None
+            mode = "LOCAL"
+        last_success_at = (
+            data.latest_market_bar_at
+            if module_key
+            in {
+                "historical_market_data",
+                "scanner",
+                "strategy_research",
+                "strategy_experiments",
+                "daily_backtest",
+            }
+            else None
+        )
+        return SystemCapabilityResponse(
+            **raw,
+            availability=availability,
+            last_success_at=last_success_at,
+            provider=provider,
+            mode=mode,
+        )
+
     return SystemCapabilitiesResponse(
         generated_at=datetime.now(UTC),
         database_reachable=data.database_reachable,
         counts=CapabilityDataCountsResponse(**count_fields),
-        items=[SystemCapabilityResponse(**asdict(item)) for item in items],
+        items=[response_item(item) for item in items],
     )
 
 

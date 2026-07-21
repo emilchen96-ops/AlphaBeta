@@ -31,6 +31,7 @@ class SystemStatusResponse(BaseModel):
 
 
 class CapabilityDataCountsResponse(BaseModel):
+    migration_head: str | None = None
     instrument_count: int | None = None
     market_bar_count: int | None = None
     daily_market_bar_count: int | None = None
@@ -49,6 +50,7 @@ class CapabilityDataCountsResponse(BaseModel):
     executable_order_count: int | None = None
     fill_count: int | None = None
     risk_decision_count: int | None = None
+    backtest_run_count: int | None = None
 
 
 class SystemCapabilityResponse(BaseModel):
@@ -57,8 +59,20 @@ class SystemCapabilityResponse(BaseModel):
     data_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
     configuration_status: Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
     available: bool
+    availability: Literal[
+        "READY",
+        "NEEDS_DATA",
+        "NEEDS_CONFIG",
+        "DEMO_ONLY",
+        "DISABLED",
+        "PARTIAL",
+        "NOT_IMPLEMENTED",
+    ]
     reason: str
     required_actions: list[str]
+    last_success_at: datetime | None = None
+    provider: str | None = None
+    mode: str
 
 
 class SystemCapabilitiesResponse(BaseModel):

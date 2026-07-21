@@ -1,12 +1,13 @@
 """Read-only SQLAlchemy data snapshot for the I01 capability endpoint."""
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphadesk_api.application.system_capabilities import CapabilityDataSnapshot
 from alphadesk_api.infrastructure.models import (
     AIAnalysisRunModel,
+    BacktestRunModel,
     FillModel,
     InformationItemModel,
     InformationSourceModel,
@@ -115,9 +116,20 @@ class SqlAlchemyCapabilityDataProvider:
                             .select_from(RiskDecisionModel)
                             .scalar_subquery()
                             .label("risk_decision_count"),
+                            select(func.count())
+                            .select_from(BacktestRunModel)
+                            .scalar_subquery()
+                            .label("backtest_run_count"),
                         )
                     )
                 ).one()
-            return CapabilityDataSnapshot(database_reachable=True, **row._asdict())
+                migration_head = (
+                    await session.execute(text("SELECT version_num FROM alembic_version"))
+                ).scalar_one_or_none()
+            return CapabilityDataSnapshot(
+                database_reachable=True,
+                migration_head=migration_head,
+                **row._asdict(),
+            )
         except SQLAlchemyError:
             return CapabilityDataSnapshot(database_reachable=False)

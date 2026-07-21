@@ -1,5 +1,8 @@
 # AlphaDesk 文档索引
 
+> U01 使用入口：[快速开始](quick_start.md)、[演示研究环境](demo_research_environment.md)、
+> [系统能力状态](system_capabilities.md) 与 [可用性收口状态](usability_status.md)。
+
 > 第一次使用请先阅读 [AlphaDesk 使用指南](user_guide.md)：包含开机启动、首次数据准备、菜单与按钮说明、推荐业务流程、真实页面截图和常见故障排查。
 
 > 当前回测里程碑为 **BT01-R 完成**：日线回测总览见 [daily_backtest.md](daily_backtest.md)，严格时间边界见 [backtest_time_model.md](backtest_time_model.md)，指标口径见 [backtest_metrics.md](backtest_metrics.md)，页面见 [backtest_ui.md](backtest_ui.md)，决策见 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。分钟回测尚未完成，下一阶段仅为 U01。
