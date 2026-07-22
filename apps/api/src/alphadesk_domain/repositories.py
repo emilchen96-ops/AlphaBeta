@@ -464,6 +464,7 @@ class InstrumentMappingRepository(Protocol):
 
 class MarketBarRepository(Protocol):
     async def upsert_many(self, entities: list[MarketBar]) -> MarketBarUpsertResult: ...
+    async def count_raw_daily(self) -> int: ...
     async def get_bars(
         self,
         *,

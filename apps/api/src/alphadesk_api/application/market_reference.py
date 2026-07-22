@@ -282,6 +282,7 @@ class MarketReferenceQueryService:
             lifecycle = await uow.instrument_lifecycle_events.list(
                 instrument_ids=None, limit=100_000
             )
+            raw_daily_count = await uow.market_bars.count_raw_daily()
         latest_completed: date | None = None
         warnings: list[str] = []
         if calendar:
@@ -300,7 +301,9 @@ class MarketReferenceQueryService:
         factor_instruments = {item.instrument_id for item in factors}
         lifecycle_instruments = {item.instrument_id for item in lifecycle}
         calendar_ready = bool(calendar)
-        raw_ready = True
+        raw_ready = raw_daily_count > 0
+        if not raw_ready:
+            warnings.append("RAW 日线尚未导入")
         adjusted_ready = bool(factors)
         suspension_ready = bool(statuses)
 

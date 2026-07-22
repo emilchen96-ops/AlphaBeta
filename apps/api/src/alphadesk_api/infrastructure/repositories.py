@@ -3303,6 +3303,19 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
         await self._session.flush()
         return MarketBarUpsertResult(inserted, updated, len(entities) - len(inserted_flags))
 
+    async def count_raw_daily(self) -> int:
+        return int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(MarketBarModel)
+                .where(
+                    MarketBarModel.timeframe == MarketTimeframe.DAY_1.value,
+                    MarketBarModel.adjustment_type == AdjustmentType.NONE.value,
+                )
+            )
+            or 0
+        )
+
     async def get_bars(
         self,
         *,
