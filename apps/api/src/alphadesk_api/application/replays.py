@@ -71,6 +71,7 @@ from alphadesk_domain.enums import (
     SettlementPolicy,
     TimeInForce,
 )
+from alphadesk_domain.market_reference import InstrumentTradingState, PriceAdjustmentMode
 from alphadesk_domain.order_workflow import OrderStateMachine
 from alphadesk_domain.replay import (
     TERMINAL_REPLAY_STATUSES,
@@ -120,6 +121,7 @@ class CreateReplayRequest:
     risk_configuration_reference: str = "r01-default-v1"
     data_source_code: str | None = None
     correlation_id: UUID | None = None
+    strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -254,14 +256,15 @@ class ReplayService:
             risk_configuration_reference=request.risk_configuration_reference,
             risk_configuration_snapshot=risk_snapshot,
             data_source_code=request.data_source_code or self._settings.historical_market_provider,
+            strategy_price_adjustment_mode=request.strategy_price_adjustment_mode,
         )
         configuration = ReplayConfiguration(execution=execution, speed_mode=request.speed_mode)
         if len(execution.instrument_ids) > self._settings.replay_max_instruments:
             raise ApplicationError(
                 "REPLAY_INVALID_CONFIGURATION", "instrument count exceeds replay limit"
             )
-        bars, sessions = await self._load_bars_and_sessions(execution)
-        del bars
+        raw_bars, strategy_bars, sessions = await self._load_bars_and_sessions(execution)
+        del raw_bars, strategy_bars
         if len(sessions) > self._settings.replay_max_sessions:
             raise ApplicationError(
                 "REPLAY_INVALID_CONFIGURATION", "session count exceeds replay limit"
@@ -464,7 +467,7 @@ class ReplayService:
 
     async def _load_bars_and_sessions(
         self, configuration: BacktestConfiguration
-    ) -> tuple[list[StrategyBar], list[BacktestSession]]:
+    ) -> tuple[list[StrategyBar], list[StrategyBar], list[BacktestSession]]:
         async with self._uow_factory() as uow:
             readiness = await uow.historical_bars.readiness(
                 instrument_ids=configuration.instrument_ids,
@@ -492,6 +495,22 @@ class ReplayService:
                 adjustment_type=AdjustmentType.NONE,
                 accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
             )
+            strategy_bars = await uow.historical_bars.list_authoritative_bars(
+                instrument_ids=configuration.instrument_ids,
+                timeframe=configuration.timeframe,
+                start_at=configuration.start_at,
+                end_at=configuration.end_at,
+                source_code=configuration.data_source_code,
+                adjustment_type=AdjustmentType.NONE,
+                accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                price_adjustment_mode=configuration.strategy_price_adjustment_mode,
+            )
+            calendar_rows = await uow.trading_calendar.list(
+                exchange=None,
+                start=configuration.start_at.date(),
+                end=configuration.end_at.date(),
+                limit=self._settings.replay_max_sessions * 2 + 100,
+            )
         if not bars or set(configuration.instrument_ids) - {item.instrument_id for item in bars}:
             raise ApplicationError(
                 "REPLAY_DATA_NOT_READY", "one or more instruments have no local daily bars"
@@ -499,12 +518,17 @@ class ReplayService:
         grouped: dict[date, set[UUID]] = defaultdict(set)
         for bar in bars:
             grouped[_bar_date(bar)].add(bar.instrument_id)
+        calendar_dates = {item.session_date for item in calendar_rows if item.is_open}
+        session_dates = sorted(grouped)
+        if calendar_dates:
+            session_dates = [item for item in session_dates if item in calendar_dates]
         sessions = [
             BacktestSession(trading_date=trading_date, instrument_ids=tuple(instruments))
-            for trading_date, instruments in sorted(grouped.items())
+            for trading_date in session_dates
+            for instruments in (grouped[trading_date],)
         ]
         HistoricalSessionProcessor(sessions)
-        return bars, sessions
+        return bars, strategy_bars, sessions
 
     @staticmethod
     async def _mark_strategy_running(uow: Any, run: ReplayRun, occurred_at: datetime) -> None:
@@ -589,7 +613,7 @@ class ReplaySessionProcessor:
             config.strategy_key,
             cast(dict[str, str | int | bool], dict(config.parameters)),
         )
-        bars, sessions = await ReplayService(
+        bars, strategy_bars, sessions = await ReplayService(
             self._uow_factory, self._registry, self._settings
         )._load_bars_and_sessions(config)
         cursor_result = HistoricalSessionProcessor(sessions, cursor).process_next_session()
@@ -598,6 +622,10 @@ class ReplaySessionProcessor:
         for bar in bars:
             bars_by_date[_bar_date(bar)][bar.instrument_id] = bar
         day_bars = bars_by_date[session.trading_date]
+        strategy_bars_by_date: dict[date, dict[UUID, StrategyBar]] = defaultdict(dict)
+        for bar in strategy_bars:
+            strategy_bars_by_date[_bar_date(bar)][bar.instrument_id] = bar
+        strategy_day_bars = strategy_bars_by_date[session.trading_date]
         open_time = session.time_for(BacktestPhase.SESSION_OPEN)
         close_time = session.time_for(BacktestPhase.SESSION_CLOSE)
         end_time = session.time_for(BacktestPhase.SESSION_END)
@@ -635,6 +663,12 @@ class ReplaySessionProcessor:
             bar = day_bars[instrument_id]
             async with self._uow_factory() as uow:
                 instrument = await uow.instruments.get_by_id(instrument_id)
+                statuses = await uow.instrument_trading_statuses.list(
+                    instrument_ids=[instrument_id],
+                    start=session.trading_date,
+                    end=session.trading_date,
+                    limit=10,
+                )
             if instrument is None:
                 raise ApplicationError("INSTRUMENT_NOT_FOUND", "instrument was not found")
             candidates = [
@@ -644,6 +678,18 @@ class ReplaySessionProcessor:
                 and order.status in executable_statuses
                 and order.created_at < open_time
             ]
+            if any(item.status is InstrumentTradingState.SUSPENDED for item in statuses):
+                events.append(
+                    await self._event(
+                        run,
+                        ReplayEventType.WARNING,
+                        open_time,
+                        f"Instrument {instrument_id} suspended; execution deferred",
+                        {"instrument_id": str(instrument_id)},
+                        instrument_id=instrument_id,
+                    )
+                )
+                continue
             for order in sorted(candidates, key=lambda item: (item.created_at, str(item.id))):
                 result = await execution.execute_market_input(
                     SimulatedExecutionMarketInput(
@@ -738,7 +784,9 @@ class ReplaySessionProcessor:
             environment=StrategyEnvironment.REPLAY,
         )
         strategy.initialize(context)
-        ordered_bars = sorted(bars, key=lambda item: (_bar_date(item), str(item.instrument_id)))
+        ordered_bars = sorted(
+            strategy_bars, key=lambda item: (_bar_date(item), str(item.instrument_id))
+        )
         prior_bars = [item for item in ordered_bars if _bar_date(item) < session.trading_date]
         for prior in prior_bars:
             prior_time = BacktestSession(
@@ -760,7 +808,8 @@ class ReplaySessionProcessor:
         confirmation = OrderConfirmationService(self._uow_factory)
         for instrument_id in sorted(day_bars, key=str):
             bar = day_bars[instrument_id]
-            for draft in strategy.on_bar(context, bar):
+            strategy_bar = strategy_day_bars[instrument_id]
+            for draft in strategy.on_bar(context, strategy_bar):
                 validate_signal_draft(
                     draft,
                     run=StrategyRun(
@@ -778,8 +827,8 @@ class ReplaySessionProcessor:
                         status=StrategyRunStatus.RUNNING,
                         correlation_id=run.correlation_id,
                     ),
-                    current_bar_instrument_id=bar.instrument_id,
-                    current_bar_timestamp=bar.timestamp,
+                    current_bar_instrument_id=strategy_bar.instrument_id,
+                    current_bar_timestamp=strategy_bar.timestamp,
                     expected_generated_at=close_time,
                 )
                 sequence += 1
@@ -1002,7 +1051,9 @@ class ReplaySessionProcessor:
                 time_in_force=config.time_in_force.value,
                 quantity=signal.target_quantity,
                 limit_price=(
-                    signal.reference_price if config.order_type is OrderType.LIMIT else None
+                    (bar.raw_reference_price or bar.close)
+                    if config.order_type is OrderType.LIMIT
+                    else None
                 ),
                 expires_at=expires_at,
                 idempotency_key=f"{key}:risk-order",
@@ -1013,7 +1064,7 @@ class ReplaySessionProcessor:
                 intent_source=OrderIntentSource.STRATEGY,
                 source_id=signal.id,
                 strategy_key=config.strategy_key,
-                reference_price=signal.reference_price or bar.close,
+                reference_price=bar.raw_reference_price or bar.close,
             )
         )
         order = outcome.order

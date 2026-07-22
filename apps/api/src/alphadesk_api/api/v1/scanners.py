@@ -67,6 +67,7 @@ def run_response(run: ScanRun, *, replayed: bool = False) -> ScanRunResponse:
             "modifies_portfolio": False,
             "is_realtime": False,
         },
+        price_adjustment_mode=run.price_adjustment_mode,
     )
 
 
@@ -119,6 +120,7 @@ async def create_scan_run(request: Request, body: ScanRunCreateBody) -> ScanRunR
                 as_of=body.as_of,
                 idempotency_key=body.idempotency_key,
                 correlation_id=request_correlation_id(request),
+                price_adjustment_mode=body.price_adjustment_mode,
             )
         )
         return run_response(outcome.run, replayed=outcome.replayed)

@@ -7,6 +7,11 @@ from alphadesk_api.core.config import Settings
 EXPECTED_MODULES = {
     "infrastructure",
     "historical_market_data",
+    "trading_calendar",
+    "adjustment_factors",
+    "suspension_data",
+    "instrument_lifecycle",
+    "adjusted_strategy_data",
     "scanner",
     "strategy_research",
     "strategy_experiments",

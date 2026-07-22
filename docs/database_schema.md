@@ -1,5 +1,15 @@
 # PostgreSQL 持久化模型
 
+## D02 市场参考事实
+
+- `trading_calendar_sessions`：SHSE/SZSE 日期、开放状态、前后开放日和来源，唯一键 exchange + session_date。
+- `adjustment_factors`：Instrument、交易日、Decimal 因子、约定和来源，按业务键幂等。
+- `instrument_trading_statuses`：TRADING/SUSPENDED/RESUMED/UNKNOWN 日状态。
+- `instrument_lifecycle_events`：上市、退市、长期停牌、恢复与状态变化事实。
+- `instruments` 增加 listed_at/delisted_at；StrategyRun、ScanRun、BacktestRun、ReplayRun 以 RAW 默认保存最小必要价格模式字段。
+
+Migration `0017_d02` 继承唯一 head `0016_rt01`。
+
 > RT01 Migration `0016_rt01`（唯一前驱 `0015_bt01`）新增 `replay_runs`、
 > `replay_control_actions`、`replay_events`、`replay_equity_points`。Run 保存配置快照、Session 游标、
 > 版本与 Worker lease；控制动作和事件追加写入并有稳定幂等/序号约束。Signal、RiskDecision、

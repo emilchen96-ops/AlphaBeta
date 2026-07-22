@@ -257,9 +257,15 @@ async def test_quality_run_persists_statistics_readiness_and_integrity(
         checked_at=datetime(2025, 1, 20, tzinfo=UTC),
     )
     types = {item.issue_type for item in result.issues}
-    assert {"STALE_DATA", "INSUFFICIENT_BARS"}.issubset(types)
+    assert {
+        "STALE_DATA",
+        "INSUFFICIENT_BARS",
+        "CALENDAR_DATA_MISSING",
+        "SUSPENSION_DATA_MISSING",
+        "ADJUSTMENT_FACTOR_MISSING",
+    }.issubset(types)
     assert result.run.instruments_checked == 2 and result.run.bars_checked == 6
-    assert result.run.warning_count == 4 and result.run.issues_found == 4
+    assert result.run.warning_count == 10 and result.run.issues_found == 10
     assert (
         await MarketDataQualityIntegrityService(factory(session_factory)).verify(result.run.id)
         == ()
@@ -269,7 +275,8 @@ async def test_quality_run_persists_statistics_readiness_and_integrity(
             await session.scalar(select(func.count()).select_from(MarketDataQualityRunModel)) == 1
         )
         assert (
-            await session.scalar(select(func.count()).select_from(MarketDataQualityIssueModel)) == 4
+            await session.scalar(select(func.count()).select_from(MarketDataQualityIssueModel))
+            == 10
         )
 
     readiness = await MarketDataReadinessService(

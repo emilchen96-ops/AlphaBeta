@@ -1,7 +1,7 @@
 """Minimal asynchronous repository ports owned by the domain package."""
 
 import builtins
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -69,6 +69,13 @@ from alphadesk_domain.market import (
     MarketDataQualityRun,
     MarketDataSource,
     MarketSyncRun,
+)
+from alphadesk_domain.market_reference import (
+    AdjustmentFactor,
+    FactorConvention,
+    InstrumentLifecycleEvent,
+    InstrumentTradingStatus,
+    TradingCalendarSession,
 )
 from alphadesk_domain.realtime_market import MarketRealtimeRun
 from alphadesk_domain.replay import ReplayControlAction, ReplayEvent, ReplayRun
@@ -738,3 +745,43 @@ class ReplayEventRepository(Protocol):
 class ReplayEquityPointRepository(Protocol):
     async def append(self, entity: BacktestEquityPoint) -> None: ...
     async def list_by_run(self, run_id: UUID) -> list[BacktestEquityPoint]: ...
+
+
+class TradingCalendarRepository(Protocol):
+    async def upsert_many(self, entities: list[TradingCalendarSession]) -> int: ...
+    async def list(
+        self, *, exchange: str | None, start: date | None, end: date | None, limit: int
+    ) -> list[TradingCalendarSession]: ...
+
+
+class AdjustmentFactorRepository(Protocol):
+    async def upsert_many(self, entities: list[AdjustmentFactor]) -> int: ...
+    async def list(
+        self,
+        *,
+        instrument_ids: list[UUID] | None,
+        start: date | None,
+        end: date | None,
+        source: str | None,
+        convention: FactorConvention | None,
+        limit: int,
+    ) -> list[AdjustmentFactor]: ...
+
+
+class InstrumentTradingStatusRepository(Protocol):
+    async def upsert_many(self, entities: list[InstrumentTradingStatus]) -> int: ...
+    async def list(
+        self,
+        *,
+        instrument_ids: list[UUID] | None,
+        start: date | None,
+        end: date | None,
+        limit: int,
+    ) -> list[InstrumentTradingStatus]: ...
+
+
+class InstrumentLifecycleRepository(Protocol):
+    async def upsert_many(self, entities: list[InstrumentLifecycleEvent]) -> int: ...
+    async def list(
+        self, *, instrument_ids: list[UUID] | None, limit: int
+    ) -> list[InstrumentLifecycleEvent]: ...

@@ -54,6 +54,7 @@ export interface ReplayConfiguration {
     initial_cash: string;
     order_type: string;
     time_in_force: string;
+    strategy_price_adjustment_mode: "RAW" | "QFQ";
     fee_configuration: Record<string, string | number>;
     slippage_configuration: Record<string, string | number | null>;
     maximum_volume_participation: string | null;
@@ -123,6 +124,7 @@ export interface CreateReplayRequest {
   initial_cash: string;
   order_type: string;
   time_in_force: string;
+  strategy_price_adjustment_mode: "RAW" | "QFQ";
   fee_configuration: Record<string, string>;
   slippage_configuration: Record<string, string | null>;
   maximum_volume_participation: string | null;

@@ -86,6 +86,7 @@ class ReplayEventType(StrEnum):
     RUN_STOPPED = "RUN_STOPPED"
     RUN_FAILED = "RUN_FAILED"
     RECOVERY_REQUIRED = "RECOVERY_REQUIRED"
+    WARNING = "WARNING"
 
 
 _TRANSITIONS: Mapping[ReplayRunStatus, frozenset[ReplayRunStatus]] = {

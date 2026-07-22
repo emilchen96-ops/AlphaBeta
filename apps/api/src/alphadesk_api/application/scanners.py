@@ -12,6 +12,7 @@ from uuid import UUID
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.scanners import (
     Scanner,
     ScannerContext,
@@ -39,6 +40,7 @@ class ScannerRunRequest:
     as_of: datetime
     idempotency_key: str
     correlation_id: UUID
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -109,6 +111,7 @@ class ScannerRunService:
                 "instrument_ids": [str(item) for item in instrument_ids],
                 "timeframe": request.timeframe.value,
                 "as_of": as_of.isoformat(),
+                "price_adjustment_mode": request.price_adjustment_mode.value,
             }
         )
         async with self._uow_factory() as uow:
@@ -134,6 +137,7 @@ class ScannerRunService:
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,
                 correlation_id=request.correlation_id,
+                price_adjustment_mode=request.price_adjustment_mode,
             )
             run.mark_running(datetime.now(UTC))
             await uow.scan_runs.add(run)
@@ -155,6 +159,14 @@ class ScannerRunService:
             raise ApplicationError(exc.code, str(exc)) from exc
         if request.timeframe is not MarketTimeframe.DAY_1:
             raise ApplicationError("SCANNER_TIMEFRAME_NOT_SUPPORTED", "SC01 only supports DAY_1")
+        if (
+            request.scanner_key == "limit_up_pullback"
+            and request.price_adjustment_mode is not PriceAdjustmentMode.RAW
+        ):
+            raise ApplicationError(
+                "MARKET_ADJUSTMENT_MODE_NOT_SUPPORTED",
+                "limit_up_pullback 必须使用 RAW 未复权价格",
+            )
         if request.as_of.tzinfo is None:
             raise ApplicationError("SCANNER_INVALID_AS_OF", "as_of must be timezone-aware")
         instrument_ids = tuple(sorted(set(request.instrument_ids), key=str))
@@ -193,6 +205,7 @@ class ScannerRunService:
                 timeframe=run.timeframe,
                 start_at=datetime(1970, 1, 1, tzinfo=UTC),
                 end_at=run.as_of + timedelta(microseconds=1),
+                price_adjustment_mode=run.price_adjustment_mode,
             )
             grouped: dict[UUID, list[StrategyBar]] = {item.id: [] for item in instruments}
             for bar in bars:
@@ -216,7 +229,16 @@ class ScannerRunService:
                     reference_price=item.reference_price,
                     reason_code=item.reason_code,
                     reason=item.reason,
-                    metrics=stored_scanner_metrics(item.metrics),
+                    metrics={
+                        **stored_scanner_metrics(item.metrics),
+                        "price_adjustment_mode": run.price_adjustment_mode.value,
+                        "reference_price_type": run.price_adjustment_mode.value,
+                        "factor_source": (
+                            "FIXTURE"
+                            if run.price_adjustment_mode is PriceAdjustmentMode.QFQ
+                            else None
+                        ),
+                    },
                     created_at=now,
                 )
                 for index, item in enumerate(candidates, start=1)

@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from alphadesk_domain.market_reference import PriceAdjustmentMode
+
 
 class StrategyParameterResponse(BaseModel):
     name: str
@@ -36,6 +38,7 @@ class StrategyRunCreateBody(BaseModel):
     start_at: datetime
     end_at: datetime
     idempotency_key: str = Field(min_length=1, max_length=128)
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class StrategyRunResponse(BaseModel):
@@ -51,6 +54,7 @@ class StrategyRunResponse(BaseModel):
     signals_generated: int
     warnings: list[str]
     replayed: bool = False
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class StrategyRunDetailResponse(StrategyRunResponse):
@@ -105,6 +109,7 @@ class StrategyExperimentCreateBody(BaseModel):
     timeframe: str
     start_at: datetime
     end_at: datetime
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     idempotency_key: str = Field(min_length=1, max_length=128)
 
 

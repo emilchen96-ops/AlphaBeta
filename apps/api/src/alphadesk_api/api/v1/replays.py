@@ -137,6 +137,7 @@ async def create_replay(request: Request, body: ReplayCreateBody) -> ReplayRunRe
                 risk_configuration_reference=body.risk_configuration_reference,
                 data_source_code=body.data_source_code,
                 correlation_id=request_correlation_id(request),
+                strategy_price_adjustment_mode=body.strategy_price_adjustment_mode,
             )
         )
         detail = await ReplayQueryService(uow_factory(request)).detail(result.run.id)

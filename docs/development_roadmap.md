@@ -1,5 +1,11 @@
 # 开发路线图
 
+> 2026-07-22：D02 已完成实现与验收。系统新增 SHSE/SZSE 交易日历、复权因子、停复牌与
+> Instrument 生命周期事实，并将明确的 RAW/QFQ 语义接入 D01、Scanner、Strategy、BT01 和
+> RT01。RAW 仍是模拟成交、费用和账本的唯一权威价格；QFQ 只用于研究与指标。当前默认使用
+> 离线 Fixture，真实 Tushare Provider 未配置时不会联网。分钟复权、分钟行情、BT02、MiniQMT
+> 和实盘均未实现。下一阶段仅为 **D03：分钟行情数据中心**。
+
 > 2026-07-21：RT01 已完成：D01 日线可按 Session 启动、暂停、恢复、单步和倍速回放；
 > 独立 Worker、lease 恢复、既有 Strategy/R01/M05/B01/M04 事实链、BT01 一致性、API、CLI、
 > WebSocket、页面和 Integrity 均已接入。无 MiniQMT 或实盘能力。下一阶段仅为 **D02：交易日历、

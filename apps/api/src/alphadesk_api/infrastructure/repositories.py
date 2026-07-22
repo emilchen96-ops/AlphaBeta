@@ -1,7 +1,8 @@
 """SQLAlchemy asynchronous repository adapters for domain ports."""
 
 import builtins
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from alphadesk_api.infrastructure.models import (
     AccountCashBalanceModel,
     AccountReconciliationRunModel,
     AccountSnapshotModel,
+    AdjustmentFactorModel,
     AIAnalysisRunModel,
     AuditLogModel,
     BacktestEquityPointModel,
@@ -34,8 +36,10 @@ from alphadesk_api.infrastructure.models import (
     InformationIngestionRunModel,
     InformationItemModel,
     InformationSourceModel,
+    InstrumentLifecycleEventModel,
     InstrumentMappingModel,
     InstrumentModel,
+    InstrumentTradingStatusModel,
     LedgerTransactionModel,
     MarketBarModel,
     MarketDataQualityIssueModel,
@@ -69,6 +73,7 @@ from alphadesk_api.infrastructure.models import (
     StrategyRunModel,
     StrategyVersionModel,
     TradingAccountModel,
+    TradingCalendarSessionModel,
     WatchlistItemModel,
     WatchlistModel,
 )
@@ -145,6 +150,14 @@ from alphadesk_domain.market import (
     MarketDataSource,
     MarketSyncRun,
 )
+from alphadesk_domain.market_reference import (
+    AdjustmentFactor,
+    FactorConvention,
+    InstrumentLifecycleEvent,
+    InstrumentTradingStatus,
+    PriceAdjustmentMode,
+    TradingCalendarSession,
+)
 from alphadesk_domain.realtime_market import MarketRealtimeRun
 from alphadesk_domain.replay import (
     ReplayControlAction,
@@ -162,13 +175,13 @@ from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyEx
 from alphadesk_domain.strategy_runs import HistoricalDataReadiness, StrategyRun
 
 
-def model_values(model: DeclarativeBase) -> dict[str, Any]:
+def model_values(model: DeclarativeBase, *, include_none: bool = False) -> dict[str, Any]:
     mapper = inspect(model).mapper
     values: dict[str, Any] = {}
     for column in model.__table__.columns:
         attribute_name = mapper.get_property_by_column(column).key
         value = getattr(model, attribute_name, None)
-        if value is not None:
+        if value is not None or include_none:
             values[column.name] = value
     return values
 
@@ -223,6 +236,7 @@ def _backtest_run_values(entity: BacktestRun) -> dict[str, Any]:
         "idempotency_key": entity.idempotency_key,
         "request_fingerprint": entity.request_fingerprint,
         "configuration": backtest_configuration_to_dict(entity.configuration),
+        "strategy_price_adjustment_mode": entity.configuration.strategy_price_adjustment_mode.value,
         "strategy_run_id": entity.strategy_run_id,
         "account_id": entity.account_id,
         "status": entity.status.value,
@@ -303,6 +317,201 @@ class SqlAlchemyBacktestRunRepository:
             .limit(limit)
         )
         return [_backtest_run_from_model(row) for row in rows], total
+
+
+class SqlAlchemyTradingCalendarRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def upsert_many(self, entities: list[TradingCalendarSession]) -> int:
+        if not entities:
+            return 0
+        values = [
+            model_values(model_from_entity(TradingCalendarSessionModel, entity), include_none=True)
+            for entity in entities
+        ]
+        statement = pg_insert(TradingCalendarSessionModel).values(values)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_calendar_exchange_date",
+                set_={
+                    "is_open": statement.excluded.is_open,
+                    "previous_open_date": statement.excluded.previous_open_date,
+                    "next_open_date": statement.excluded.next_open_date,
+                    "session_type": statement.excluded.session_type,
+                    "source": statement.excluded.source,
+                    "fetched_at": statement.excluded.fetched_at,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        )
+        await self._session.flush()
+        return len(entities)
+
+    async def list(
+        self, *, exchange: str | None, start: date | None, end: date | None, limit: int
+    ) -> list[TradingCalendarSession]:
+        query = select(TradingCalendarSessionModel)
+        if exchange:
+            query = query.where(TradingCalendarSessionModel.exchange == exchange.upper())
+        if start:
+            query = query.where(TradingCalendarSessionModel.session_date >= start)
+        if end:
+            query = query.where(TradingCalendarSessionModel.session_date <= end)
+        rows = await self._session.scalars(
+            query.order_by(
+                TradingCalendarSessionModel.session_date,
+                TradingCalendarSessionModel.exchange,
+            ).limit(limit)
+        )
+        return [entity_from_model(TradingCalendarSession, row) for row in rows]
+
+
+class SqlAlchemyAdjustmentFactorRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def upsert_many(self, entities: list[AdjustmentFactor]) -> int:
+        if not entities:
+            return 0
+        values = [
+            model_values(model_from_entity(AdjustmentFactorModel, entity), include_none=True)
+            for entity in entities
+        ]
+        statement = pg_insert(AdjustmentFactorModel).values(values)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_adjustment_factor_business_key",
+                set_={
+                    "factor": statement.excluded.factor,
+                    "fetched_at": statement.excluded.fetched_at,
+                },
+            )
+        )
+        await self._session.flush()
+        return len(entities)
+
+    async def list(
+        self,
+        *,
+        instrument_ids: list[UUID] | None,
+        start: date | None,
+        end: date | None,
+        source: str | None,
+        convention: FactorConvention | None,
+        limit: int,
+    ) -> list[AdjustmentFactor]:
+        query = select(AdjustmentFactorModel)
+        if instrument_ids:
+            query = query.where(AdjustmentFactorModel.instrument_id.in_(instrument_ids))
+        if start:
+            query = query.where(AdjustmentFactorModel.trade_date >= start)
+        if end:
+            query = query.where(AdjustmentFactorModel.trade_date <= end)
+        if source:
+            query = query.where(AdjustmentFactorModel.source == source.upper())
+        if convention:
+            query = query.where(AdjustmentFactorModel.factor_convention == convention.value)
+        rows = await self._session.scalars(
+            query.order_by(
+                AdjustmentFactorModel.trade_date, AdjustmentFactorModel.instrument_id
+            ).limit(limit)
+        )
+        return [entity_from_model(AdjustmentFactor, row) for row in rows]
+
+
+class SqlAlchemyInstrumentTradingStatusRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def upsert_many(self, entities: list[InstrumentTradingStatus]) -> int:
+        if not entities:
+            return 0
+        values = [
+            model_values(model_from_entity(InstrumentTradingStatusModel, entity), include_none=True)
+            for entity in entities
+        ]
+        statement = pg_insert(InstrumentTradingStatusModel).values(values)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_trading_status_business_key",
+                set_={
+                    "status": statement.excluded.status,
+                    "suspension_type": statement.excluded.suspension_type,
+                    "reason": statement.excluded.reason,
+                    "fetched_at": statement.excluded.fetched_at,
+                },
+            )
+        )
+        await self._session.flush()
+        return len(entities)
+
+    async def list(
+        self,
+        *,
+        instrument_ids: list[UUID] | None,
+        start: date | None,
+        end: date | None,
+        limit: int,
+    ) -> list[InstrumentTradingStatus]:
+        query = select(InstrumentTradingStatusModel)
+        if instrument_ids:
+            query = query.where(InstrumentTradingStatusModel.instrument_id.in_(instrument_ids))
+        if start:
+            query = query.where(InstrumentTradingStatusModel.session_date >= start)
+        if end:
+            query = query.where(InstrumentTradingStatusModel.session_date <= end)
+        rows = await self._session.scalars(
+            query.order_by(
+                InstrumentTradingStatusModel.session_date,
+                InstrumentTradingStatusModel.instrument_id,
+            ).limit(limit)
+        )
+        return [entity_from_model(InstrumentTradingStatus, row) for row in rows]
+
+
+class SqlAlchemyInstrumentLifecycleRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def upsert_many(self, entities: list[InstrumentLifecycleEvent]) -> int:
+        if not entities:
+            return 0
+        values = [
+            model_values(
+                model_from_entity(InstrumentLifecycleEventModel, entity), include_none=True
+            )
+            for entity in entities
+        ]
+        for value in values:
+            value["metadata_json"] = value.pop("metadata")
+        statement = pg_insert(InstrumentLifecycleEventModel).values(values)
+        await self._session.execute(
+            statement.on_conflict_do_update(
+                constraint="uq_lifecycle_event",
+                set_={
+                    "reason": statement.excluded.reason,
+                    "fetched_at": statement.excluded.fetched_at,
+                    "metadata": statement.excluded.metadata,
+                },
+            )
+        )
+        await self._session.flush()
+        return len(entities)
+
+    async def list(
+        self, *, instrument_ids: list[UUID] | None, limit: int
+    ) -> list[InstrumentLifecycleEvent]:
+        query = select(InstrumentLifecycleEventModel)
+        if instrument_ids:
+            query = query.where(InstrumentLifecycleEventModel.instrument_id.in_(instrument_ids))
+        rows = await self._session.scalars(
+            query.order_by(
+                InstrumentLifecycleEventModel.event_date,
+                InstrumentLifecycleEventModel.instrument_id,
+            ).limit(limit)
+        )
+        return [entity_from_model(InstrumentLifecycleEvent, row) for row in rows]
 
 
 class SqlAlchemyBacktestEquityPointRepository(
@@ -444,6 +653,9 @@ def _replay_run_values(entity: ReplayRun) -> dict[str, Any]:
         "idempotency_key": entity.idempotency_key,
         "request_fingerprint": entity.request_fingerprint,
         "configuration": replay_configuration_to_dict(entity.configuration),
+        "strategy_price_adjustment_mode": (
+            entity.configuration.execution.strategy_price_adjustment_mode.value
+        ),
         "account_id": entity.account_id,
         "strategy_run_id": entity.strategy_run_id,
         "status": entity.status.value,
@@ -754,6 +966,8 @@ class SqlAlchemyInstrumentRepository(SqlAlchemyRepository[Instrument, Instrument
                 "price_tick": excluded.price_tick,
                 "timezone": excluded.timezone,
                 "is_active": excluded.is_active,
+                "listed_at": func.coalesce(excluded.listed_at, table.c.listed_at),
+                "delisted_at": func.coalesce(excluded.delisted_at, table.c.delisted_at),
                 "metadata": excluded.metadata,
                 "updated_at": excluded.updated_at,
             },
@@ -1991,6 +2205,7 @@ class SqlAlchemyHistoricalBarProvider:
         timeframe: MarketTimeframe,
         start_at: datetime,
         end_at: datetime,
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     ) -> list[StrategyBar]:
         result = await self._session.execute(
             select(MarketBarModel, InstrumentModel)
@@ -2032,7 +2247,7 @@ class SqlAlchemyHistoricalBarProvider:
                     amount=row.amount,
                 )
             )
-        return bars
+        return await self._with_adjustment(bars, price_adjustment_mode)
 
     async def list_authoritative_bars(
         self,
@@ -2046,6 +2261,7 @@ class SqlAlchemyHistoricalBarProvider:
         accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
             MarketDataQualityStatus.NORMAL,
         ),
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     ) -> list[StrategyBar]:
         """Read one explicit source/adjustment/quality slice in stable fact order."""
 
@@ -2075,7 +2291,7 @@ class SqlAlchemyHistoricalBarProvider:
                 MarketBarModel.id,
             )
         )
-        return [
+        bars = [
             StrategyBar(
                 instrument_id=row.instrument_id,
                 symbol=instrument.symbol,
@@ -2091,6 +2307,96 @@ class SqlAlchemyHistoricalBarProvider:
             )
             for row, instrument in result.tuples()
         ]
+        return await self._with_adjustment(bars, price_adjustment_mode)
+
+    async def _with_adjustment(
+        self, bars: list[StrategyBar], mode: PriceAdjustmentMode
+    ) -> list[StrategyBar]:
+        if mode is PriceAdjustmentMode.RAW:
+            return [
+                StrategyBar(
+                    instrument_id=bar.instrument_id,
+                    symbol=bar.symbol,
+                    exchange=bar.exchange,
+                    timeframe=bar.timeframe,
+                    timestamp=bar.timestamp,
+                    open=bar.open,
+                    high=bar.high,
+                    low=bar.low,
+                    close=bar.close,
+                    volume=bar.volume,
+                    amount=bar.amount,
+                    adjustment_mode=mode,
+                    raw_reference_price=bar.close,
+                    adjustment_factor=Decimal("1"),
+                )
+                for bar in bars
+            ]
+        if mode is not PriceAdjustmentMode.QFQ:
+            raise StrategyError(
+                "MARKET_ADJUSTMENT_MODE_NOT_SUPPORTED", "only RAW and QFQ are supported"
+            )
+        ids = tuple(sorted({bar.instrument_id for bar in bars}, key=str))
+        if not ids:
+            return []
+        dates = [bar.timestamp.date() for bar in bars]
+        rows = await self._session.scalars(
+            select(AdjustmentFactorModel)
+            .where(
+                AdjustmentFactorModel.instrument_id.in_(ids),
+                AdjustmentFactorModel.trade_date >= min(dates),
+                AdjustmentFactorModel.trade_date <= max(dates),
+                AdjustmentFactorModel.factor_convention == "TUSHARE_CUMULATIVE",
+            )
+            .order_by(AdjustmentFactorModel.instrument_id, AdjustmentFactorModel.trade_date)
+        )
+        factors: dict[tuple[UUID, date], Decimal] = {}
+        for row in rows:
+            key = (row.instrument_id, row.trade_date)
+            if key in factors:
+                raise StrategyError(
+                    "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+                    "multiple factor sources exist for one instrument date",
+                )
+            factors[key] = row.factor
+        reference: dict[UUID, Decimal] = {}
+        for instrument_id in ids:
+            instrument_dates = [
+                bar.timestamp.date() for bar in bars if bar.instrument_id == instrument_id
+            ]
+            key = (instrument_id, max(instrument_dates))
+            if key not in factors:
+                raise StrategyError(
+                    "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE", "reference factor is unavailable"
+                )
+            reference[instrument_id] = factors[key]
+        adjusted: list[StrategyBar] = []
+        for bar in bars:
+            factor = factors.get((bar.instrument_id, bar.timestamp.date()))
+            if factor is None:
+                raise StrategyError(
+                    "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE", "bar factor is unavailable"
+                )
+            ratio = factor / reference[bar.instrument_id]
+            adjusted.append(
+                StrategyBar(
+                    instrument_id=bar.instrument_id,
+                    symbol=bar.symbol,
+                    exchange=bar.exchange,
+                    timeframe=bar.timeframe,
+                    timestamp=bar.timestamp,
+                    open=bar.open * ratio,
+                    high=bar.high * ratio,
+                    low=bar.low * ratio,
+                    close=bar.close * ratio,
+                    volume=bar.volume,
+                    amount=bar.amount,
+                    adjustment_mode=mode,
+                    raw_reference_price=bar.close,
+                    adjustment_factor=factor,
+                )
+            )
+        return adjusted
 
     async def readiness(
         self,

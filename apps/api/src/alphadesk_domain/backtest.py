@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from alphadesk_domain.broker import AshareSimpleFeeModel, FixedBasisPointsSlippageModel
 from alphadesk_domain.enums import MarketTimeframe, OrderSide, OrderType, TimeInForce
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.risk import RiskLimits
 from alphadesk_domain.strategy import StrategyEnvironment, StrategyParameterValue
 from alphadesk_domain.values import as_utc, decimal_value, non_empty, utc_now
@@ -168,6 +169,7 @@ class BacktestConfiguration:
     maximum_volume_participation: Decimal | None = None
     benchmark_symbol: str | None = None
     data_source_code: str = "BAOSTOCK"
+    strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     environment: StrategyEnvironment = StrategyEnvironment.BACKTEST
     schema_version: int = 1
     engine_version: str = BACKTEST_ENGINE_VERSION
@@ -369,6 +371,9 @@ def backtest_configuration_from_dict(value: Mapping[str, Any]) -> BacktestConfig
             None if value.get("benchmark_symbol") is None else str(value["benchmark_symbol"])
         ),
         data_source_code=str(value.get("data_source_code", "BAOSTOCK")),
+        strategy_price_adjustment_mode=PriceAdjustmentMode(
+            str(value.get("strategy_price_adjustment_mode", "RAW"))
+        ),
         environment=StrategyEnvironment(str(value["environment"])),
         schema_version=int(value["schema_version"]),
         engine_version=str(value["engine_version"]),

@@ -15,6 +15,7 @@ from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.application.strategy_runner import StrategyRunner, StrategyRunRequest
 from alphadesk_domain.entities import Signal
 from alphadesk_domain.enums import MarketTimeframe, OrderSide
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.strategy import (
     StrategyEnvironment,
     StrategyError,
@@ -45,6 +46,7 @@ class StrategyExperimentRequest:
     timeframe: MarketTimeframe
     start_at: datetime
     end_at: datetime
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     correlation_id: UUID | None = None
 
 
@@ -109,6 +111,7 @@ def _fingerprint(
         "end_at": as_utc(request.end_at, "end_at").isoformat(timespec="microseconds"),
         "parameter_grid": grid,
         "environment": StrategyEnvironment.RESEARCH.value,
+        "price_adjustment_mode": request.price_adjustment_mode.value,
     }
     return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
 
@@ -237,6 +240,7 @@ class StrategyExperimentService:
                     instrument_ids=request.instrument_ids,
                     parameters=_runtime_parameters(definitions, normalized),
                     correlation_id=experiment.correlation_id,
+                    price_adjustment_mode=request.price_adjustment_mode,
                 )
             )
             async with self._uow_factory() as link_uow:

@@ -23,6 +23,7 @@ from alphadesk_api.application.market_data_operations import (
     MarketDataQualityService,
     MarketDataReadinessService,
 )
+from alphadesk_api.application.market_reference import AdjustedHistoricalMarketDataService
 from alphadesk_api.infrastructure.free_market_cache import (
     HEARTBEAT_KEY,
     STATUS_KEY,
@@ -64,6 +65,7 @@ from alphadesk_domain.enums import (
     QuoteFreshnessStatus,
 )
 from alphadesk_domain.market import MarketBar, MarketDataFreshness
+from alphadesk_domain.market_reference import AdjustedBar, PriceAdjustmentMode
 
 router = APIRouter(prefix="/market-data", tags=["market-data"])
 
@@ -103,7 +105,9 @@ def _readiness_service(request: Request) -> MarketDataReadinessService:
     )
 
 
-def bar_response(bar: MarketBar, source_code: str) -> MarketBarResponse:
+def bar_response(
+    bar: MarketBar, source_code: str, adjusted: AdjustedBar | None = None
+) -> MarketBarResponse:
     return MarketBarResponse(
         instrument_id=bar.instrument_id,
         source_code=source_code,
@@ -119,6 +123,10 @@ def bar_response(bar: MarketBar, source_code: str) -> MarketBarResponse:
         vwap=bar.vwap,
         received_at=bar.received_at,
         quality_status=bar.quality_status,
+        adjustment_mode=(PriceAdjustmentMode.RAW if adjusted is None else adjusted.adjustment_mode),
+        factor=None if adjusted is None else adjusted.factor,
+        reference_factor=None if adjusted is None else adjusted.reference_factor,
+        raw_bar_id=bar.id if adjusted is None else adjusted.raw_bar_id,
     )
 
 
@@ -138,6 +146,7 @@ async def get_bars(
     instrument_id: UUID,
     timeframe: MarketTimeframe = MarketTimeframe.DAY_1,
     adjustment_type: AdjustmentType = AdjustmentType.NONE,
+    adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     source_code: str | None = Query(default=None, max_length=64),
     start: datetime | None = None,
     end: datetime | None = None,
@@ -157,6 +166,12 @@ async def get_bars(
             ApplicationError("MARKET_DATA_INVALID_RANGE", "开始时间不能晚于结束时间")
         )
     try:
+        if adjustment_mode is PriceAdjustmentMode.QFQ and (
+            timeframe is not MarketTimeframe.DAY_1 or adjustment_type is not AdjustmentType.NONE
+        ):
+            raise ApplicationError(
+                "MARKET_ADJUSTMENT_MODE_NOT_SUPPORTED", "QFQ 仅支持原始 DAY_1 历史行情"
+            )
         source, items, freshness = await query_service(request).bars(
             instrument_id=instrument_id,
             timeframe=timeframe,
@@ -166,11 +181,17 @@ async def get_bars(
             end=resolved_end,
             limit=limit,
         )
+        adjusted_items = await AdjustedHistoricalMarketDataService(
+            uow_factory(request)
+        ).adjust_existing(items, adjustment_mode)
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
     return MarketBarsResponse(
         source_code=source.source_code,
-        items=[bar_response(item, source.source_code) for item in items],
+        items=[
+            bar_response(adjusted.as_market_bar(), source.source_code, adjusted)
+            for adjusted in adjusted_items
+        ],
         freshness=freshness_response(freshness),
     )
 

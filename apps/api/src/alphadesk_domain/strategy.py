@@ -13,6 +13,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from alphadesk_domain.enums import MarketTimeframe, OrderSide, SignalType
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 type StrategyParameterValue = int | Decimal | bool | str
 type JsonScalar = str | int | bool | None
@@ -215,6 +216,9 @@ class StrategyBar:
     close: Decimal
     volume: Decimal
     amount: Decimal | None = None
+    adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
+    raw_reference_price: Decimal | None = None
+    adjustment_factor: Decimal | None = None
 
     def __post_init__(self) -> None:
         if not self.symbol.strip() or not self.exchange.strip():
@@ -240,6 +244,14 @@ class StrategyBar:
             raise StrategyError("STRATEGY_INVALID_BAR", "volume must be non-negative")
         if self.amount is not None and self.amount < 0:
             raise StrategyError("STRATEGY_INVALID_BAR", "amount must be non-negative")
+        if self.raw_reference_price is not None:
+            _decimal(self.raw_reference_price, "raw_reference_price", "STRATEGY_INVALID_BAR")
+            if self.raw_reference_price <= 0:
+                raise StrategyError("STRATEGY_INVALID_BAR", "raw_reference_price must be positive")
+        if self.adjustment_factor is not None:
+            _decimal(self.adjustment_factor, "adjustment_factor", "STRATEGY_INVALID_BAR")
+            if self.adjustment_factor <= 0:
+                raise StrategyError("STRATEGY_INVALID_BAR", "adjustment_factor must be positive")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

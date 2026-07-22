@@ -1,5 +1,9 @@
 # BT01 时间模型与未来数据边界
 
+> D02 增强：Session 序列以 SHSE/SZSE 共同开放交易日为准，不再用自然日推断。策略输入可
+> 选择 RAW 或 QFQ，但 SESSION_OPEN 成交、SESSION_END 估值、Fill、费用和账本始终使用 RAW。
+> 已知停牌时订单不执行并保留到该标的下一可交易 Session；恢复后的第一根 RAW bar 正常执行。
+
 所有配置和持久化业务时间均为 aware UTC；交易阶段由 `BacktestClock` 从 A 股交易日生成，不使用系统当前时间决定回测业务事实。
 
 每个交易日严格按以下顺序推进：

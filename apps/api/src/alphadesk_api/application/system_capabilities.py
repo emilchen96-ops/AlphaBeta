@@ -45,6 +45,10 @@ class CapabilityDataSnapshot:
     risk_decision_count: int | None = None
     backtest_run_count: int | None = None
     replay_run_count: int | None = None
+    trading_calendar_session_count: int | None = None
+    adjustment_factor_count: int | None = None
+    trading_status_count: int | None = None
+    lifecycle_event_count: int | None = None
 
 
 class CapabilityDataProvider(Protocol):
@@ -85,6 +89,35 @@ def assess_system_capabilities(
     accounts_ready = database_ready and _has(data.simulated_account_count)
     information_ready = database_ready and _has(data.information_item_count)
     executable_order_ready = database_ready and _has(data.executable_order_count)
+    calendar_ready = database_ready and _has(data.trading_calendar_session_count)
+    factors_ready = database_ready and _has(data.adjustment_factor_count)
+    suspension_ready = database_ready and _has(data.trading_status_count)
+    lifecycle_ready = database_ready and _has(data.lifecycle_event_count)
+    tushare_configured = settings.tushare_enabled and settings.tushare_token is not None
+
+    def reference_capability(
+        module_key: str,
+        label: str,
+        ready: bool,
+        provider: str,
+        action: str,
+    ) -> SystemCapability:
+        provider_configured = provider == "fixture" or (
+            provider == "tushare" and tushare_configured
+        )
+        return SystemCapability(
+            module_key=module_key,
+            implementation_status="WORKING",
+            data_status="READY" if ready else ("MISSING" if database_ready else "UNKNOWN"),
+            configuration_status="READY" if provider_configured else "MISSING",
+            available=ready and provider_configured,
+            reason=(
+                f"{label}事实已持久化并可查询。"
+                if ready
+                else f"{label}代码已实现, 当前尚无同步事实。"
+            ),
+            required_actions=() if ready and provider_configured else (action,),
+        )
 
     def historical_capability(module_key: str, label: str) -> SystemCapability:
         coverage = data.market_bar_instrument_count or 0
@@ -135,6 +168,41 @@ def assess_system_capabilities(
             available=database_ready,
             reason="PostgreSQL 能力快照可读取。" if database_ready else "PostgreSQL 当前不可达。",
             required_actions=() if database_ready else ("启动 PostgreSQL 与 Redis",),
+        ),
+        reference_capability(
+            "trading_calendar",
+            "交易日历",
+            calendar_ready,
+            settings.market_calendar_provider,
+            "在数据中心同步 SHSE/SZSE 交易日历",
+        ),
+        reference_capability(
+            "adjustment_factors",
+            "复权因子",
+            factors_ready,
+            settings.market_adjustment_provider,
+            "在数据中心同步复权因子",
+        ),
+        reference_capability(
+            "suspension_data",
+            "停复牌状态",
+            suspension_ready,
+            settings.market_suspension_provider,
+            "在数据中心同步停复牌状态",
+        ),
+        reference_capability(
+            "instrument_lifecycle",
+            "Instrument 生命周期",
+            lifecycle_ready,
+            settings.market_suspension_provider,
+            "在数据中心同步 Instrument 生命周期",
+        ),
+        reference_capability(
+            "adjusted_strategy_data",
+            "QFQ 策略数据",
+            bars_ready and factors_ready and calendar_ready,
+            settings.market_adjustment_provider,
+            "先同步交易日历与复权因子, 再检查 QFQ Readiness",
         ),
         historical_capability("historical_market_data", "历史行情查询"),
         historical_capability("scanner", "条件扫描"),

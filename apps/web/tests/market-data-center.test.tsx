@@ -172,6 +172,36 @@ function installFetch() {
             code_status: "WORKING",
           },
         ]);
+      if (url.endsWith("/market-reference/status"))
+        return response({
+          calendar_provider: "FIXTURE",
+          adjustment_provider: "FIXTURE",
+          suspension_provider: "FIXTURE",
+          provider_configured: true,
+          calendar_sessions: 730,
+          open_sessions: 480,
+          calendar_start: "2025-01-01",
+          calendar_end: "2026-12-31",
+          latest_completed_session: "2026-07-21",
+          adjustment_factors: 30000,
+          adjustment_instruments: 300,
+          latest_factor_date: "2026-07-21",
+          qfq_ready_instruments: 300,
+          trading_statuses: 30000,
+          suspended_sessions: 12,
+          latest_status_date: "2026-07-21",
+          lifecycle_events: 300,
+          lifecycle_instruments: 300,
+          raw_price_ready: true,
+          adjusted_price_ready: true,
+          calendar_ready: true,
+          suspension_ready: true,
+          scanner_ready: true,
+          strategy_ready: true,
+          backtest_ready: true,
+          replay_ready: true,
+          warnings: [],
+        });
       if (url.includes("/market-data/sync-runs")) return response([syncRun]);
       if (url.includes(`/market-data/quality-runs/${runId}`))
         return response({
@@ -240,10 +270,11 @@ test("数据中心展示真实后端五区、覆盖不足和安全边界", async
   renderRoute("/market-data-center");
   expect(await screen.findByText("历史行情数据中心")).toBeInTheDocument();
   expect(screen.getByText("1. 数据总览")).toBeInTheDocument();
-  expect(screen.getByText("2. Universe 覆盖情况")).toBeInTheDocument();
-  expect(screen.getByText("3. 同步运行与每日更新")).toBeInTheDocument();
-  expect(screen.getByText("4. 数据质量")).toBeInTheDocument();
-  expect(screen.getByText("5. 功能可用性")).toBeInTheDocument();
+  expect(screen.getByText("2. 市场参考数据与价格语义")).toBeInTheDocument();
+  expect(screen.getByText("3. Universe 覆盖情况")).toBeInTheDocument();
+  expect(screen.getByText("4. 同步运行与每日更新")).toBeInTheDocument();
+  expect(screen.getByText("5. 数据质量")).toBeInTheDocument();
+  expect(screen.getByText("6. 功能可用性")).toBeInTheDocument();
   expect(await screen.findByText("浦发银行")).toBeInTheDocument();
   expect(screen.getByText("backtest_daily")).toBeInTheDocument();
   expect(screen.getByText("BT01 日线回测代码已完成")).toBeInTheDocument();

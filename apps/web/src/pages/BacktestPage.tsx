@@ -179,6 +179,7 @@ interface BacktestFormValues {
   slippage_basis_points: string;
   maximum_volume_participation?: string | null;
   idempotency_key: string;
+  strategy_price_adjustment_mode: "RAW" | "QFQ";
   parameters?: Record<string, string | number | boolean>;
 }
 
@@ -233,6 +234,7 @@ export function BacktestPage() {
       parameters,
       instrument_ids: values.instrument_ids,
       timeframe: "DAY_1",
+      strategy_price_adjustment_mode: values.strategy_price_adjustment_mode,
       start_at: new Date(values.start_at).toISOString(),
       end_at: new Date(values.end_at).toISOString(),
       initial_cash: String(values.initial_cash),
@@ -306,6 +308,7 @@ export function BacktestPage() {
             slippage_basis_points: "2",
             maximum_volume_participation: "0.1",
             idempotency_key: newIdempotencyKey(),
+            strategy_price_adjustment_mode: "RAW",
           }}
         >
           <Row gutter={16}>
@@ -321,6 +324,21 @@ export function BacktestPage() {
                     value: item.strategy_key,
                     label: `${item.display_name} · ${item.version}`,
                   }))}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={6}>
+              <Form.Item
+                name="strategy_price_adjustment_mode"
+                label="策略价格模式"
+                tooltip="仅影响策略输入和 Signal；SESSION_OPEN 成交、Fill、费用与账本始终使用 RAW。"
+                rules={[{ required: true }]}
+              >
+                <Select
+                  options={[
+                    { value: "RAW", label: "RAW（未复权）" },
+                    { value: "QFQ", label: "QFQ（前复权，仅策略）" },
+                  ]}
                 />
               </Form.Item>
             </Col>

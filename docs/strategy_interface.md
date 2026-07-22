@@ -1,5 +1,7 @@
 # S01 统一策略接口
 
+D02 的 `StrategyBar` 显式携带 adjustment mode、RAW reference price 与 adjustment factor。StrategyRun/Experiment 默认 RAW 保持历史兼容，可选择 QFQ；策略仍只读 StrategyBar，不访问因子 Repository。Signal 记录价格模式，但不会创建或定价 Order。
+
 > S02-A 已在本契约之上完成 Decimal 增量指标与 `volume_breakout`、
 > `trend_pullback`、`atr_channel` 基础策略；计算定义和边界见
 > [strategy_library.md](strategy_library.md)。S02-B 尚未开始。

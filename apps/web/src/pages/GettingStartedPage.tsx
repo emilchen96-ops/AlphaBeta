@@ -36,6 +36,27 @@ const journey = [
     "数据中心显示覆盖率",
   ],
   [
+    "同步交易日历",
+    "/market-data-center",
+    "trading_calendar",
+    "选择 Fixture 或已配置 Provider",
+    "SHSE/SZSE 日历 Readiness 为 READY",
+  ],
+  [
+    "同步复权因子",
+    "/market-data-center",
+    "adjustment_factors",
+    "已有研究标的",
+    "复权因子覆盖所选标的",
+  ],
+  [
+    "检查 QFQ Readiness",
+    "/market-data-center",
+    "adjusted_strategy_data",
+    "日线、日历和因子均已准备",
+    "QFQ 策略数据可用",
+  ],
+  [
     "执行研究初始化",
     "/getting-started",
     "migrations",

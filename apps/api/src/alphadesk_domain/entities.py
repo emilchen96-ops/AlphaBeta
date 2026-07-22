@@ -1,7 +1,7 @@
 """Pure Python domain entities for the M02 persistence foundation."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -44,6 +44,8 @@ class Instrument:
     timezone: str
     id: UUID = field(default_factory=uuid4)
     is_active: bool = True
+    listed_at: date | None = None
+    delisted_at: date | None = None
     metadata: JsonObject = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
@@ -55,6 +57,12 @@ class Instrument:
         decimal_value(self.price_tick, "price_tick")
         if self.lot_size <= 0 or self.price_tick <= 0:
             raise ValueError("lot_size and price_tick must be positive")
+        if (
+            self.listed_at is not None
+            and self.delisted_at is not None
+            and self.delisted_at < self.listed_at
+        ):
+            raise ValueError("delisted_at must not precede listed_at")
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 

@@ -43,6 +43,7 @@ export interface SystemCapability {
   required_actions: string[];
   last_success_at?: string | null;
   provider?: string | null;
+  provider_status?: "READY" | "MISSING" | "DISABLED" | "UNKNOWN";
   mode?: string;
   worker_status?: "ONLINE" | "OFFLINE" | "NOT_REQUIRED";
 }
@@ -68,6 +69,10 @@ export interface CapabilityDataCounts {
   risk_decision_count: number | null;
   backtest_run_count: number | null;
   replay_run_count: number | null;
+  trading_calendar_session_count: number | null;
+  adjustment_factor_count: number | null;
+  trading_status_count: number | null;
+  lifecycle_event_count: number | null;
 }
 
 export interface SystemCapabilities {

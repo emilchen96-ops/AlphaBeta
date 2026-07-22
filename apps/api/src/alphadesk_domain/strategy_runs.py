@@ -16,6 +16,7 @@ from alphadesk_domain.enums import (
     MarketDataReadinessStatus,
     MarketTimeframe,
 )
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.strategy import (
     StrategyBar,
     StrategyEnvironment,
@@ -48,6 +49,7 @@ class StrategyRun:
     instrument_ids: tuple[UUID, ...]
     status: StrategyRunStatus
     correlation_id: UUID
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     id: UUID = field(default_factory=uuid4)
     strategy_id: UUID | None = None
     strategy_version_id: UUID | None = None
@@ -177,6 +179,7 @@ class HistoricalBarProvider(Protocol):
         timeframe: MarketTimeframe,
         start_at: datetime,
         end_at: datetime,
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     ) -> list[StrategyBar]: ...
 
     async def list_authoritative_bars(
@@ -191,6 +194,7 @@ class HistoricalBarProvider(Protocol):
         accepted_quality_statuses: tuple[MarketDataQualityStatus, ...] = (
             MarketDataQualityStatus.NORMAL,
         ),
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     ) -> list[StrategyBar]: ...
 
     async def readiness(

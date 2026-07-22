@@ -126,6 +126,8 @@ export function ReplayRunsPage() {
       initial_cash: formString(values.initial_cash),
       order_type: formString(values.order_type),
       time_in_force: formString(values.time_in_force),
+      strategy_price_adjustment_mode: values.strategy_price_adjustment_mode as
+        "RAW" | "QFQ",
       fee_configuration: {
         commission_rate: formString(values.commission_rate),
         minimum_commission: formString(values.minimum_commission),
@@ -177,6 +179,7 @@ export function ReplayRunsPage() {
             slippage_basis_points: "2",
             maximum_volume_participation: "0.1",
             speed_mode: "MANUAL",
+            strategy_price_adjustment_mode: "RAW",
             idempotency_key: defaultIdempotencyKey,
           }}
           onFinish={submit}
@@ -231,6 +234,18 @@ export function ReplayRunsPage() {
             </Form.Item>
             <Form.Item name="time_in_force" label="TIF">
               <Select options={[{ value: "DAY" }, { value: "GTC" }]} />
+            </Form.Item>
+            <Form.Item
+              name="strategy_price_adjustment_mode"
+              label="策略价格模式"
+              tooltip="QFQ 仅用于策略输入；成交、Fill、费用和账本始终使用 RAW。"
+            >
+              <Select
+                options={[
+                  { value: "RAW", label: "RAW（未复权）" },
+                  { value: "QFQ", label: "QFQ（前复权，仅策略）" },
+                ]}
+              />
             </Form.Item>
             <Form.Item name="speed_mode" label="初始速度">
               <Select

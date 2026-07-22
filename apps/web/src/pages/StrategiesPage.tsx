@@ -31,6 +31,7 @@ interface RunFormValues {
   end_at: string;
   parameters: Record<string, string | number | boolean>;
   idempotency_key: string;
+  price_adjustment_mode: "RAW" | "QFQ";
 }
 
 function ParameterInput({
@@ -69,6 +70,10 @@ export function StrategiesPage() {
   const unavailableReason = capabilities.data?.items?.find(
     (item) => item.module_key === "strategy_research",
   )?.reason;
+  const qfqReady =
+    capabilities.data?.items?.find(
+      (item) => item.module_key === "adjusted_strategy_data",
+    )?.available === true;
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
     queryFn: getStrategyCatalog,
@@ -105,6 +110,7 @@ export function StrategiesPage() {
       timeframe: strategy?.supported_timeframes[0],
       parameters,
       idempotency_key: `research:${crypto.randomUUID()}`,
+      price_adjustment_mode: "RAW",
     });
   };
   const submit = async () => {
@@ -115,6 +121,7 @@ export function StrategiesPage() {
       timeframe: values.timeframe,
       parameters: values.parameters,
       idempotency_key: values.idempotency_key,
+      price_adjustment_mode: values.price_adjustment_mode,
       start_at: new Date(values.start_at).toISOString(),
       end_at: new Date(values.end_at).toISOString(),
     });
@@ -225,6 +232,23 @@ export function StrategiesPage() {
                 options={selected.supported_timeframes.map((value) => ({
                   value,
                 }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="price_adjustment_mode"
+              label="策略价格模式"
+              tooltip="QFQ 只用于指标和 Signal 参考价；不会作为成交或账本价格。"
+              rules={[{ required: true }]}
+            >
+              <Select
+                options={[
+                  { value: "RAW", label: "RAW（未复权，兼容模式）" },
+                  {
+                    value: "QFQ",
+                    label: qfqReady ? "QFQ（前复权）" : "QFQ（数据未就绪）",
+                    disabled: !qfqReady,
+                  },
+                ]}
               />
             </Form.Item>
             <Space wrap>

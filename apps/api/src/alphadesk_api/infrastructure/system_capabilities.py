@@ -6,12 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphadesk_api.application.system_capabilities import CapabilityDataSnapshot
 from alphadesk_api.infrastructure.models import (
+    AdjustmentFactorModel,
     AIAnalysisRunModel,
     BacktestRunModel,
     FillModel,
     InformationItemModel,
     InformationSourceModel,
+    InstrumentLifecycleEventModel,
     InstrumentModel,
+    InstrumentTradingStatusModel,
     MarketBarModel,
     MarketEventModel,
     OrderModel,
@@ -21,6 +24,7 @@ from alphadesk_api.infrastructure.models import (
     StrategyExperimentModel,
     StrategyRunModel,
     TradingAccountModel,
+    TradingCalendarSessionModel,
 )
 
 
@@ -125,6 +129,22 @@ class SqlAlchemyCapabilityDataProvider:
                             .select_from(ReplayRunModel)
                             .scalar_subquery()
                             .label("replay_run_count"),
+                            select(func.count())
+                            .select_from(TradingCalendarSessionModel)
+                            .scalar_subquery()
+                            .label("trading_calendar_session_count"),
+                            select(func.count())
+                            .select_from(AdjustmentFactorModel)
+                            .scalar_subquery()
+                            .label("adjustment_factor_count"),
+                            select(func.count())
+                            .select_from(InstrumentTradingStatusModel)
+                            .scalar_subquery()
+                            .label("trading_status_count"),
+                            select(func.count())
+                            .select_from(InstrumentLifecycleEventModel)
+                            .scalar_subquery()
+                            .label("lifecycle_event_count"),
                         )
                     )
                 ).one()

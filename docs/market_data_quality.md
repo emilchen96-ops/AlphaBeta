@@ -1,5 +1,7 @@
 # D01-D 历史行情质量与 Readiness
 
+D02 后，缺口只在已知开放交易日内检查，并排除周末、节假日、上市前、退市后和已知停牌日。新增日历缺失、停复牌缺失、复权因子缺失/非法/跳变及生命周期冲突检查；缺少 Provider 事实会明确产生 WARNING，不伪造确定状态。
+
 ## 追加式事实
 
 每次检查创建 `MarketDataQualityRun`，问题以 `MarketDataQualityIssue` 追加保存，不提供编辑、删除、补零或自动修复接口。Migration `0014_d01` 建立两张表和 status/time、severity/time、instrument/issue、run、universe/time 索引。

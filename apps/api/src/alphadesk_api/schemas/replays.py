@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from alphadesk_api.schemas.backtests import BacktestFeeBody, BacktestSlippageBody
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 
 class ReplayCreateBody(BaseModel):
@@ -25,6 +26,7 @@ class ReplayCreateBody(BaseModel):
     speed_mode: str = "MANUAL"
     data_source_code: str | None = Field(default=None, min_length=1, max_length=64)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class ReplayControlBody(BaseModel):

@@ -1,5 +1,7 @@
 # BT01 A股日线回测
 
+D02 增加 `strategy_price_adjustment_mode=RAW|QFQ`。策略可读 QFQ，但 Session Open 成交、Session End 估值、Order、Fill、费用和账本始终使用 RAW；开放日来自交易日历，已知停牌日不会成交。分钟回测仍未实现。
+
 BT01 提供同步、确定性、可审计的本地日线回测。链路复用现有事实管道：
 
 `MarketBar -> BacktestClock -> Strategy -> Signal -> R01 -> M05 -> B01 -> Fill -> M04`

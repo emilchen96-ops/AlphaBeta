@@ -79,6 +79,7 @@ def run_detail(item: StrategyRunDto) -> StrategyRunDetailResponse:
             "modifies_portfolio": False,
             "is_performance_backtest": False,
         },
+        price_adjustment_mode=item.price_adjustment_mode,
     )
 
 
@@ -206,6 +207,7 @@ async def create_strategy_run(request: Request, body: StrategyRunCreateBody) -> 
                 timeframe=timeframe,
                 start_at=body.start_at,
                 end_at=body.end_at,
+                price_adjustment_mode=body.price_adjustment_mode,
                 instrument_ids=tuple(body.instrument_ids),
                 parameters=service.parameters(body.strategy_key, body.parameters),
                 correlation_id=request_correlation_id(request),
@@ -224,6 +226,7 @@ async def create_strategy_run(request: Request, body: StrategyRunCreateBody) -> 
             signals_generated=result.run.signals_generated,
             warnings=list(result.warnings),
             replayed=result.replayed,
+            price_adjustment_mode=result.run.price_adjustment_mode,
         )
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
@@ -343,6 +346,7 @@ async def create_strategy_experiment(
                 timeframe=timeframe,
                 start_at=body.start_at,
                 end_at=body.end_at,
+                price_adjustment_mode=body.price_adjustment_mode,
                 correlation_id=request_correlation_id(request),
             )
         )

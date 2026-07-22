@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.strategy import StrategyBar
 from alphadesk_domain.values import as_utc, non_empty, utc_now
 
@@ -541,6 +542,7 @@ class ScanRun:
     idempotency_key: str
     request_fingerprint: str
     correlation_id: UUID
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     id: UUID = field(default_factory=uuid4)
     instruments_scanned: int = 0
     matches_found: int = 0

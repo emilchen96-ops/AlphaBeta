@@ -75,6 +75,13 @@ from alphadesk_domain.information import (
     MarketEventStatus,
     MarketEventType,
 )
+from alphadesk_domain.market_reference import (
+    CalendarSessionType,
+    FactorConvention,
+    InstrumentLifecycleType,
+    InstrumentTradingState,
+    PriceAdjustmentMode,
+)
 from alphadesk_domain.replay import (
     ReplayActorType,
     ReplayControlActionType,
@@ -116,6 +123,10 @@ class InstrumentModel(MutableTimestampedModel, Base):
         UniqueConstraint("exchange", "symbol", name="uq_instruments_exchange_symbol"),
         CheckConstraint("lot_size > 0", name="lot_size_positive"),
         CheckConstraint("price_tick > 0", name="price_tick_positive"),
+        CheckConstraint(
+            "delisted_at IS NULL OR listed_at IS NULL OR delisted_at >= listed_at",
+            name="lifecycle_dates_valid",
+        ),
         Index("ix_instruments_market_active", "market", "is_active"),
     )
 
@@ -130,6 +141,8 @@ class InstrumentModel(MutableTimestampedModel, Base):
     price_tick: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    listed_at: Mapped[date | None] = mapped_column(Date)
+    delisted_at: Mapped[date | None] = mapped_column(Date)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
@@ -673,6 +686,10 @@ class StrategyRunModel(MutableTimestampedModel, Base):
         ),
         CheckConstraint("start_at < end_at", name="strategy_run_time_window"),
         CheckConstraint(
+            f"price_adjustment_mode IN ({enum_values(PriceAdjustmentMode)})",
+            name="price_adjustment_mode_valid",
+        ),
+        CheckConstraint(
             "bars_processed >= 0 AND signals_generated >= 0",
             name="strategy_run_counters_non_negative",
         ),
@@ -693,6 +710,9 @@ class StrategyRunModel(MutableTimestampedModel, Base):
     )
     environment: Mapped[str] = mapped_column(String(16), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    price_adjustment_mode: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
+    )
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -1718,6 +1738,10 @@ class ScanRunModel(MutableTimestampedModel, Base):
         CheckConstraint(f"status IN ({enum_values(ScanRunStatus)})", name="scan_run_status_valid"),
         CheckConstraint("timeframe = 'DAY_1'", name="scan_run_timeframe_daily"),
         CheckConstraint(
+            f"price_adjustment_mode IN ({enum_values(PriceAdjustmentMode)})",
+            name="price_adjustment_mode_valid",
+        ),
+        CheckConstraint(
             "instruments_scanned >= 0 AND matches_found >= 0 "
             "AND matches_found <= instruments_scanned",
             name="scan_run_counters_valid",
@@ -1735,6 +1759,9 @@ class ScanRunModel(MutableTimestampedModel, Base):
     universe_type: Mapped[str] = mapped_column(String(32), nullable=False)
     instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
+    price_adjustment_mode: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
+    )
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     instruments_scanned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -2091,6 +2118,10 @@ class BacktestRunModel(MutableTimestampedModel, Base):
             name="backtest_run_counters_non_negative",
         ),
         CheckConstraint("length(request_fingerprint) = 64", name="backtest_fingerprint_length"),
+        CheckConstraint(
+            f"strategy_price_adjustment_mode IN ({enum_values(PriceAdjustmentMode)})",
+            name="strategy_price_adjustment_mode_valid",
+        ),
         Index("ix_backtest_runs_status_created", "status", "created_at"),
     )
 
@@ -2098,6 +2129,9 @@ class BacktestRunModel(MutableTimestampedModel, Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    strategy_price_adjustment_mode: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
+    )
     strategy_run_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("strategy_runs.id", ondelete="RESTRICT")
     )
@@ -2267,6 +2301,10 @@ class ReplayRunModel(MutableTimestampedModel, Base):
             f"speed_mode IN ({enum_values(ReplaySpeedMode)})", name="replay_speed_valid"
         ),
         CheckConstraint(
+            f"strategy_price_adjustment_mode IN ({enum_values(PriceAdjustmentMode)})",
+            name="strategy_price_adjustment_mode_valid",
+        ),
+        CheckConstraint(
             "row_version >= 0 AND total_sessions > 0 AND current_session_index >= 0 "
             "AND current_session_index <= total_sessions AND bars_processed >= 0 "
             "AND signals_generated >= 0 AND orders_created >= 0 AND fills_generated >= 0",
@@ -2281,6 +2319,9 @@ class ReplayRunModel(MutableTimestampedModel, Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    strategy_price_adjustment_mode: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
+    )
     account_id: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("trading_accounts.id", ondelete="RESTRICT")
     )
@@ -2406,3 +2447,107 @@ class ReplayEquityPointModel(TimestampedModel, Base):
     drawdown: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
     positions_count: Mapped[int] = mapped_column(Integer, nullable=False)
     warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class TradingCalendarSessionModel(MutableTimestampedModel, Base):
+    __tablename__ = "trading_calendar_sessions"
+    __table_args__ = (
+        UniqueConstraint("exchange", "session_date", name="uq_calendar_exchange_date"),
+        CheckConstraint("exchange IN ('SHSE','SZSE')", name="calendar_exchange_valid"),
+        CheckConstraint(
+            f"session_type IN ({enum_values(CalendarSessionType)})",
+            name="calendar_session_type_valid",
+        ),
+        Index("ix_calendar_exchange_open_date", "exchange", "is_open", "session_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    exchange: Mapped[str] = mapped_column(String(8), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    is_open: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    previous_open_date: Mapped[date | None] = mapped_column(Date)
+    next_open_date: Mapped[date | None] = mapped_column(Date)
+    session_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AdjustmentFactorModel(TimestampedModel, Base):
+    __tablename__ = "adjustment_factors"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id",
+            "trade_date",
+            "source",
+            "factor_convention",
+            name="uq_adjustment_factor_business_key",
+        ),
+        CheckConstraint("factor > 0", name="adjustment_factor_positive"),
+        CheckConstraint(
+            f"factor_convention IN ({enum_values(FactorConvention)})",
+            name="adjustment_factor_convention_valid",
+        ),
+        Index("ix_adjustment_instrument_date", "instrument_id", "trade_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    factor: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    factor_convention: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class InstrumentTradingStatusModel(TimestampedModel, Base):
+    __tablename__ = "instrument_trading_statuses"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id", "session_date", "source", name="uq_trading_status_business_key"
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(InstrumentTradingState)})",
+            name="instrument_trading_status_valid",
+        ),
+        Index("ix_trading_status_instrument_date", "instrument_id", "session_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    suspension_type: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(String(512))
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class InstrumentLifecycleEventModel(TimestampedModel, Base):
+    __tablename__ = "instrument_lifecycle_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "instrument_id", "event_date", "event_type", "source", name="uq_lifecycle_event"
+        ),
+        CheckConstraint(
+            f"event_type IN ({enum_values(InstrumentLifecycleType)})",
+            name="instrument_lifecycle_type_valid",
+        ),
+        Index("ix_lifecycle_instrument_date", "instrument_id", "event_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(512))
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )

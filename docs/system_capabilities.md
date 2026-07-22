@@ -1,5 +1,7 @@
 # 系统能力状态
 
+D02 在 `/api/v1/system/capabilities` 增加 `trading_calendar`、`adjustment_factors`、`suspension_data`、`instrument_lifecycle` 与 `adjusted_strategy_data`。实现状态、Provider 配置状态、数据状态和 availability 分开报告；Provider 未配置不得显示 READY。
+
 `GET /api/v1/system/capabilities` 是首页功能卡片的权威来源。每个模块分别报告：
 
 - `implementation_status`：代码是否完成；

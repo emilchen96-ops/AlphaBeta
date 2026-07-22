@@ -1,5 +1,12 @@
 # AlphaDesk 文档索引
 
+## D02 市场数据语义
+
+- [A 股交易日历](trading_calendar.md)
+- [复权因子与 QFQ](adjustment_factors.md)
+- [停复牌与 Instrument 生命周期](suspension_and_lifecycle.md)
+- [市场价格语义](market_price_semantics.md)
+
 > 当前回放里程碑为 **RT01 完成**：总览见 [历史日线回放](historical_replay.md)，控制与恢复见
 > [回放控制模型](replay_control_model.md)，Worker 见 [Replay Worker](replay_worker.md)，页面见
 > [回放页面](replay_ui.md)。仅使用 D01 历史日线，不连接 MiniQMT 或券商。下一阶段仅为 D02。

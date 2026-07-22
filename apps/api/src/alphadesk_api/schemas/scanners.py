@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, StrictBool, StrictInt, StrictStr
 
+from alphadesk_domain.market_reference import PriceAdjustmentMode
+
 
 class ScannerParameterResponse(BaseModel):
     name: str
@@ -35,6 +37,7 @@ class ScanRunCreateBody(BaseModel):
     timeframe: str = "DAY_1"
     as_of: datetime
     idempotency_key: str = Field(min_length=1, max_length=128)
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class ScanRunResponse(BaseModel):
@@ -57,6 +60,7 @@ class ScanRunResponse(BaseModel):
     created_at: datetime
     replayed: bool = False
     capabilities: dict[str, bool]
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class ScanRunPageResponse(BaseModel):

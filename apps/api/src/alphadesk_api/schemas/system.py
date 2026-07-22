@@ -52,6 +52,10 @@ class CapabilityDataCountsResponse(BaseModel):
     risk_decision_count: int | None = None
     backtest_run_count: int | None = None
     replay_run_count: int | None = None
+    trading_calendar_session_count: int | None = None
+    adjustment_factor_count: int | None = None
+    trading_status_count: int | None = None
+    lifecycle_event_count: int | None = None
 
 
 class SystemCapabilityResponse(BaseModel):
@@ -86,6 +90,7 @@ class SystemCapabilityResponse(BaseModel):
     required_actions: list[str]
     last_success_at: datetime | None = None
     provider: str | None = None
+    provider_status: Literal["READY", "MISSING", "DISABLED", "UNKNOWN"] = "UNKNOWN"
     mode: str
     worker_status: Literal["ONLINE", "OFFLINE", "NOT_REQUIRED"] = "NOT_REQUIRED"
 

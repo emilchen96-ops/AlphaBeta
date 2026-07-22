@@ -11,6 +11,7 @@ from alphadesk_api.api.v1 import (
     information,
     instruments,
     market_data,
+    market_reference,
     orders,
     replays,
     risk,
@@ -26,6 +27,7 @@ api_router.include_router(system.router)
 api_router.include_router(instruments.router)
 api_router.include_router(watchlists.router)
 api_router.include_router(market_data.router)
+api_router.include_router(market_reference.router)
 api_router.include_router(accounts.router)
 api_router.include_router(orders.router)
 api_router.include_router(simulated_executions.router)

@@ -10,9 +10,11 @@ import type {
   DailyUpdateResult,
   MarketDataOverview,
   MarketSyncRun,
+  MarketReferenceStatus,
   QualityRunDetail,
   QualityRunPage,
   ReadinessCapability,
+  ReferenceSyncResult,
   UniverseCoverage,
   Watchlist,
   WatchlistDetail,
@@ -138,6 +140,30 @@ export function getMarketDataCoverage() {
 
 export function getMarketDataReadiness() {
   return apiRequest<ReadinessCapability[]>("/api/v1/market-data/readiness");
+}
+
+export function getMarketReferenceStatus() {
+  return apiRequest<MarketReferenceStatus>("/api/v1/market-reference/status");
+}
+
+export function syncMarketReference(
+  kind: "calendar" | "adjustments" | "suspensions" | "instrument-lifecycle",
+  dryRun: boolean,
+) {
+  return apiRequest<ReferenceSyncResult>(
+    `/api/v1/market-reference/${kind}/sync`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        provider: "fixture",
+        universe: "research",
+        max_instruments: 100,
+        dry_run: dryRun,
+      }),
+    },
+    10 * 60_000,
+  );
 }
 
 export function getMarketSyncRuns() {

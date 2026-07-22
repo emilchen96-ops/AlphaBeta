@@ -115,6 +115,7 @@ async def create_backtest(request: Request, body: BacktestCreateBody) -> Backtes
                 data_source_code=body.data_source_code,
                 idempotency_key=body.idempotency_key,
                 correlation_id=request_correlation_id(request),
+                strategy_price_adjustment_mode=body.strategy_price_adjustment_mode,
             )
         )
         detail = await BacktestQueryService(uow_factory(request)).detail(result.run.id)

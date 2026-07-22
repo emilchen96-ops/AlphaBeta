@@ -1,5 +1,19 @@
 # AlphaDesk 快速开始
 
+## D02 市场参考数据
+
+完成 D01 日线后，在“历史行情数据中心”依次 Dry-run 并同步交易日历、复权因子、停复牌和生命周期，再查看 QFQ Readiness。CLI 等价命令：
+
+```powershell
+python -m alphadesk_api.cli.market_reference sync-calendar --provider fixture
+python -m alphadesk_api.cli.market_reference sync-adjustments --provider fixture --max-instruments 30
+python -m alphadesk_api.cli.market_reference sync-suspensions --provider fixture --max-instruments 30
+python -m alphadesk_api.cli.market_reference sync-instrument-lifecycle --provider fixture --max-instruments 30
+python -m alphadesk_api.cli.market_reference verify
+```
+
+Fixture 不访问网络。只有显式启用 Tushare 且从环境变量提供 Token 后才可做真实 Provider 联调。
+
 ## 1. 启动系统
 
 在仓库根目录执行：

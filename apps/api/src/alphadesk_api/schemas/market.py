@@ -18,6 +18,7 @@ from alphadesk_domain.enums import (
     MarketTimeframe,
     SyncTriggerType,
 )
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 
 class InstrumentResponse(BaseModel):
@@ -126,6 +127,10 @@ class MarketBarResponse(BaseModel):
     vwap: Decimal | None
     received_at: datetime
     quality_status: MarketDataQualityStatus
+    adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
+    factor: Decimal | None = None
+    reference_factor: Decimal | None = None
+    raw_bar_id: int | None = None
 
 
 class MarketFreshnessResponse(BaseModel):

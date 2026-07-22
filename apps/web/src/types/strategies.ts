@@ -166,6 +166,7 @@ export interface CreateStrategyExperimentRequest {
   strategy_key: string;
   instrument_ids: string[];
   timeframe: string;
+  price_adjustment_mode: "RAW" | "QFQ";
   start_at: string;
   end_at: string;
   parameter_grid: Record<string, ParameterGridValue[]>;

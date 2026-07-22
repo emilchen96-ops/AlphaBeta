@@ -83,6 +83,7 @@ from alphadesk_domain.enums import (
     SettlementPolicy,
     TimeInForce,
 )
+from alphadesk_domain.market_reference import InstrumentTradingState, PriceAdjustmentMode
 from alphadesk_domain.order_workflow import OrderStateMachine
 from alphadesk_domain.risk import RiskLimits
 from alphadesk_domain.strategy import (
@@ -119,6 +120,7 @@ class CreateBacktestRequest:
     risk_configuration_reference: str = "r01-default-v1"
     data_source_code: str | None = None
     correlation_id: UUID | None = None
+    strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +248,7 @@ class BacktestService:
             data_source_code=(
                 request.data_source_code or self._settings.historical_market_provider
             ),
+            strategy_price_adjustment_mode=request.strategy_price_adjustment_mode,
         )
         if len(configuration.instrument_ids) > self._settings.backtest_max_instruments:
             raise ApplicationError(
@@ -387,6 +390,22 @@ class BacktestService:
                 adjustment_type=AdjustmentType.NONE,
                 accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
             )
+            strategy_bars = await uow.historical_bars.list_authoritative_bars(
+                instrument_ids=config.instrument_ids,
+                timeframe=config.timeframe,
+                start_at=config.start_at,
+                end_at=config.end_at,
+                source_code=config.data_source_code,
+                adjustment_type=AdjustmentType.NONE,
+                accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                price_adjustment_mode=config.strategy_price_adjustment_mode,
+            )
+            calendar_rows = await uow.trading_calendar.list(
+                exchange=None,
+                start=config.start_at.date(),
+                end=config.end_at.date(),
+                limit=self._settings.backtest_max_sessions * 2 + 100,
+            )
         if not bars:
             raise ApplicationError("BACKTEST_NO_MARKET_DATA", "no local daily bars were found")
         if set(config.instrument_ids) - {bar.instrument_id for bar in bars}:
@@ -405,12 +424,19 @@ class BacktestService:
                     "BACKTEST_INVALID_CONFIGURATION", "duplicate instrument daily bar"
                 )
             bars_by_date[trading_date][bar.instrument_id] = bar
+        strategy_bars_by_date: dict[date, dict[UUID, StrategyBar]] = defaultdict(dict)
+        for bar in strategy_bars:
+            strategy_bars_by_date[_bar_date(bar)][bar.instrument_id] = bar
+        calendar_dates = {item.session_date for item in calendar_rows if item.is_open}
+        session_dates = sorted(bars_by_date)
+        if calendar_dates:
+            session_dates = [item for item in session_dates if item in calendar_dates]
         sessions = [
             BacktestSession(
                 trading_date=trading_date,
-                instrument_ids=tuple(day_bars),
+                instrument_ids=tuple(bars_by_date[trading_date]),
             )
-            for trading_date, day_bars in bars_by_date.items()
+            for trading_date in session_dates
         ]
         if len(sessions) > self._settings.backtest_max_sessions:
             raise ApplicationError(
@@ -510,6 +536,7 @@ class BacktestService:
             phase = clock.current_phase
             current_time = clock.current_time
             day_bars = bars_by_date[session.trading_date]
+            strategy_day_bars = strategy_bars_by_date[session.trading_date]
             context.advance_time(current_time)
             if phase is BacktestPhase.SESSION_OPEN:
                 event_sequence += 1
@@ -526,8 +553,25 @@ class BacktestService:
                     pending[instrument_id].clear()
                     async with self._uow_factory() as uow:
                         instrument = await uow.instruments.get_by_id(instrument_id)
+                        statuses = await uow.instrument_trading_statuses.list(
+                            instrument_ids=[instrument_id],
+                            start=session.trading_date,
+                            end=session.trading_date,
+                            limit=10,
+                        )
                     if instrument is None:
                         raise ApplicationError("INSTRUMENT_NOT_FOUND", "instrument was not found")
+                    if any(item.status is InstrumentTradingState.SUSPENDED for item in statuses):
+                        pending[instrument_id].extend(executable)
+                        event_sequence += 1
+                        await self._event(
+                            run.id,
+                            event_sequence,
+                            BacktestEventType.WARNING,
+                            current_time,
+                            f"Instrument {instrument_id} suspended; execution deferred",
+                        )
+                        continue
                     for order in executable:
                         result = await execution.execute_market_input(
                             SimulatedExecutionMarketInput(
@@ -647,13 +691,14 @@ class BacktestService:
                 )
                 for instrument_id in sorted(day_bars, key=str):
                     bar = day_bars[instrument_id]
+                    strategy_bar = strategy_day_bars[instrument_id]
                     run.bars_processed += 1
-                    for draft in strategy.on_bar(context, bar):
+                    for draft in strategy.on_bar(context, strategy_bar):
                         validate_signal_draft(
                             draft,
                             run=strategy_run,
-                            current_bar_instrument_id=bar.instrument_id,
-                            current_bar_timestamp=bar.timestamp,
+                            current_bar_instrument_id=strategy_bar.instrument_id,
+                            current_bar_timestamp=strategy_bar.timestamp,
                             expected_generated_at=current_time,
                         )
                         sequence += 1
@@ -828,7 +873,9 @@ class BacktestService:
         if run.configuration.time_in_force is not TimeInForce.DAY:
             expires_at = run.configuration.end_at
         limit_price = (
-            signal.reference_price if run.configuration.order_type is OrderType.LIMIT else None
+            (bar.raw_reference_price or bar.close)
+            if run.configuration.order_type is OrderType.LIMIT
+            else None
         )
         outcome = await risk_orders.create(
             CreateM05OrderRequest(
@@ -848,7 +895,7 @@ class BacktestService:
                 intent_source=OrderIntentSource.STRATEGY,
                 source_id=signal.id,
                 strategy_key=run.configuration.strategy_key,
-                reference_price=signal.reference_price or bar.close,
+                reference_price=bar.raw_reference_price or bar.close,
             )
         )
         order = outcome.order

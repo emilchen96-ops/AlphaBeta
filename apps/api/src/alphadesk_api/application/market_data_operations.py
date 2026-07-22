@@ -5,7 +5,9 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from hashlib import sha256
+from itertools import pairwise
 from typing import Any, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -37,6 +39,14 @@ from alphadesk_domain.market_adapters import (
     ExternalMarketBar,
     MarketDataAdapter,
     MarketDataAdapterError,
+)
+from alphadesk_domain.market_reference import (
+    AdjustmentFactor,
+    InstrumentTradingState,
+    InstrumentTradingStatus,
+    MarketReferenceError,
+    TradingCalendarService,
+    TradingCalendarSession,
 )
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -181,7 +191,7 @@ class DailyMarketDataUpdateService:
         correlation_id: UUID,
         progress: Callable[[int, int, str, str], None] | None = None,
     ) -> DailyUpdateResult:
-        resolved_target = self._target_date(target_date)
+        resolved_target, calendar_unknown = await self._target_date(target_date)
         ordered = sorted(instruments, key=lambda item: str(item.id))
         if not ordered or len(ordered) > self._max_instruments:
             raise ApplicationError(
@@ -212,7 +222,26 @@ class DailyMarketDataUpdateService:
                 timeframe=MarketTimeframe.DAY_1,
                 adjustment_type=AdjustmentType.NONE,
             )
+            target_sessions = await uow.trading_calendar.list(
+                exchange="SHSE",
+                start=resolved_target,
+                end=resolved_target,
+                limit=1,
+            )
+            target_statuses = await uow.instrument_trading_statuses.list(
+                instrument_ids=[item.id for item in ordered],
+                start=resolved_target,
+                end=resolved_target,
+                limit=len(ordered) * 2,
+            )
         latest = {item.instrument_id: item for item in latest_values}
+        calendar_unknown = calendar_unknown or not target_sessions
+        closed_market = bool(target_sessions and not target_sessions[0].is_open)
+        suspended_ids = {
+            item.instrument_id
+            for item in target_statuses
+            if item.status is InstrumentTradingState.SUSPENDED
+        }
         plans = tuple(
             DailyInstrumentPlan(
                 instrument_id=item.id,
@@ -228,6 +257,14 @@ class DailyMarketDataUpdateService:
                     if item.id not in mappings
                     else "UP_TO_DATE"
                     if item.id in latest and latest[item.id].bar_time.date() >= resolved_target
+                    else "CLOSED_MARKET"
+                    if closed_market
+                    else "SUSPENDED"
+                    if item.id in suspended_ids
+                    and (
+                        item.id in latest
+                        and latest[item.id].bar_time.date() + timedelta(days=1) >= resolved_target
+                    )
                     else "UPDATE_REQUIRED"
                 ),
             )
@@ -235,11 +272,14 @@ class DailyMarketDataUpdateService:
         )
         if dry_run:
             missing = sum(item.state == "MAPPING_MISSING" for item in plans)
+            skipped = sum(
+                item.state in {"UP_TO_DATE", "CLOSED_MARKET", "SUSPENDED"} for item in plans
+            )
             return DailyUpdateResult(
                 run=None,
                 target_date=resolved_target,
                 requested=len(ordered),
-                up_to_date=sum(item.state == "UP_TO_DATE" for item in plans),
+                up_to_date=skipped,
                 completed=0,
                 failed=missing,
                 unprocessed=sum(item.state == "UPDATE_REQUIRED" for item in plans),
@@ -310,11 +350,13 @@ class DailyMarketDataUpdateService:
                     if not continue_on_error:
                         break
                     continue
-                if plan.state == "UP_TO_DATE":
+                if plan.state in {"UP_TO_DATE", "CLOSED_MARKET", "SUSPENDED"}:
                     stats["up_to_date"] += 1
+                    if plan.state == "SUSPENDED":
+                        stats["suspended_instruments"] += 1
                     processed += 1
                     if progress:
-                        progress(index, len(ordered), instrument.symbol, "UP_TO_DATE")
+                        progress(index, len(ordered), instrument.symbol, plan.state)
                     continue
                 if processed and self._request_interval_seconds:
                     await anyio.sleep(self._request_interval_seconds)
@@ -412,6 +454,9 @@ class DailyMarketDataUpdateService:
             "invalid_bars": stats["invalid_bars"],
             "retry_count": stats["retry_count"],
             "failures": failures[:100],
+            "closed_market": int(closed_market),
+            "suspended_instruments": stats["suspended_instruments"],
+            "unknown_calendar_sessions": int(calendar_unknown),
         }
         async with self._uow_factory() as uow:
             await uow.market_sync_runs.update_status(
@@ -482,16 +527,33 @@ class DailyMarketDataUpdateService:
                 await anyio.sleep(min(0.25 * (2**attempt), 1.0))
         raise AssertionError("retry loop exhausted")
 
-    @staticmethod
-    def _target_date(value: date | None) -> date:
+    async def _target_date(self, value: date | None) -> tuple[date, bool]:
         today = datetime.now(SHANGHAI).date()
         if value is not None:
             if value > today:
                 raise ApplicationError(
                     "MARKET_DATA_INVALID_TARGET_DATE", "target_date 不得晚于当前本地日期"
                 )
-            return value
-        return today - timedelta(days=1)
+            return value, False
+        async with self._uow_factory() as uow:
+            sessions = await uow.trading_calendar.list(
+                exchange="SHSE",
+                start=today - timedelta(days=400),
+                end=today,
+                limit=500,
+            )
+        if sessions:
+            try:
+                return (
+                    TradingCalendarService(sessions).latest_completed_session(
+                        "SHSE", datetime.now(UTC)
+                    ),
+                    False,
+                )
+            except MarketReferenceError:
+                pass
+        # Compatibility fallback is explicitly surfaced in run metadata.
+        return today - timedelta(days=1), True
 
     @staticmethod
     def _operation_key(
@@ -656,6 +718,72 @@ class MarketDataReadinessService:
                     code_status="WORKING",
                 )
             )
+        async with self._uow_factory() as uow:
+            calendar = await uow.trading_calendar.list(
+                exchange=None, start=None, end=None, limit=100_000
+            )
+            factors = await uow.adjustment_factors.list(
+                instrument_ids=[item.id for item in instruments],
+                start=None,
+                end=None,
+                source=None,
+                convention=None,
+                limit=100_000,
+            )
+            statuses = await uow.instrument_trading_statuses.list(
+                instrument_ids=[item.id for item in instruments],
+                start=None,
+                end=None,
+                limit=100_000,
+            )
+        factor_ids = {item.instrument_id for item in factors}
+        status_ids = {item.instrument_id for item in statuses}
+        raw_ready = sum(
+            by_id.get(item.id) is not None and by_id[item.id].bar_count > 0 for item in instruments
+        )
+        adjusted_ready = sum(
+            item.id in factor_ids and by_id.get(item.id) is not None for item in instruments
+        )
+        calendar_ok = {item.exchange for item in calendar if item.is_open} >= {"SHSE", "SZSE"}
+        reference_capabilities = (
+            ("raw_price_ready", "RAW 原始价格", raw_ready, True),
+            ("adjusted_price_ready", "QFQ 研究价格", adjusted_ready, bool(factors)),
+            ("calendar_ready", "交易日历", total if calendar_ok else 0, calendar_ok),
+            ("suspension_ready", "停复牌状态", len(status_ids), bool(statuses)),
+            ("scanner_ready", "Scanner", raw_ready, True),
+            ("strategy_ready", "Strategy", raw_ready, True),
+            ("backtest_ready", "BT01", raw_ready if calendar_ok else 0, calendar_ok),
+            ("replay_ready", "RT01", raw_ready if calendar_ok else 0, calendar_ok),
+        )
+        for key, name, ready, configured in reference_capabilities:
+            status = (
+                MarketDataReadinessStatus.UNKNOWN
+                if total == 0
+                else MarketDataReadinessStatus.READY
+                if ready == total and configured
+                else MarketDataReadinessStatus.PARTIAL
+                if ready > 0
+                else MarketDataReadinessStatus.NOT_READY
+            )
+            values.append(
+                ReadinessCapability(
+                    capability_key=key,
+                    display_name=name,
+                    status=status,
+                    ready_instrument_count=ready,
+                    total_instrument_count=total,
+                    minimum_bars_required=0,
+                    latest_data_date=None if latest is None else latest.date(),
+                    blocking_issue_count=0 if configured else total,
+                    warning_count=max(total - ready, 0),
+                    reason=f"{ready}/{total} 个标的具备该数据语义。",
+                    required_action=(
+                        "无需数据操作。"
+                        if status is MarketDataReadinessStatus.READY
+                        else "在数据中心同步对应参考事实。"
+                    ),
+                )
+            )
         return tuple(values)
 
     async def overview(
@@ -788,9 +916,39 @@ class MarketDataQualityService:
                         end=range_end or now,
                         limit=100_000,
                     )
+                    calendar = await uow.trading_calendar.list(
+                        exchange="SHSE" if instrument.exchange == "SSE" else instrument.exchange,
+                        start=(range_start or datetime(1990, 1, 1, tzinfo=UTC)).date(),
+                        end=(range_end or now).date(),
+                        limit=100_000,
+                    )
+                    factors = await uow.adjustment_factors.list(
+                        instrument_ids=[instrument.id],
+                        start=(range_start or datetime(1990, 1, 1, tzinfo=UTC)).date(),
+                        end=(range_end or now).date(),
+                        source=None,
+                        convention=None,
+                        limit=100_000,
+                    )
+                    statuses = await uow.instrument_trading_statuses.list(
+                        instrument_ids=[instrument.id],
+                        start=(range_start or datetime(1990, 1, 1, tzinfo=UTC)).date(),
+                        end=(range_end or now).date(),
+                        limit=100_000,
+                    )
                 bars_checked += len(bars)
                 issues.extend(
-                    self._instrument_issues(run.id, instrument, mapping, mappings, bars, now)
+                    self._instrument_issues(
+                        run.id,
+                        instrument,
+                        mapping,
+                        mappings,
+                        bars,
+                        now,
+                        calendar,
+                        factors,
+                        statuses,
+                    )
                 )
             counts = Counter(issue.severity for issue in issues)
             completed_at = datetime.now(UTC)
@@ -860,7 +1018,13 @@ class MarketDataQualityService:
         mappings: list[Any],
         bars: list[MarketBar],
         now: datetime,
+        calendar: list[TradingCalendarSession] | None = None,
+        factors: list[AdjustmentFactor] | None = None,
+        statuses: list[InstrumentTradingStatus] | None = None,
     ) -> list[MarketDataQualityIssue]:
+        calendar = calendar or []
+        factors = factors or []
+        statuses = statuses or []
         issues: list[MarketDataQualityIssue] = []
 
         def issue(
@@ -914,6 +1078,20 @@ class MarketDataQualityService:
                 "标的映射到多个行情源, 研究前需确认目标日期范围只有一个权威来源。",
                 observed=str(len(mappings)),
                 expected="1 authoritative source per range",
+            )
+        if not calendar:
+            issue(
+                "CALENDAR_DATA_MISSING",
+                MarketDataIssueSeverity.WARNING,
+                "交易所日历未覆盖检查范围, 无法精确识别开放交易日缺口。",
+                action="先同步交易日历。",
+            )
+        if not statuses:
+            issue(
+                "SUSPENSION_DATA_MISSING",
+                MarketDataIssueSeverity.WARNING,
+                "停复牌状态未覆盖检查范围, 按兼容模式解释缺失日线。",
+                action="同步停复牌事实。",
             )
         if not bars:
             issue(
@@ -1008,6 +1186,79 @@ class MarketDataQualityService:
                 last=bars[-1].bar_time,
                 action="扩大历史补数起始范围。",
             )
+        bar_dates = {bar.bar_time.date() for bar in bars}
+        suspended_dates = {
+            item.session_date
+            for item in statuses
+            if item.status is InstrumentTradingState.SUSPENDED
+        }
+        expected_dates = {
+            item.session_date
+            for item in calendar
+            if item.is_open
+            and (instrument.listed_at is None or item.session_date >= instrument.listed_at)
+            and (instrument.delisted_at is None or item.session_date <= instrument.delisted_at)
+            and item.session_date not in suspended_dates
+            and bars[0].bar_time.date() <= item.session_date <= bars[-1].bar_time.date()
+        }
+        missing = sorted(expected_dates - bar_dates)
+        if missing:
+            issue(
+                "MISSING_OPEN_SESSION_BAR",
+                MarketDataIssueSeverity.ERROR,
+                "开放交易日缺少原始日线。",
+                observed=str(len(missing)),
+                expected="0",
+                first=datetime.combine(missing[0], time.min, tzinfo=UTC),
+                last=datetime.combine(missing[-1], time.min, tzinfo=UTC),
+                action="对缺失开放交易日执行受控补数。",
+            )
+        factor_by_date = {item.trade_date: item for item in factors}
+        factor_missing = sorted(bar_dates - set(factor_by_date))
+        if factor_missing:
+            issue(
+                "ADJUSTMENT_FACTOR_MISSING",
+                MarketDataIssueSeverity.WARNING,
+                "部分 RAW 日线缺少复权因子, QFQ 尚未就绪。",
+                observed=str(len(factor_missing)),
+                expected="0",
+                first=datetime.combine(factor_missing[0], time.min, tzinfo=UTC),
+                last=datetime.combine(factor_missing[-1], time.min, tzinfo=UTC),
+                action="同步复权因子; RAW 研究仍可继续。",
+            )
+        ordered_factors = sorted(factors, key=lambda item: item.trade_date)
+        for previous_factor, current_factor in pairwise(ordered_factors):
+            ratio = current_factor.factor / previous_factor.factor
+            if ratio > 10 or ratio < Decimal("0.1"):
+                issue(
+                    "ADJUSTMENT_FACTOR_DISCONTINUITY",
+                    MarketDataIssueSeverity.WARNING,
+                    "复权因子发生异常数量级跳变。",
+                    observed=str(ratio),
+                    expected="0.1..10",
+                    first=datetime.combine(current_factor.trade_date, time.min, tzinfo=UTC),
+                    last=datetime.combine(current_factor.trade_date, time.min, tzinfo=UTC),
+                )
+        if instrument.listed_at is not None:
+            before = [bar for bar in bars if bar.bar_time.date() < instrument.listed_at]
+            if before:
+                issue(
+                    "BAR_BEFORE_LISTING",
+                    MarketDataIssueSeverity.ERROR,
+                    "发现上市日期之前的日线。",
+                    first=before[0].bar_time,
+                    last=before[-1].bar_time,
+                )
+        if instrument.delisted_at is not None:
+            after = [bar for bar in bars if bar.bar_time.date() > instrument.delisted_at]
+            if after:
+                issue(
+                    "BAR_AFTER_DELISTING",
+                    MarketDataIssueSeverity.ERROR,
+                    "发现退市日期之后的日线。",
+                    first=after[0].bar_time,
+                    last=after[-1].bar_time,
+                )
         return issues
 
     @staticmethod

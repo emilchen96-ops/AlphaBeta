@@ -1,5 +1,7 @@
 # D01 A 股历史行情数据
 
+D02 语义增强：数据库中的 `MarketBar` 仍是 BaoStock RAW 未复权事实；统一查询可通过 `adjustment_mode=RAW|QFQ` 生成可追溯研究视图。交易日历、因子、停复牌与生命周期分别持久化，不会反写原始 K 线。详见 [市场价格语义](market_price_semantics.md)。
+
 ## 状态与边界
 
 D01-A/B 已完成：BaoStock 证券目录可以同步到既有 `Instrument` / `InstrumentMapping`，研究股票池复用 Watchlist，未复权日线以逐标的短事务写入既有 `MarketBar`，整批结果记录在既有 `MarketSyncRun`。本阶段没有新增 Migration。

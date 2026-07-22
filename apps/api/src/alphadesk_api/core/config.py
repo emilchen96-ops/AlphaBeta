@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     free_market_enabled: bool = False
     realtime_market_provider: Literal["disabled"] = "disabled"
     historical_market_provider: Literal["baostock"] = "baostock"
+    tushare_enabled: bool = False
+    tushare_token: SecretStr | None = None
+    market_calendar_provider: Literal["fixture", "tushare"] = "fixture"
+    market_adjustment_provider: Literal["fixture", "tushare"] = "fixture"
+    market_suspension_provider: Literal["fixture", "tushare"] = "fixture"
     free_market_data_enabled: bool = False
     free_market_poll_seconds: int = Field(default=30, ge=30, le=3600)
     free_market_idle_poll_seconds: int = Field(default=120, ge=60, le=3600)
@@ -163,7 +168,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("ai_api_key", mode="before")
+    @field_validator("ai_api_key", "tushare_token", mode="before")
     @classmethod
     def normalize_optional_ai_api_key(cls, value: object) -> object | None:
         if value is None or (isinstance(value, str) and not value.strip()):

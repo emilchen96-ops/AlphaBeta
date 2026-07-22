@@ -1,5 +1,7 @@
 # RT01 日线历史行情回放
 
+D02 的回放价格边界与 BT01 相同：策略输入可选 RAW/QFQ，成交与账本固定 RAW；Session 来自交易日历，暂停/恢复/播放速度不会改变停牌与成交结果。当前仍仅支持日线回放。
+
 RT01 把 D01 PostgreSQL 日线按交易 Session 逐日推进，并复用 BT01 的
 `HistoricalSessionProcessor`、时间模型和指标口径。业务链路为：
 

@@ -175,6 +175,7 @@ export interface CreateBacktestRequest {
   parameters: Record<string, string | number | boolean>;
   instrument_ids: string[];
   timeframe: "DAY_1";
+  strategy_price_adjustment_mode: "RAW" | "QFQ";
   start_at: string;
   end_at: string;
   initial_cash: string;

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyAccountReconciliationRepository,
     SqlAlchemyAccountSnapshotRepository,
+    SqlAlchemyAdjustmentFactorRepository,
     SqlAlchemyAIAnalysisRunRepository,
     SqlAlchemyAuditLogRepository,
     SqlAlchemyBacktestEquityPointRepository,
@@ -27,8 +28,10 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyInformationIngestionRunRepository,
     SqlAlchemyInformationItemRepository,
     SqlAlchemyInformationSourceRepository,
+    SqlAlchemyInstrumentLifecycleRepository,
     SqlAlchemyInstrumentMappingRepository,
     SqlAlchemyInstrumentRepository,
+    SqlAlchemyInstrumentTradingStatusRepository,
     SqlAlchemyLedgerTransactionRepository,
     SqlAlchemyMarketBarRepository,
     SqlAlchemyMarketDataQualityIssueRepository,
@@ -61,6 +64,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyStrategyRepository,
     SqlAlchemyStrategyRunRepository,
     SqlAlchemyTradingAccountRepository,
+    SqlAlchemyTradingCalendarRepository,
     SqlAlchemyWatchlistRepository,
 )
 
@@ -135,6 +139,10 @@ class SqlAlchemyUnitOfWork:
         self.replay_control_actions = SqlAlchemyReplayControlActionRepository(session)
         self.replay_events = SqlAlchemyReplayEventRepository(session)
         self.replay_equity_points = SqlAlchemyReplayEquityPointRepository(session)
+        self.trading_calendar = SqlAlchemyTradingCalendarRepository(session)
+        self.adjustment_factors = SqlAlchemyAdjustmentFactorRepository(session)
+        self.instrument_trading_statuses = SqlAlchemyInstrumentTradingStatusRepository(session)
+        self.instrument_lifecycle_events = SqlAlchemyInstrumentLifecycleRepository(session)
         return self
 
     async def __aexit__(

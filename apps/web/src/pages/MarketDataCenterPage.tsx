@@ -21,6 +21,7 @@ import {
   Space,
   Statistic,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
@@ -31,10 +32,12 @@ import {
   getMarketDataCoverage,
   getMarketDataOverview,
   getMarketDataReadiness,
+  getMarketReferenceStatus,
   getMarketSyncRuns,
   getQualityRun,
   getQualityRuns,
   updateDailyMarketData,
+  syncMarketReference,
   verifyMarketDataQuality,
 } from "../api/market";
 import { PageHeader } from "../components/PageHeader/PageHeader";
@@ -83,6 +86,7 @@ export function MarketDataCenterPage() {
   const [targetDate, setTargetDate] = useState("");
   const [maxInstruments, setMaxInstruments] = useState(30);
   const [continueOnError, setContinueOnError] = useState(true);
+  const [referenceDryRun, setReferenceDryRun] = useState(true);
   const [selectedQualityRun, setSelectedQualityRun] = useState<string>();
   const [severity, setSeverity] = useState<QualitySeverity | undefined>();
   const [issueType, setIssueType] = useState("");
@@ -98,6 +102,10 @@ export function MarketDataCenterPage() {
   const readiness = useQuery({
     queryKey: ["market-data-readiness"],
     queryFn: getMarketDataReadiness,
+  });
+  const referenceStatus = useQuery({
+    queryKey: ["market-reference-status"],
+    queryFn: getMarketReferenceStatus,
   });
   const syncRuns = useQuery({
     queryKey: ["market-sync-runs"],
@@ -126,6 +134,7 @@ export function MarketDataCenterPage() {
       queryClient.invalidateQueries({ queryKey: ["market-data-readiness"] }),
       queryClient.invalidateQueries({ queryKey: ["market-sync-runs"] }),
       queryClient.invalidateQueries({ queryKey: ["market-quality-runs"] }),
+      queryClient.invalidateQueries({ queryKey: ["market-reference-status"] }),
     ]);
   };
   const dailyUpdate = useMutation({
@@ -157,6 +166,17 @@ export function MarketDataCenterPage() {
       await refreshAll();
       void message.success(
         `质量检查完成：ERROR ${result.run.error_count}，WARNING ${result.run.warning_count}`,
+      );
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+  const referenceSync = useMutation({
+    mutationFn: (kind: Parameters<typeof syncMarketReference>[0]) =>
+      syncMarketReference(kind, referenceDryRun),
+    onSuccess: async (result) => {
+      await refreshAll();
+      void message.success(
+        `${result.kind} ${result.dry_run ? "预览" : "同步"}完成：接收 ${result.received}，写入 ${result.persisted}`,
       );
     },
     onError: (error: Error) => void message.error(error.message),
@@ -250,7 +270,206 @@ export function MarketDataCenterPage() {
         </Descriptions>
       </Card>
 
-      <Card title="2. Universe 覆盖情况" style={{ marginTop: 16 }}>
+      <Card title="2. 市场参考数据与价格语义" style={{ marginTop: 16 }}>
+        <Alert
+          showIcon
+          type="info"
+          title="RAW 是成交、Fill、费用与账本的权威价格"
+          description="QFQ 仅供技术指标、趋势策略和长期研究使用；涨跌停识别与模拟成交始终读取 RAW。"
+          style={{ marginBottom: 16 }}
+        />
+        <Flex wrap gap={12} align="center" style={{ marginBottom: 16 }}>
+          <Checkbox
+            checked={referenceDryRun}
+            onChange={(event) => setReferenceDryRun(event.target.checked)}
+          >
+            Dry-run（不写数据库）
+          </Checkbox>
+          <Typography.Text type="secondary">
+            Provider：Fixture（离线、确定性）；Tushare 未配置时不会联网。
+          </Typography.Text>
+        </Flex>
+        <Tabs
+          items={[
+            {
+              key: "calendar",
+              label: "交易日历",
+              children: (
+                <Descriptions size="small" column={{ xs: 1, md: 3 }}>
+                  <Descriptions.Item label="交易所">
+                    SHSE / SZSE
+                  </Descriptions.Item>
+                  <Descriptions.Item label="覆盖日期">
+                    {`${referenceStatus.data?.calendar_start ?? "—"} — ${referenceStatus.data?.calendar_end ?? "—"}`}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="开放日 / 全部">
+                    {referenceStatus.data
+                      ? `${referenceStatus.data.open_sessions} / ${referenceStatus.data.calendar_sessions}`
+                      : "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="最新已完成交易日">
+                    {referenceStatus.data?.latest_completed_session ?? "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    <Tag
+                      color={
+                        referenceStatus.data?.calendar_ready
+                          ? "success"
+                          : "warning"
+                      }
+                    >
+                      {referenceStatus.data?.calendar_ready
+                        ? "READY"
+                        : "MISSING"}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="操作">
+                    <Button
+                      loading={referenceSync.isPending}
+                      onClick={() => referenceSync.mutate("calendar")}
+                    >
+                      同步交易日历
+                    </Button>
+                  </Descriptions.Item>
+                </Descriptions>
+              ),
+            },
+            {
+              key: "adjustments",
+              label: "复权因子",
+              children: (
+                <Descriptions size="small" column={{ xs: 1, md: 3 }}>
+                  <Descriptions.Item label="覆盖股票">
+                    {referenceStatus.data?.adjustment_instruments ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="因子记录">
+                    {referenceStatus.data?.adjustment_factors ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="最新因子日期">
+                    {referenceStatus.data?.latest_factor_date ?? "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="QFQ 可用股票">
+                    {referenceStatus.data?.qfq_ready_instruments ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="状态">
+                    <Tag
+                      color={
+                        referenceStatus.data?.adjusted_price_ready
+                          ? "success"
+                          : "warning"
+                      }
+                    >
+                      {referenceStatus.data?.adjusted_price_ready
+                        ? "READY"
+                        : "MISSING"}
+                    </Tag>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="操作">
+                    <Button
+                      loading={referenceSync.isPending}
+                      onClick={() => referenceSync.mutate("adjustments")}
+                    >
+                      同步复权因子
+                    </Button>
+                  </Descriptions.Item>
+                </Descriptions>
+              ),
+            },
+            {
+              key: "suspensions",
+              label: "停复牌",
+              children: (
+                <Descriptions size="small" column={{ xs: 1, md: 3 }}>
+                  <Descriptions.Item label="状态记录">
+                    {referenceStatus.data?.trading_statuses ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="已知停牌日">
+                    {referenceStatus.data?.suspended_sessions ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="最新状态日期">
+                    {referenceStatus.data?.latest_status_date ?? "—"}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="兼容规则">
+                    缺少状态时附 WARNING，不猜测为停牌
+                  </Descriptions.Item>
+                  <Descriptions.Item label="操作">
+                    <Button
+                      loading={referenceSync.isPending}
+                      onClick={() => referenceSync.mutate("suspensions")}
+                    >
+                      同步停复牌
+                    </Button>
+                  </Descriptions.Item>
+                </Descriptions>
+              ),
+            },
+            {
+              key: "lifecycle",
+              label: "Instrument 生命周期",
+              children: (
+                <Descriptions size="small" column={{ xs: 1, md: 3 }}>
+                  <Descriptions.Item label="生命周期事件">
+                    {referenceStatus.data?.lifecycle_events ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="覆盖股票">
+                    {referenceStatus.data?.lifecycle_instruments ?? 0}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="历史语义">
+                    上市前、退市后不期待 K 线；inactive 仍可历史研究
+                  </Descriptions.Item>
+                  <Descriptions.Item label="操作">
+                    <Button
+                      loading={referenceSync.isPending}
+                      onClick={() =>
+                        referenceSync.mutate("instrument-lifecycle")
+                      }
+                    >
+                      同步生命周期
+                    </Button>
+                  </Descriptions.Item>
+                </Descriptions>
+              ),
+            },
+            {
+              key: "readiness",
+              label: "语义与 Readiness",
+              children: (
+                <Space orientation="vertical" style={{ width: "100%" }}>
+                  <Space wrap>
+                    {[
+                      ["RAW", referenceStatus.data?.raw_price_ready],
+                      ["QFQ", referenceStatus.data?.adjusted_price_ready],
+                      ["Calendar", referenceStatus.data?.calendar_ready],
+                      ["Suspension", referenceStatus.data?.suspension_ready],
+                      ["Scanner", referenceStatus.data?.scanner_ready],
+                      ["Strategy", referenceStatus.data?.strategy_ready],
+                      ["Backtest", referenceStatus.data?.backtest_ready],
+                      ["Replay", referenceStatus.data?.replay_ready],
+                    ].map(([label, ready]) => (
+                      <Tag
+                        key={String(label)}
+                        color={ready ? "success" : "warning"}
+                      >
+                        {String(label)} {ready ? "READY" : "NOT READY"}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {(referenceStatus.data?.warnings ?? []).map((warning) => (
+                    <Alert
+                      key={warning}
+                      type="warning"
+                      showIcon
+                      title={warning}
+                    />
+                  ))}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      </Card>
+
+      <Card title="3. Universe 覆盖情况" style={{ marginTop: 16 }}>
         <Descriptions size="small" column={{ xs: 1, md: 4 }}>
           <Descriptions.Item label="Universe">
             {coverage.data?.name ?? "research"}
@@ -299,7 +518,7 @@ export function MarketDataCenterPage() {
         />
       </Card>
 
-      <Card title="3. 同步运行与每日更新" style={{ marginTop: 16 }}>
+      <Card title="4. 同步运行与每日更新" style={{ marginTop: 16 }}>
         <Flex wrap gap={12} align="center" style={{ marginBottom: 16 }}>
           <Select
             value="baostock"
@@ -443,7 +662,7 @@ export function MarketDataCenterPage() {
         />
       </Card>
 
-      <Card title="4. 数据质量" style={{ marginTop: 16 }}>
+      <Card title="5. 数据质量" style={{ marginTop: 16 }}>
         <Space wrap style={{ marginBottom: 16 }}>
           <Button
             icon={<SafetyCertificateOutlined />}
@@ -538,7 +757,7 @@ export function MarketDataCenterPage() {
         />
       </Card>
 
-      <Card title="5. 功能可用性" style={{ marginTop: 16 }}>
+      <Card title="6. 功能可用性" style={{ marginTop: 16 }}>
         <Table<ReadinessCapability>
           rowKey="capability_key"
           size="small"

@@ -1,6 +1,7 @@
 export type MarketTimeframe =
   "DAY_1" | "MINUTE_1" | "MINUTE_5" | "MINUTE_15" | "MINUTE_30" | "MINUTE_60";
 export type AdjustmentType = "NONE" | "FORWARD" | "BACKWARD";
+export type PriceAdjustmentMode = "RAW" | "QFQ";
 export type FreshnessStatus =
   "NORMAL" | "DELAYED" | "INCOMPLETE" | "INVALID" | "UNKNOWN";
 
@@ -121,6 +122,50 @@ export interface MarketBar {
   vwap: string | null;
   received_at: string;
   quality_status: FreshnessStatus;
+  adjustment_mode: PriceAdjustmentMode;
+  factor: string | null;
+  reference_factor: string | null;
+  raw_bar_id: number | null;
+}
+
+export interface MarketReferenceStatus {
+  calendar_provider: string;
+  adjustment_provider: string;
+  suspension_provider: string;
+  provider_configured: boolean;
+  calendar_sessions: number;
+  open_sessions: number;
+  calendar_start: string | null;
+  calendar_end: string | null;
+  latest_completed_session: string | null;
+  adjustment_factors: number;
+  adjustment_instruments: number;
+  latest_factor_date: string | null;
+  qfq_ready_instruments: number;
+  trading_statuses: number;
+  suspended_sessions: number;
+  latest_status_date: string | null;
+  lifecycle_events: number;
+  lifecycle_instruments: number;
+  raw_price_ready: boolean;
+  adjusted_price_ready: boolean;
+  calendar_ready: boolean;
+  suspension_ready: boolean;
+  scanner_ready: boolean;
+  strategy_ready: boolean;
+  backtest_ready: boolean;
+  replay_ready: boolean;
+  warnings: string[];
+}
+
+export interface ReferenceSyncResult {
+  kind: string;
+  provider: string;
+  requested: number;
+  received: number;
+  persisted: number;
+  dry_run: boolean;
+  warnings: string[];
 }
 
 export interface MarketBarsResponse {

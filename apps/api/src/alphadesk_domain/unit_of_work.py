@@ -6,6 +6,7 @@ from typing import Protocol, Self
 from alphadesk_domain.repositories import (
     AccountReconciliationRepository,
     AccountSnapshotRepository,
+    AdjustmentFactorRepository,
     AIAnalysisRunRepository,
     AuditLogRepository,
     BacktestEquityPointRepository,
@@ -24,8 +25,10 @@ from alphadesk_domain.repositories import (
     InformationIngestionRunRepository,
     InformationItemRepository,
     InformationSourceRepository,
+    InstrumentLifecycleRepository,
     InstrumentMappingRepository,
     InstrumentRepository,
+    InstrumentTradingStatusRepository,
     LedgerTransactionRepository,
     MarketBarRepository,
     MarketDataQualityIssueRepository,
@@ -58,6 +61,7 @@ from alphadesk_domain.repositories import (
     StrategyRepository,
     StrategyRunRepository,
     TradingAccountRepository,
+    TradingCalendarRepository,
     WatchlistRepository,
 )
 from alphadesk_domain.strategy_runs import HistoricalBarProvider
@@ -120,6 +124,10 @@ class UnitOfWork(Protocol):
     replay_control_actions: ReplayControlActionRepository
     replay_events: ReplayEventRepository
     replay_equity_points: ReplayEquityPointRepository
+    trading_calendar: TradingCalendarRepository
+    adjustment_factors: AdjustmentFactorRepository
+    instrument_trading_statuses: InstrumentTradingStatusRepository
+    instrument_lifecycle_events: InstrumentLifecycleRepository
 
     async def __aenter__(self) -> Self: ...
     async def __aexit__(

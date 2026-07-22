@@ -33,6 +33,7 @@ interface RunFormValues {
   as_of: string;
   parameters: Record<string, ScannerParameterValue>;
   idempotency_key: string;
+  price_adjustment_mode: "RAW" | "QFQ";
 }
 
 function ParameterInput({
@@ -72,6 +73,10 @@ export function ScannersPage() {
   const unavailableReason = capabilities.data?.items?.find(
     (item) => item.module_key === "scanner",
   )?.reason;
+  const qfqReady =
+    capabilities.data?.items?.find(
+      (item) => item.module_key === "adjusted_strategy_data",
+    )?.available === true;
   const catalog = useQuery({
     queryKey: ["scanner-catalog"],
     queryFn: getScannerCatalog,
@@ -107,6 +112,7 @@ export function ScannersPage() {
           .map((item) => [item.name, item.default]) ?? [],
       ),
       idempotency_key: `scan:${crypto.randomUUID()}`,
+      price_adjustment_mode: "RAW",
     });
   };
   const submit = async () => {
@@ -225,6 +231,29 @@ export function ScannersPage() {
                 options={selected.supported_timeframes.map((value) => ({
                   value,
                 }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="price_adjustment_mode"
+              label="价格模式"
+              tooltip={
+                selected.scanner_key === "limit_up_pullback"
+                  ? "涨停识别必须使用真实 RAW 价格。"
+                  : "volume 使用原始成交量；价格过滤可使用 RAW 或 QFQ。"
+              }
+              rules={[{ required: true }]}
+            >
+              <Select
+                disabled={selected.scanner_key === "limit_up_pullback"}
+                options={[
+                  { value: "RAW", label: "RAW（未复权）" },
+                  {
+                    value: "QFQ",
+                    label: qfqReady ? "QFQ（前复权）" : "QFQ（数据未就绪）",
+                    disabled:
+                      !qfqReady || selected.scanner_key === "limit_up_pullback",
+                  },
+                ]}
               />
             </Form.Item>
             <Form.Item

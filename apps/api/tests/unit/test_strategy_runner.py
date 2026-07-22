@@ -253,7 +253,11 @@ async def test_persisted_signal_has_complete_provenance() -> None:
     assert signal.strategy_version == "1.2.3"
     assert signal.bar_timestamp == NOW
     assert signal.confidence == Decimal("0.8")
-    assert signal.metadata == {"source": "unit"}
+    assert signal.metadata == {
+        "source": "unit",
+        "price_adjustment_mode": "RAW",
+        "reference_price_type": "RAW",
+    }
 
 
 @pytest.mark.asyncio

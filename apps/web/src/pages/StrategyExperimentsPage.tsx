@@ -70,6 +70,7 @@ interface ExperimentFormValues {
   timeframe: string;
   start_at: string;
   end_at: string;
+  price_adjustment_mode: "RAW" | "QFQ";
 }
 
 function formatDate(value?: string | null) {
@@ -307,6 +308,7 @@ export function StrategyExperimentsPage() {
       timeframe: values.timeframe,
       start_at: new Date(values.start_at).toISOString(),
       end_at: new Date(values.end_at).toISOString(),
+      price_adjustment_mode: values.price_adjustment_mode,
       parameter_grid: compactGrid,
     };
     const fingerprint = JSON.stringify(core);
@@ -340,7 +342,10 @@ export function StrategyExperimentsPage() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ strategy_key: selectedKey }}
+          initialValues={{
+            strategy_key: selectedKey,
+            price_adjustment_mode: "RAW",
+          }}
         >
           <Space wrap align="start">
             <Form.Item
@@ -376,6 +381,20 @@ export function StrategyExperimentsPage() {
                 options={selected?.supported_timeframes.map((value) => ({
                   value,
                 }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="price_adjustment_mode"
+              label="价格模式"
+              tooltip="QFQ 仅影响每个 StrategyRun 的策略输入和 Signal 参考价。"
+              rules={[{ required: true }]}
+            >
+              <Select
+                style={{ width: 190 }}
+                options={[
+                  { value: "RAW", label: "RAW（未复权）" },
+                  { value: "QFQ", label: "QFQ（前复权）" },
+                ]}
               />
             </Form.Item>
           </Space>

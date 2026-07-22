@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from alphadesk_domain.market_reference import PriceAdjustmentMode
+
 
 class BacktestFeeBody(BaseModel):
     commission_rate: str = "0.0003"
@@ -35,6 +37,7 @@ class BacktestCreateBody(BaseModel):
     benchmark_symbol: str | None = None
     data_source_code: str | None = Field(default=None, min_length=1, max_length=64)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 class BacktestRunResponse(BaseModel):

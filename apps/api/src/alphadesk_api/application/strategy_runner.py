@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_domain.entities import Instrument, Signal
 from alphadesk_domain.enums import MarketTimeframe, SignalStatus
+from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.strategy import (
     SignalDraft,
     StrategyContext,
@@ -39,6 +40,7 @@ class StrategyRunRequest:
     instrument_ids: tuple[UUID, ...]
     parameters: Mapping[str, StrategyParameterValue]
     correlation_id: UUID | None = None
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -82,6 +84,7 @@ class StrategyRunDto:
     created_at: datetime
     error_code: str | None
     error_message: str | None
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     instruments: tuple[dict[str, str], ...] = ()
 
 
@@ -129,6 +132,7 @@ def _run_dto(run: StrategyRun, instruments: Sequence[Instrument] | None = None) 
         created_at=run.created_at,
         error_code=run.error_code,
         error_message=run.error_message,
+        price_adjustment_mode=run.price_adjustment_mode,
         instruments=tuple(
             {
                 "id": str(item.id),
@@ -190,6 +194,7 @@ def _fingerprint_payload(
         "instrument_ids": sorted(str(item) for item in set(request.instrument_ids)),
         "parameters": stored_parameters(parameters),
         "environment": StrategyEnvironment.RESEARCH.value,
+        "price_adjustment_mode": request.price_adjustment_mode.value,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -242,7 +247,11 @@ def persisted_signal_from_draft(
         strategy_version=run.strategy_version,
         bar_timestamp=draft.bar_timestamp,
         confidence=draft.confidence,
-        metadata=dict(draft.metadata),
+        metadata={
+            **dict(draft.metadata),
+            "price_adjustment_mode": run.price_adjustment_mode.value,
+            "reference_price_type": run.price_adjustment_mode.value,
+        },
         schema_version=draft.schema_version,
     )
 
@@ -281,6 +290,7 @@ class StrategyRunner:
             instrument_ids=request.instrument_ids,
             status=StrategyRunStatus.CREATED,
             correlation_id=request.correlation_id or uuid4(),
+            price_adjustment_mode=request.price_adjustment_mode,
         )
 
         try:
@@ -325,6 +335,7 @@ class StrategyRunner:
                     timeframe=run.timeframe,
                     start_at=run.start_at,
                     end_at=run.end_at,
+                    price_adjustment_mode=run.price_adjustment_mode,
                 )
                 signals: list[Signal] = []
                 for bar in bars:

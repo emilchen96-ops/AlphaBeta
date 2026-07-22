@@ -1,12 +1,17 @@
 # D01-C 历史日线每日增量更新
 
+> D02 增强：未显式指定 `target_date` 时，服务优先使用已同步交易日历计算 Asia/Shanghai
+> 语义下的最新已完成开放交易日；周末和节假日不会触发无意义补数。已知停牌标的计入
+> `suspended_instruments`；日历覆盖不足时沿用兼容日期并在运行元数据返回 WARNING 计数，不会
+> 把该回退伪装成已确认交易日。
+
 ## 使用边界
 
 `DailyMarketDataUpdateService` 只更新 BaoStock、`DAY_1`、未复权历史 K 线。它是同步的受限操作，不是后台任务，不提供实时 Quote，不写 Redis，不访问 MiniQMT，也不会启动 Scanner、Strategy 或回测。
 
 ## 日期与幂等
 
-- 显式 `target_date` 不得晚于上海本地当前日期；为空时保守取前一自然日。
+- 显式 `target_date` 不得晚于上海本地当前日期；为空时优先取交易日历中的最新已完成开放日。
 - 已有数据从 `latest_trade_date + 1` 开始；没有数据从 `ALPHADESK_MARKET_DAILY_DEFAULT_START_DATE` 开始，默认 `2023-01-01`。
 - 周末、节假日、停牌和 Provider 无数据均可得到 0 新增，不生成虚假 K 线。
 - Provider、Universe、稳定排序后的 Instrument ID 和目标日期组成 operation key；重复完成请求返回原 `MarketSyncRun`，唯一键继续保护 K 线幂等。

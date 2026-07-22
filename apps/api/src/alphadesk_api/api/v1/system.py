@@ -97,6 +97,23 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
             availability = cast(Availability, provider_availability)
             provider = ai_snapshot.provider_key
             mode = ai_snapshot.mode
+        elif module_key in {
+            "trading_calendar",
+            "adjustment_factors",
+            "suspension_data",
+            "instrument_lifecycle",
+            "adjusted_strategy_data",
+        }:
+            provider_by_module = {
+                "trading_calendar": request.app.state.settings.market_calendar_provider,
+                "adjustment_factors": request.app.state.settings.market_adjustment_provider,
+                "suspension_data": request.app.state.settings.market_suspension_provider,
+                "instrument_lifecycle": request.app.state.settings.market_suspension_provider,
+                "adjusted_strategy_data": request.app.state.settings.market_adjustment_provider,
+            }
+            provider = provider_by_module[module_key]
+            availability = "READY" if raw["available"] else "NEEDS_DATA"
+            mode = "LOCAL_REFERENCE"
         elif raw["implementation_status"] == "NOT_IMPLEMENTED":
             availability = "NOT_IMPLEMENTED"
             provider = None
@@ -143,6 +160,11 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
             availability=availability,
             last_success_at=last_success_at,
             provider=provider,
+            provider_status=(
+                "READY"
+                if raw["configuration_status"] == "READY"
+                else ("DISABLED" if raw["configuration_status"] == "DISABLED" else "MISSING")
+            ),
             mode=mode,
         )
 

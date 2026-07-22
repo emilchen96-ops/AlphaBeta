@@ -18,6 +18,10 @@ const base: MarketBar = {
   vwap: "10.25",
   received_at: "2025-01-01T00:01:00Z",
   quality_status: "NORMAL",
+  adjustment_mode: "RAW",
+  factor: "1",
+  reference_factor: "1",
+  raw_bar_id: null,
 };
 
 test("K线加载时显示骨架", () => {

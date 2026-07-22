@@ -1,5 +1,7 @@
 # SC01 A 股历史日线条件扫描器
 
+D02 增加 `price_adjustment_mode`。`volume_anomaly` 保留原始 volume，价格过滤可选 RAW/QFQ；`limit_up_pullback` 后端强制 RAW，前端不允许选择 QFQ。扫描结果保存模式、参考价格类型和可选因子来源。
+
 SC01 提供统一的纯 Python Scanner 契约、两个内置规则、可审计的 PostgreSQL 运行事实，以及 API、CLI 和 React 页面。扫描只读取本地已有的 A 股日线，不抓取实时行情，不创建 Signal、RiskDecision、Order 或 Fill，也不修改账户、资金、持仓和账本。
 
 ## 安全边界
