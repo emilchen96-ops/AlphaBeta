@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -172,6 +172,17 @@ class HistoricalDataReadiness:
 
 
 class HistoricalBarProvider(Protocol):
+    def stream_bars(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
+        batch_size: int = 1_000,
+    ) -> AsyncIterator[StrategyBar]: ...
+
     async def list_bars(
         self,
         *,

@@ -1,5 +1,11 @@
 # AlphaDesk
 
+> **2026-07-22：D03 A股历史分钟行情数据中心完成。** 系统支持离线 CSV/Fixture、RAW
+> 1分钟入库、按 A 股上午/下午 Session 确定性聚合 5/15/30/60 分钟、质量与 Readiness、
+> API/CLI 和 `/intraday-market-data` 页面。Bar 时间表示区间开始，数据库为 UTC；QFQ 仅在
+> 查询时按 D02 因子派生。当前不是实时行情，BT02、分钟回放和 MiniQMT 均未实现。详见
+> [D03 文档](docs/intraday_market_data.md)。
+
 > **2026-07-21：RT01 日线历史回放完成。** 系统可从 D01 日线逐 Session 回放并执行
 > `ReplayClock → Strategy → Risk → Order → Fill → M04`，支持启动、暂停、恢复、单步、倍速、
 > Worker 崩溃恢复、WebSocket Timeline、权益与完整性检查。回放与 BT01 共用时间和指标口径，

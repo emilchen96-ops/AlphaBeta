@@ -48,6 +48,7 @@ markers = [
   "b01: simulated Broker execution and accounting milestone tests",
   "bt01: deterministic A-share daily backtesting milestone tests",
   "rt01: controllable historical daily replay milestone tests",
+  "d03: offline intraday market-data center milestone tests",
   "sc01: deterministic historical market scanner milestone tests",
   "n01: information source and market-event center milestone tests",
   "a01: grounded AI research assistant milestone tests",
@@ -68,7 +69,10 @@ select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
 
 [tool.ruff.format]
 # Historical migrations are immutable; 0009 predates the formatter baseline.
-exclude = ["alembic/versions/0009_r01_risk_decision_pipeline.py"]
+exclude = [
+  "alembic/versions/0009_r01_risk_decision_pipeline.py",
+  "alembic/versions/0017_d02_market_reference_data.py",
+]
 
 [tool.mypy]
 python_version = "3.12"

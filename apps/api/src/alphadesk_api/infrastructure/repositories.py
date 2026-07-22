@@ -1,12 +1,24 @@
 """SQLAlchemy asynchronous repository adapters for domain ports."""
 
 import builtins
+from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Table, case, delete, func, inspect, literal_column, or_, select, update
+from sqlalchemy import (
+    Table,
+    case,
+    delete,
+    func,
+    inspect,
+    literal_column,
+    or_,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2198,6 +2210,138 @@ class SqlAlchemyHistoricalBarProvider:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def stream_bars(
+        self,
+        *,
+        instrument_ids: tuple[UUID, ...],
+        timeframe: MarketTimeframe,
+        start_at: datetime,
+        end_at: datetime,
+        price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
+        batch_size: int = 1_000,
+    ) -> AsyncIterator[StrategyBar]:
+        """Stream a bounded historical slice in deterministic fact order."""
+
+        if not instrument_ids or start_at >= end_at or batch_size < 1:
+            raise ValueError("historical stream request is invalid")
+        factors: dict[tuple[UUID, date], Decimal] = {}
+        references: dict[UUID, Decimal] = {}
+        if price_adjustment_mode is PriceAdjustmentMode.QFQ:
+            latest_result = await self._session.execute(
+                select(MarketBarModel.instrument_id, func.max(MarketBarModel.bar_time))
+                .where(
+                    MarketBarModel.instrument_id.in_(instrument_ids),
+                    MarketBarModel.timeframe == timeframe.value,
+                    MarketBarModel.bar_time >= start_at,
+                    MarketBarModel.bar_time < end_at,
+                )
+                .group_by(MarketBarModel.instrument_id)
+            )
+            latest_dates = {
+                instrument_id: bar_time.date()
+                for instrument_id, bar_time in latest_result.tuples()
+                if bar_time is not None
+            }
+            factor_rows = await self._session.scalars(
+                select(AdjustmentFactorModel)
+                .where(
+                    AdjustmentFactorModel.instrument_id.in_(tuple(latest_dates)),
+                    AdjustmentFactorModel.trade_date >= start_at.date(),
+                    AdjustmentFactorModel.trade_date <= end_at.date(),
+                    AdjustmentFactorModel.factor_convention == "TUSHARE_CUMULATIVE",
+                )
+                .order_by(
+                    AdjustmentFactorModel.instrument_id,
+                    AdjustmentFactorModel.trade_date,
+                )
+            )
+            for factor_row in factor_rows:
+                key = (factor_row.instrument_id, factor_row.trade_date)
+                if key in factors:
+                    raise StrategyError(
+                        "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+                        "multiple factor sources exist for one instrument date",
+                    )
+                factors[key] = factor_row.factor
+            for instrument_id, latest_date in latest_dates.items():
+                reference = factors.get((instrument_id, latest_date))
+                if reference is None:
+                    raise StrategyError(
+                        "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+                        "reference factor is unavailable",
+                    )
+                references[instrument_id] = reference
+        elif price_adjustment_mode is not PriceAdjustmentMode.RAW:
+            raise StrategyError(
+                "MARKET_ADJUSTMENT_MODE_NOT_SUPPORTED", "only RAW and QFQ are supported"
+            )
+        statement = (
+            select(MarketBarModel, InstrumentModel)
+            .join(InstrumentModel, InstrumentModel.id == MarketBarModel.instrument_id)
+            .where(
+                MarketBarModel.instrument_id.in_(instrument_ids),
+                MarketBarModel.timeframe == timeframe.value,
+                MarketBarModel.bar_time >= start_at,
+                MarketBarModel.bar_time < end_at,
+            )
+            .order_by(
+                MarketBarModel.bar_time,
+                MarketBarModel.instrument_id,
+                MarketBarModel.id,
+            )
+            .execution_options(yield_per=batch_size)
+        )
+        result = await self._session.stream(statement)
+        async for partition in result.partitions(batch_size):
+            bars = [
+                StrategyBar(
+                    instrument_id=row.instrument_id,
+                    symbol=instrument.symbol,
+                    exchange=instrument.exchange,
+                    timeframe=timeframe,
+                    timestamp=row.bar_time,
+                    open=row.open,
+                    high=row.high,
+                    low=row.low,
+                    close=row.close,
+                    volume=row.volume,
+                    amount=row.amount,
+                )
+                for row, instrument in partition
+            ]
+            if price_adjustment_mode is PriceAdjustmentMode.RAW:
+                adjusted = await self._with_adjustment(bars, price_adjustment_mode)
+            else:
+                adjusted = []
+                for bar in bars:
+                    factor = factors.get((bar.instrument_id, bar.timestamp.date()))
+                    if factor is None:
+                        raise StrategyError(
+                            "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+                            "bar factor is unavailable",
+                        )
+                    ratio = factor / references[bar.instrument_id]
+                    adjusted.append(
+                        StrategyBar(
+                            instrument_id=bar.instrument_id,
+                            symbol=bar.symbol,
+                            exchange=bar.exchange,
+                            timeframe=bar.timeframe,
+                            timestamp=bar.timestamp,
+                            open=bar.open * ratio,
+                            high=bar.high * ratio,
+                            low=bar.low * ratio,
+                            close=bar.close * ratio,
+                            volume=bar.volume,
+                            amount=bar.amount,
+                            adjustment_mode=price_adjustment_mode,
+                            raw_reference_price=bar.close,
+                            adjustment_factor=factor,
+                        )
+                    )
+            for bar in adjusted:
+                yield bar
+
     async def list_bars(
         self,
         *,
@@ -3303,6 +3447,32 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
         await self._session.flush()
         return MarketBarUpsertResult(inserted, updated, len(entities) - len(inserted_flags))
 
+    async def get_existing(self, entities: list[MarketBar]) -> list[MarketBar]:
+        if not entities:
+            return []
+        keys = {
+            (
+                entity.instrument_id,
+                entity.source_id,
+                entity.timeframe.value,
+                entity.adjustment_type.value,
+                entity.bar_time,
+            )
+            for entity in entities
+        }
+        rows = await self._session.scalars(
+            select(MarketBarModel).where(
+                tuple_(
+                    MarketBarModel.instrument_id,
+                    MarketBarModel.source_id,
+                    MarketBarModel.timeframe,
+                    MarketBarModel.adjustment_type,
+                    MarketBarModel.bar_time,
+                ).in_(keys)
+            )
+        )
+        return [entity_from_model(MarketBar, row) for row in rows]
+
     async def count_raw_daily(self) -> int:
         return int(
             await self._session.scalar(
@@ -3393,10 +3563,12 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
         source_id: UUID,
         timeframe: MarketTimeframe,
         adjustment_type: AdjustmentType,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[MarketDataCoverage]:
         if not instrument_ids:
             return []
-        rows = await self._session.execute(
+        statement = (
             select(
                 MarketBarModel.instrument_id,
                 MarketBarModel.source_id,
@@ -3412,6 +3584,11 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
             )
             .group_by(MarketBarModel.instrument_id, MarketBarModel.source_id)
         )
+        if start is not None:
+            statement = statement.where(MarketBarModel.bar_time >= start)
+        if end is not None:
+            statement = statement.where(MarketBarModel.bar_time < end)
+        rows = await self._session.execute(statement)
         return [
             MarketDataCoverage(
                 instrument_id=row.instrument_id,

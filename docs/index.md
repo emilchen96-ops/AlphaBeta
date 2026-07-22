@@ -41,7 +41,10 @@
 > 当前风险里程碑为 **R01 完成**：纯规则核心见 [risk_engine.md](risk_engine.md)，快照、持久化、幂等、查询和 M05 安全门见 [risk_decision_pipeline.md](risk_decision_pipeline.md)，只读页面和关联边界见 [risk_ui.md](risk_ui.md)。下一阶段为 B01 模拟 Broker；系统仍无执行器、MiniQMT 或实盘能力。
 
 
-> 当前策略里程碑为 **S02 完成**：S02-A 指标与策略库、S02-B1 批量研究后端和 S02-B2 批量研究页面均已完成。后端契约见 [strategy_experiments.md](strategy_experiments.md)，页面与边界见 [strategy_experiments_ui.md](strategy_experiments_ui.md)。下一阶段为 R01 轻量风控，尚未开始。
+> 当前数据里程碑为 **D03 完成**：历史分钟 Provider、时间模型、聚合、质量、Readiness、
+> API/CLI 与页面见 [intraday_market_data.md](intraday_market_data.md)、
+> [intraday_time_model.md](intraday_time_model.md)、[intraday_aggregation.md](intraday_aggregation.md)、
+> [intraday_data_quality.md](intraday_data_quality.md) 和 [intraday_data_ui.md](intraday_data_ui.md)。
 
 > 当前策略阶段为 **S02-B1 批量研究后端**：参数网格、实验生命周期、事务、幂等和
 > Signal 对比见 [strategy_experiments.md](strategy_experiments.md)。S02-B2 尚未开始。
@@ -86,6 +89,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | BT01 A 股日线回测               | `daily_backtest.md`、`backtest_time_model.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0017 |
 | RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
+| D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |

@@ -92,3 +92,10 @@ Token 或连接串。
 
 当前不连接 MiniQMT，不是真实交易；AI 默认为 Disabled（U01 fixture 可显式使用 Fake），实时
 行情默认为 Disabled。A01-P 已具备真实 AI Adapter，但是否可用取决于本地凭据与兼容服务。
+
+## 5. 第一次使用历史分钟数据
+
+打开 <http://127.0.0.1:5173/intraday-market-data>，在“导入任务”运行 D03 Fixture；随后查看
+覆盖度、质量、Readiness 和分钟K线预览。本地 CSV 使用页面给出的 CLI 命令并显式设置
+`Asia/Shanghai`。页面内容是历史数据，不连接实时 WebSocket。即使数据 READY，BT02 与分钟
+回放仍显示“代码尚未开发”。

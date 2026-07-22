@@ -35,6 +35,11 @@ class CapabilityDataCountsResponse(BaseModel):
     instrument_count: int | None = None
     market_bar_count: int | None = None
     daily_market_bar_count: int | None = None
+    intraday_1m_bar_count: int | None = None
+    intraday_5m_bar_count: int | None = None
+    intraday_15m_bar_count: int | None = None
+    intraday_30m_bar_count: int | None = None
+    intraday_60m_bar_count: int | None = None
     market_bar_instrument_count: int | None = None
     earliest_market_bar_at: datetime | None = None
     latest_market_bar_at: datetime | None = None

@@ -16,4 +16,11 @@ AlphaDesk 以 RAW 未复权日线作为成交和账本的唯一权威价格。D0
 
 数据中心分别显示 RAW、QFQ、Calendar、Suspension、Scanner、Strategy、Backtest 与 Replay Readiness。QFQ 未就绪不会阻止显式选择 RAW 的研究。
 
-当前范围只有 A 股日线。分钟复权、分钟行情、分钟回测、实时交易和 MiniQMT 均不在 D02。
+上述 D02 规则最初只覆盖 A 股日线；D03 已增加历史分钟 RAW 与查询时 QFQ。分钟回测、
+实时交易和 MiniQMT 仍未实现。
+# D03 分钟价格增量
+
+分钟 `bar_time` 是 Bar 开始时间，保存 aware UTC，展示为 Asia/Shanghai。RAW 1分钟是权威
+分钟价格；RAW 高周期从 RAW 1分钟聚合。QFQ 只在查询时按交易日使用 D02 因子派生 OHLC，
+不修改 volume/amount，不写回 MarketBar，不用于 Fill、费用或账本。详见
+[intraday_time_model.md](intraday_time_model.md) 与 [intraday_aggregation.md](intraday_aggregation.md)。

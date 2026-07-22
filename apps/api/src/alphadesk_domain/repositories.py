@@ -464,6 +464,7 @@ class InstrumentMappingRepository(Protocol):
 
 class MarketBarRepository(Protocol):
     async def upsert_many(self, entities: list[MarketBar]) -> MarketBarUpsertResult: ...
+    async def get_existing(self, entities: list[MarketBar]) -> list[MarketBar]: ...
     async def count_raw_daily(self) -> int: ...
     async def get_bars(
         self,
@@ -483,6 +484,8 @@ class MarketBarRepository(Protocol):
         source_id: UUID,
         timeframe: MarketTimeframe,
         adjustment_type: AdjustmentType,
+        start: datetime | None = None,
+        end: datetime | None = None,
     ) -> list[MarketDataCoverage]: ...
     async def get_latest_bar(
         self,

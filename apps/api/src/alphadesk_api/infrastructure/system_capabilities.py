@@ -57,6 +57,20 @@ class SqlAlchemyCapabilityDataProvider:
                             .where(MarketBarModel.timeframe == "DAY_1")
                             .scalar_subquery()
                             .label("daily_market_bar_count"),
+                            *(
+                                select(func.count())
+                                .select_from(MarketBarModel)
+                                .where(MarketBarModel.timeframe == timeframe)
+                                .scalar_subquery()
+                                .label(label)
+                                for timeframe, label in (
+                                    ("MINUTE_1", "intraday_1m_bar_count"),
+                                    ("MINUTE_5", "intraday_5m_bar_count"),
+                                    ("MINUTE_15", "intraday_15m_bar_count"),
+                                    ("MINUTE_30", "intraday_30m_bar_count"),
+                                    ("MINUTE_60", "intraday_60m_bar_count"),
+                                )
+                            ),
                             select(func.count(distinct(MarketBarModel.instrument_id)))
                             .where(MarketBarModel.timeframe == "DAY_1")
                             .scalar_subquery()

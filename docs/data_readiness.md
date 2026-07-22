@@ -1,5 +1,9 @@
 # I01 数据与配置就绪度
 
+> D03 增量：分钟 Readiness 通过 `/api/v1/intraday/readiness` 分周期报告覆盖、缺口、质量和
+> 代码状态。BT02/分钟回放即使数据 READY，implementation 仍为 NOT_IMPLEMENTED。Fixture
+> 包含 2只股票×5个完整日、一个不完整日和一个停牌日；不连接网络或创建交易事实。
+
 > U01 提供两种研究准备方式：`existing-data` 只使用 D01 本地研究池，数据不足时明确返回
 > `NOT_READY`；`fixture` 生成带 `U01_DEMO` 标记的 260 条确定性日线用于功能验收。
 > 两种模式都不会在初始化期间访问外部网络。

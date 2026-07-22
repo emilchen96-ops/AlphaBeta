@@ -1551,6 +1551,17 @@ Index(
     MarketBarModel.instrument_id,
     MarketBarModel.bar_time,
 )
+Index(
+    "ix_market_bars_timeframe_time",
+    MarketBarModel.timeframe,
+    MarketBarModel.bar_time,
+)
+Index(
+    "ix_market_bars_source_timeframe_time",
+    MarketBarModel.source_id,
+    MarketBarModel.timeframe,
+    MarketBarModel.bar_time,
+)
 
 
 class MarketSyncRunModel(MutableTimestampedModel, Base):

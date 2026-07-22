@@ -208,6 +208,7 @@ class MarketBarUpsertResult:
     inserted: int
     updated: int
     unchanged: int
+    conflicts: int = 0
 
 
 @dataclass(slots=True, kw_only=True)

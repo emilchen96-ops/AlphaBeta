@@ -166,3 +166,11 @@ erDiagram
 Command 消费和 Outbox 抑制；任一步失败则整体回滚。回滚后的新事务必须仍可正常使用。
 
 M02 只建立模型、持久化和事务能力。Outbox 发布、Redis Streams、订单状态机服务、风控执行、Broker/执行器通信以及业务 API 均属于后续里程碑。
+
+## D03 分钟存储增量
+
+D03 复用 `market_bars`、`market_sync_runs`、`market_data_quality_runs/issues`，不创建第二套
+IntradayBar 表。`market_bars` 唯一键已经覆盖标的、来源、周期、调整语义和时间；聚合来源周期、
+版本和窗口策略保存于 `quality_flags`。Migration `0018_d03` 增加
+`(timeframe, bar_time)` 与 `(source_id, timeframe, bar_time)` 范围索引；既有
+`(instrument_id, timeframe, bar_time)` 索引继续服务单标的分钟查询。

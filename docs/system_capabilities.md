@@ -23,3 +23,8 @@ A01-P 后，`ai_research.configuration_status` 区分 `DISABLED`、`FAKE`、
 RT01 新增 `historical_replay`：代码、D01 日线、配置、`replay_worker` 心跳分别报告，避免把
 “代码已实现”误写成“当前自动播放可用”。MANUAL 单步不依赖 Worker；自动 X1/X10/X100 需要
 Worker ONLINE。回放计数进入 `data_counts.replay_run_count`。
+
+D03 新增 `intraday_market_data`、`intraday_1m`、`intraday_5m`、`intraday_15m`、
+`intraday_30m`、`intraday_60m`、`minute_backtest` 和 `minute_replay`。前六项根据 PostgreSQL
+分钟 Bar 计数报告数据状态；后两项实现状态固定 `NOT_IMPLEMENTED`，数据状态单独计算。
+分钟历史数据不得映射为 `realtime_market_data=READY`。

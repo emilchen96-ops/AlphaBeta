@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     market_minute_stale_seconds: int = Field(default=300, ge=30, le=86400)
     market_csv_max_bytes: int = Field(default=10_000_000, ge=1024, le=100_000_000)
     market_csv_max_rows: int = Field(default=100_000, ge=1, le=1_000_000)
+    intraday_import_max_file_size_mb: int = Field(default=64, ge=1, le=512)
+    intraday_import_batch_size: int = Field(default=1_000, ge=100, le=5_000)
+    intraday_query_max_bars: int = Field(default=5_000, ge=100, le=50_000)
+    intraday_max_instruments: int = Field(default=20, ge=1, le=200)
+    intraday_max_date_range_days: int = Field(default=31, ge=1, le=366)
     external_market_data_enabled: bool = False
     free_market_enabled: bool = False
     realtime_market_provider: Literal["disabled"] = "disabled"

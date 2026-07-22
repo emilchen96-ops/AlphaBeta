@@ -28,6 +28,11 @@ class CapabilityDataSnapshot:
     instrument_count: int | None = None
     market_bar_count: int | None = None
     daily_market_bar_count: int | None = None
+    intraday_1m_bar_count: int | None = None
+    intraday_5m_bar_count: int | None = None
+    intraday_15m_bar_count: int | None = None
+    intraday_30m_bar_count: int | None = None
+    intraday_60m_bar_count: int | None = None
     market_bar_instrument_count: int | None = None
     earliest_market_bar_at: datetime | None = None
     latest_market_bar_at: datetime | None = None
@@ -86,6 +91,14 @@ def assess_system_capabilities(
     database_ready = data.database_reachable
     instruments_ready = database_ready and _has(data.instrument_count)
     bars_ready = instruments_ready and _has(data.daily_market_bar_count)
+    minute_counts = {
+        "intraday_1m": data.intraday_1m_bar_count,
+        "intraday_5m": data.intraday_5m_bar_count,
+        "intraday_15m": data.intraday_15m_bar_count,
+        "intraday_30m": data.intraday_30m_bar_count,
+        "intraday_60m": data.intraday_60m_bar_count,
+    }
+    intraday_ready = any(_has(value) for value in minute_counts.values())
     accounts_ready = database_ready and _has(data.simulated_account_count)
     information_ready = database_ready and _has(data.information_item_count)
     executable_order_ready = database_ready and _has(data.executable_order_count)
@@ -205,6 +218,55 @@ def assess_system_capabilities(
             "先同步交易日历与复权因子, 再检查 QFQ Readiness",
         ),
         historical_capability("historical_market_data", "历史行情查询"),
+        SystemCapability(
+            module_key="intraday_market_data",
+            implementation_status="WORKING",
+            data_status="READY" if intraday_ready else ("MISSING" if database_ready else "UNKNOWN"),
+            configuration_status="NOT_REQUIRED",
+            available=intraday_ready,
+            reason=(
+                "D03历史分钟行情导入、聚合、质量和查询已实现。"
+                if intraday_ready
+                else "D03代码已实现, 当前尚无历史分钟Bar。"
+            ),
+            required_actions=() if intraday_ready else ("运行D03 Fixture或CLI导入本地CSV",),
+        ),
+        *(
+            SystemCapability(
+                module_key=key,
+                implementation_status="WORKING",
+                data_status=(
+                    "READY" if _has(value) else ("MISSING" if database_ready else "UNKNOWN")
+                ),
+                configuration_status="NOT_REQUIRED",
+                available=_has(value),
+                reason=f"历史分钟Bar数量: {value or 0}; 非实时行情。",
+                required_actions=() if _has(value) else ("导入1分钟RAW并运行D03确定性聚合",),
+            )
+            for key, value in minute_counts.items()
+        ),
+        SystemCapability(
+            module_key="minute_backtest",
+            implementation_status="NOT_IMPLEMENTED",
+            data_status=(
+                "READY"
+                if _has(data.intraday_5m_bar_count)
+                else ("MISSING" if database_ready else "UNKNOWN")
+            ),
+            configuration_status="NOT_REQUIRED",
+            available=False,
+            reason="BT02代码尚未开发; 此状态只反映分钟数据。",
+            required_actions=("BT02尚未实施",),
+        ),
+        SystemCapability(
+            module_key="minute_replay",
+            implementation_status="NOT_IMPLEMENTED",
+            data_status="READY" if intraday_ready else ("MISSING" if database_ready else "UNKNOWN"),
+            configuration_status="NOT_REQUIRED",
+            available=False,
+            reason="分钟历史回放代码尚未开发; 此状态只反映分钟数据。",
+            required_actions=("分钟历史回放尚未实施",),
+        ),
         historical_capability("scanner", "条件扫描"),
         historical_capability("strategy_research", "历史策略研究"),
         historical_capability("strategy_experiments", "批量策略研究"),

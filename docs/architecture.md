@@ -1,5 +1,21 @@
 # 架构总览
 
+> D03 增量：离线 Fixture/本地 CSV 经 `IntradayMarketDataProvider` 规范化为 RAW 1分钟
+> `MarketBar`，再由纯领域 Session 聚合器生成 5/15/30/60 分钟 Bar。PostgreSQL 仍是唯一
+> 事实来源；D03 不读取实时 WebSocket/Redis Quote，不调用 Strategy、订单、Broker、MiniQMT。
+> 详见 [intraday_market_data.md](intraday_market_data.md)。
+
+```mermaid
+flowchart LR
+  File[Fixture / Local CSV] --> Normalize[UTC Bar-start normalization]
+  Normalize --> Raw[(RAW 1m MarketBar)]
+  Raw --> Aggregate[Session-anchored 5/15/30/60m]
+  Aggregate --> PG[(PostgreSQL MarketBar)]
+  PG --> Quality[Quality / Readiness]
+  PG --> UI[API / CLI / Historical preview]
+  UI -.禁止.-> Trading[Signal / Order / Fill / MiniQMT]
+```
+
 > RT01 增量：API 保存控制动作，独立 `replay_worker` 用 PostgreSQL lease 逐 Session 推进；
 > Redis 只保存心跳和已提交事件通知。RT01 与 BT01 共用 `HistoricalSessionProcessor`、T+1 时间
 > 边界和绩效口径，并复用既有交易事实表。订单外发固定抑制为 `REPLAY_ENGINE`。详见
