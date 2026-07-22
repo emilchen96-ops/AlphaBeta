@@ -53,7 +53,7 @@ export function StrategyRunsPage() {
     <section>
       <PageHeader
         title="研究运行"
-        description="历史策略研究运行及其持久化 Signal。"
+        description="历史策略研究运行及其持久化研究信号（Signal）。"
       />
       <Alert
         showIcon
@@ -115,7 +115,7 @@ export function StrategyRunsPage() {
             },
             { title: "周期", dataIndex: "timeframe" },
             { title: "K线", dataIndex: "bars_processed" },
-            { title: "Signal", dataIndex: "signals_generated" },
+            { title: "研究信号", dataIndex: "signals_generated" },
             {
               title: "完成时间",
               render: (_, item) =>
@@ -141,7 +141,7 @@ export function StrategyRunsPage() {
                       void navigate(`/signals?strategy_run_id=${item.run_id}`)
                     }
                   >
-                    Signal
+                    研究信号
                   </Button>
                 </Space>
               ),
@@ -168,11 +168,14 @@ export function StrategyRunDetailPage() {
   const item = detail.data;
   return (
     <section>
-      <PageHeader title="研究运行详情" description={runId} />
+      <PageHeader
+        title="研究运行详情"
+        description="查看本次策略运行及其研究信号。"
+      />
       <Alert
         showIcon
         type="warning"
-        title="Signal 不是订单"
+        title="研究信号（Signal）不是订单"
         description="reference_price 仅为研究参考价；本运行不创建 Order、Fill，不调用风控或 Broker，不修改资金和持仓。"
       />
       {item ? (
@@ -207,7 +210,7 @@ export function StrategyRunDetailPage() {
               { key: "bars", label: "K线数", children: item.bars_processed },
               {
                 key: "signals",
-                label: "Signal数",
+                label: "研究信号数",
                 children: item.signals_generated,
               },
               {
@@ -235,7 +238,7 @@ export function StrategyRunDetailPage() {
               },
             ]}
           />
-          <Typography.Title level={4}>Signal</Typography.Title>
+          <Typography.Title level={4}>研究信号（Signal）</Typography.Title>
           <Table<StrategySignal>
             rowKey="signal_id"
             dataSource={signals.data?.items ?? []}

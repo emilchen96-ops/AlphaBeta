@@ -114,7 +114,7 @@ test("模拟账户页展示账本摘要和主要操作", async () => {
   expect(
     await screen.findByRole("heading", { name: "模拟账户与持仓" }),
   ).toBeInTheDocument();
-  expect(await screen.findByText("100,319.84")).toBeInTheDocument();
+  expect(await screen.findByText("¥100,319.84")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /重新估值/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /执行核对/ })).toBeInTheDocument();
   expect(screen.getByText(/免费行情仅供研究/)).toBeInTheDocument();
@@ -134,7 +134,7 @@ test("持仓页提供五类账本与核对标签页", async () => {
 test("估值不完整时显示明确警告且不伪造总权益", async () => {
   installPortfolioFetch({ partial: true });
   renderRoute("/portfolio");
-  expect(await screen.findByText("估值状态：PARTIAL")).toBeInTheDocument();
+  expect(await screen.findByText("估值状态：部分估值")).toBeInTheDocument();
   expect(
     screen.getByText("存在缺失或陈旧行情时，总权益不会被伪装成完整数值。"),
   ).toBeInTheDocument();

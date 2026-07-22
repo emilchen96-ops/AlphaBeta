@@ -22,6 +22,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Tag,
   Typography,
 } from "antd";
@@ -51,6 +52,14 @@ import type {
   MarketTimeframe,
   WatchlistItem,
 } from "../types/market";
+import {
+  displayEnum,
+  displayMarketSource,
+  formatInstrument,
+  formatNumber,
+  formatPrice,
+  isTestData,
+} from "../utils/display";
 
 export function MarketPage() {
   const { message, modal } = App.useApp();
@@ -68,6 +77,7 @@ export function MarketPage() {
   const [watchlistDescription, setWatchlistDescription] = useState("");
   const [noteItem, setNoteItem] = useState<WatchlistItem>();
   const [note, setNote] = useState("");
+  const [showTestData, setShowTestData] = useState(false);
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebouncedKeyword(keyword), 250);
@@ -98,8 +108,19 @@ export function MarketPage() {
     queryFn: getRealtimeMarketStatus,
     refetchInterval: 15_000,
   });
+  const visibleWatchlistItems = (detail.data?.items ?? []).filter(
+    (item) => showTestData || !isTestData(item.instrument),
+  );
+  const visibleInstruments = (instruments.data?.items ?? []).filter(
+    (item) => showTestData || !isTestData(item),
+  );
+  const visibleSources = (sources.data ?? []).filter(
+    (item) => showTestData || !isTestData(item.source_code),
+  );
   const effectiveInstrument =
-    selectedInstrument ?? detail.data?.items[0]?.instrument;
+    selectedInstrument && (showTestData || !isTestData(selectedInstrument))
+      ? selectedInstrument
+      : visibleWatchlistItems[0]?.instrument;
   const bars = useQuery({
     queryKey: ["market-bars", effectiveInstrument?.id, timeframe, adjustment],
     queryFn: () =>
@@ -185,17 +206,26 @@ export function MarketPage() {
     <div className="market-page">
       <PageHeader
         title="行情"
-        description="行情工作台：离线演示行情、自选股与可追溯的数据新鲜度"
+        description="查看本地历史行情、自选股以及可追溯的数据更新时间。"
         action={
-          <Space>
-            {(sources.data ?? []).map((source) => (
+          <Button icon={<ReloadOutlined />} onClick={() => void bars.refetch()}>
+            刷新行情
+          </Button>
+        }
+      />
+      <Card size="small" className="market-source-status" title="数据源状态">
+        <Flex justify="space-between" align="center" wrap gap={12}>
+          <Space wrap>
+            {visibleSources.map((source) => (
               <Tag
                 key={source.id}
                 color={source.status === "ACTIVE" ? "green" : "default"}
               >
-                {source.source_code} · {source.status}
+                {displayMarketSource(source.source_code)}：
+                {displayEnum(source.status)}
               </Tag>
             ))}
+            <Tag color="default">MiniQMT 行情：尚未配置</Tag>
             <Tag
               color={
                 realtimeStatus.data?.enabled &&
@@ -204,20 +234,19 @@ export function MarketPage() {
                   : "default"
               }
             >
-              FREE_BEST_EFFORT · {realtimeStatus.data?.state ?? "UNKNOWN"}
+              免费实时行情：
+              {displayEnum(realtimeStatus.data?.state ?? "DISABLED")}
             </Tag>
             <Tag color={live.status === "connected" ? "green" : "orange"}>
-              实时 · {live.status}
+              行情推送：{displayEnum(live.status.toUpperCase())}
             </Tag>
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={() => void bars.refetch()}
-            >
-              刷新
-            </Button>
           </Space>
-        }
-      />
+          <Space>
+            <Switch checked={showTestData} onChange={setShowTestData} />
+            <Typography.Text>显示测试数据</Typography.Text>
+          </Space>
+        </Flex>
+      </Card>
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={5}>
           <Card
@@ -278,7 +307,7 @@ export function MarketPage() {
               ) : null}
               <Spin spinning={detail.isLoading}>
                 <div className="market-list" role="list">
-                  {(detail.data?.items ?? []).map((item, index) => (
+                  {visibleWatchlistItems.map((item, index) => (
                     <div
                       key={item.id}
                       role="listitem"
@@ -290,9 +319,9 @@ export function MarketPage() {
                       onClick={() => setSelectedInstrument(item.instrument)}
                     >
                       <div className="market-list-copy">
-                        <Typography.Text
-                          strong
-                        >{`${item.instrument.symbol} ${item.instrument.name}`}</Typography.Text>
+                        <Typography.Text strong>
+                          {formatInstrument(item.instrument)}
+                        </Typography.Text>
                         <Typography.Text type="secondary">
                           {item.note || item.instrument.exchange}
                         </Typography.Text>
@@ -317,9 +346,7 @@ export function MarketPage() {
                           type="text"
                           size="small"
                           icon={<ArrowDownOutlined />}
-                          disabled={
-                            index === (detail.data?.items.length ?? 0) - 1
-                          }
+                          disabled={index === visibleWatchlistItems.length - 1}
                           onClick={(event) => {
                             event.stopPropagation();
                             moveItem(index, 1);
@@ -353,7 +380,7 @@ export function MarketPage() {
                     </div>
                   ))}
                 </div>
-                {!detail.isLoading && !detail.data?.items.length ? (
+                {!detail.isLoading && !visibleWatchlistItems.length ? (
                   <Empty
                     image={Empty.PRESENTED_IMAGE_SIMPLE}
                     description="暂无自选股"
@@ -374,7 +401,7 @@ export function MarketPage() {
             />
             <Spin spinning={instruments.isLoading}>
               <div className="market-list" role="list">
-                {(instruments.data?.items ?? []).map((instrument) => {
+                {visibleInstruments.map((instrument) => {
                   const added = detail.data?.items.some(
                     (item) => item.instrument.id === instrument.id,
                   );
@@ -386,11 +413,11 @@ export function MarketPage() {
                       onClick={() => setSelectedInstrument(instrument)}
                     >
                       <div className="market-list-copy">
-                        <Typography.Text
-                          strong
-                        >{`${instrument.symbol} ${instrument.name}`}</Typography.Text>
+                        <Typography.Text strong>
+                          {formatInstrument(instrument)}
+                        </Typography.Text>
                         <Typography.Text type="secondary">
-                          {`${instrument.exchange} · ${instrument.asset_type}`}
+                          {`${instrument.market || "A股"} · ${displayEnum(instrument.asset_type)}`}
                         </Typography.Text>
                       </div>
                       <Button
@@ -420,7 +447,7 @@ export function MarketPage() {
           <Card
             title={
               effectiveInstrument
-                ? `${effectiveInstrument.symbol} ${effectiveInstrument.name}`
+                ? formatInstrument(effectiveInstrument)
                 : "行情详情"
             }
             extra={
@@ -454,15 +481,16 @@ export function MarketPage() {
                   <Col span={6}>
                     <Statistic
                       title="最新价"
-                      value={displayedPrice ? Number(displayedPrice) : "--"}
-                      precision={3}
+                      value={formatPrice(displayedPrice)}
                     />
                   </Col>
                   <Col span={6}>
                     <Statistic
                       title="区间涨跌"
-                      value={change}
-                      precision={3}
+                      value={formatNumber(change, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 4,
+                      })}
                       styles={{
                         content: { color: change >= 0 ? "#cf1322" : "#08979c" },
                       }}
@@ -471,13 +499,13 @@ export function MarketPage() {
                   <Col span={6}>
                     <Statistic
                       title="成交量"
-                      value={
+                      value={formatNumber(
                         liveQuote?.volume
-                          ? Number(liveQuote.volume)
+                          ? liveQuote.volume
                           : latest
-                            ? Number(latest.volume)
-                            : 0
-                      }
+                            ? latest.volume
+                            : 0,
+                      )}
                     />
                   </Col>
                   <Col span={6}>
@@ -490,14 +518,18 @@ export function MarketPage() {
                           : "orange"
                       }
                     >
-                      {liveQuote?.freshness ??
-                        bars.data?.freshness.freshness_status ??
-                        "UNKNOWN"}
+                      {displayEnum(
+                        liveQuote?.freshness ??
+                          bars.data?.freshness.freshness_status ??
+                          "UNKNOWN",
+                      )}
                     </Tag>
                   </Col>
                 </Row>
                 {bars.isError ? (
                   <Empty description={bars.error.message} />
+                ) : !bars.isLoading && !bars.data?.items.length ? (
+                  <Empty description="尚未下载该股票的历史行情，请前往数据中心补充数据。" />
                 ) : (
                   <CandlestickChart
                     bars={bars.data?.items ?? []}

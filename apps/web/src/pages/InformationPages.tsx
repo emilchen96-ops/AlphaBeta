@@ -46,7 +46,7 @@ const disclaimer = (
     showIcon
     type="warning"
     title="外部来源或用户输入，尚未经过 AI 分析"
-    description="系统未验证所有事实真实性；内容不构成投资建议，也不会创建 Signal 或订单。请核对原始来源。"
+    description="系统未验证所有事实真实性；内容不构成投资建议，也不会创建研究信号（Signal）或订单。请核对原始来源。"
   />
 );
 
@@ -94,7 +94,7 @@ function FactTable({
         },
         { title: "方向", render: (_, item) => <Tag>{item.direction}</Tag> },
         {
-          title: "Instrument / 主题",
+          title: "标的 / 主题",
           render: (_, item) => (
             <Space wrap>
               {item.instruments.map((value) => (
@@ -237,7 +237,7 @@ export function InformationCenterPage() {
         <Select
           allowClear
           showSearch
-          placeholder="Instrument筛选"
+          placeholder="标的筛选"
           style={{ width: 200 }}
           options={instruments.data?.items.map((value) => ({
             value: value.id,
@@ -280,7 +280,7 @@ export function InformationCenterPage() {
                 <Input type="datetime-local" />
               </Form.Item>
             </Space>
-            <Form.Item name="instrument_ids" label="Instrument 关联">
+            <Form.Item name="instrument_ids" label="关联标的">
               <Select
                 mode="multiple"
                 options={instruments.data?.items.map((value) => ({
@@ -435,7 +435,7 @@ export function InformationDetailPage({
               },
               {
                 key: "instruments",
-                label: "Instrument",
+                label: "标的",
                 children:
                   item.instruments
                     .map((value) => `${value.symbol}.${value.exchange}`)

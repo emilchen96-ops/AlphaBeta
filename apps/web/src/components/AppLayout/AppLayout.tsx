@@ -50,7 +50,7 @@ const menuItems = [
     label: "批量研究",
   },
   { key: "/strategy-runs", icon: <DatabaseOutlined />, label: "研究运行" },
-  { key: "/signals", icon: <AuditOutlined />, label: "研究 Signal" },
+  { key: "/signals", icon: <AuditOutlined />, label: "研究信号" },
   { key: "/orders", icon: <OrderedListOutlined />, label: "订单" },
   { key: "/fills", icon: <DatabaseOutlined />, label: "成交记录" },
   {

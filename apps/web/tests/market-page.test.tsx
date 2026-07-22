@@ -120,21 +120,23 @@ test("行情路由显示完整工作台", async () => {
   expect(screen.getByText("标的目录")).toBeInTheDocument();
 });
 
-test("展示 DEMO 行情源状态", async () => {
+test("开启测试数据后展示 DEMO 行情源状态", async () => {
   renderRoute("/market");
-  expect(await screen.findByText("DEMO · ACTIVE")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("switch"));
+  expect(await screen.findByText("DEMO：已启用")).toBeInTheDocument();
 });
 
 test("免费行情关闭时明确显示 Best-Effort 状态", async () => {
   renderRoute("/market");
-  expect(
-    await screen.findByText("FREE_BEST_EFFORT · DISABLED"),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("免费实时行情：未启用")).toBeInTheDocument();
 });
 
 test("标的目录展示代码和名称", async () => {
   renderRoute("/market");
-  expect(await screen.findByText("600000 浦发银行(演示)")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("switch"));
+  expect(
+    await screen.findByText("浦发银行(演示)（600000.SH）"),
+  ).toBeInTheDocument();
 });
 
 test("可以打开新建自选列表对话框", async () => {

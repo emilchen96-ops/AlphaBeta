@@ -39,7 +39,7 @@ const journey = [
     "同步交易日历",
     "/market-data-center",
     "trading_calendar",
-    "选择 Fixture 或已配置 Provider",
+    "选择测试数据（Fixture）或已配置的数据提供方",
     "SHSE/SZSE 日历 Readiness 为 READY",
   ],
   [
@@ -63,13 +63,13 @@ const journey = [
     "迁移位于唯一 head",
     "初始化返回 READY",
   ],
-  ["运行 Scanner", "/scanners", "scanner", "研究标的有日线", "扫描运行可打开"],
+  ["运行条件扫描", "/scanners", "scanner", "研究标的有日线", "扫描运行可打开"],
   [
-    "运行 Strategy",
+    "运行策略研究",
     "/strategies",
     "strategy_research",
     "策略参数合法",
-    "StrategyRun 与 Signal 可查看",
+    "策略运行与研究信号可查看",
   ],
   [
     "运行 Backtest",
@@ -166,7 +166,7 @@ export function GettingStartedPage() {
         showIcon
         type="info"
         title="演示模式不会下载外部数据，也不会连接真实券商"
-        description="所有演示事实均带 U01_DEMO 标记；AI 使用 Fake Provider，订单只进入本地模拟 Broker。"
+        description="所有演示事实均带 U01_DEMO 标记；AI 使用测试模型服务，订单只进入本地模拟券商接口。"
       />
       <Card
         title="当前可用性"

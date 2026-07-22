@@ -48,7 +48,7 @@ const aiDisclaimer = (
     showIcon
     type="warning"
     title="AI生成，仅供研究参考。"
-    description="输出是基于所选来源的摘要或推断，不构成投资建议，不创建 Signal、订单、成交或持仓。请沿证据链接核对原始事实。"
+    description="输出是基于所选来源的摘要或推断，不构成投资建议，不创建研究信号（Signal）、订单、成交或持仓。请沿证据链接核对原始事实。"
   />
 );
 
@@ -84,9 +84,9 @@ export function AIResearchPage() {
     mutationFn: testAIProvider,
     onSuccess: async (result) => {
       if (result.success) {
-        void message.success(`Provider 连通成功：${result.latency_ms ?? 0}ms`);
+        void message.success(`模型服务连通成功：${result.latency_ms ?? 0}ms`);
       } else {
-        void message.error(result.error_code ?? "Provider 连通失败");
+        void message.error(result.error_code ?? "模型服务连通失败");
       }
       await queryClient.invalidateQueries({ queryKey: ["ai-provider-status"] });
     },
@@ -147,11 +147,11 @@ export function AIResearchPage() {
                 ? "warning"
                 : "error"
         }
-        title={`Provider: ${provider.data?.provider_key ?? "检查中"} / ${provider.data?.model_name ?? "-"}`}
+        title={`模型服务（Provider）：${provider.data?.provider_key ?? "检查中"} / ${provider.data?.model_name ?? "-"}`}
         description={
           <Space orientation="vertical" size="small">
             <Typography.Text>
-              {provider.data?.message ?? "正在读取 Provider 状态"}
+              {provider.data?.message ?? "正在读取模型服务状态"}
             </Typography.Text>
             {provider.data?.base_url_summary ? (
               <Typography.Text type="secondary">
@@ -175,7 +175,7 @@ export function AIResearchPage() {
                 disabled={providerTest.isPending}
                 onClick={() => providerTest.mutate()}
               >
-                测试真实 Provider 连通性
+                测试真实模型服务连通性
               </Button>
             ) : null}
           </Space>
@@ -257,7 +257,7 @@ export function AIResearchPage() {
           </Button>
         </Form>
       </Card>
-      <Card title="AIAnalysisRun 审计记录" style={{ marginTop: 16 }}>
+      <Card title="AI 分析运行审计记录" style={{ marginTop: 16 }}>
         <Table<AIAnalysisRun>
           rowKey="analysis_id"
           dataSource={runs.data?.items ?? []}
@@ -271,7 +271,7 @@ export function AIResearchPage() {
             { title: "类型", dataIndex: "analysis_type" },
             { title: "状态", render: (_, run) => statusTag(run.status) },
             {
-              title: "Provider / 模型",
+              title: "模型服务 / 模型",
               render: (_, run) => `${run.provider_key} / ${run.model_name}`,
             },
             { title: "Prompt 版本", dataIndex: "prompt_version" },
@@ -398,15 +398,15 @@ export function AIAnalysisDetailPage() {
                 },
                 {
                   key: "provider",
-                  label: "Provider / 模型",
+                  label: "模型服务 / 模型",
                   children: `${run.data.provider_key} / ${run.data.model_name}`,
                 },
                 {
                   key: "provider-mode",
                   label: "分析来源",
                   children: run.data.is_real_provider
-                    ? "REAL · 真实 Provider"
-                    : "FAKE / DISABLED · 非真实 Provider",
+                    ? "真实服务（REAL）"
+                    : "测试或未启用服务（FAKE / DISABLED）",
                 },
                 {
                   key: "prompt",
@@ -423,7 +423,7 @@ export function AIAnalysisDetailPage() {
                   label: "估算成本（非账单）",
                   children:
                     run.data.estimated_cost === null
-                      ? "Provider 未返回 usage 或未配置价格"
+                      ? "模型服务未返回用量（usage）或未配置价格"
                       : `${run.data.estimated_cost} ${run.data.cost_currency ?? "USD"}`,
                 },
                 {
@@ -465,7 +465,7 @@ export function ResearchInsightsPage() {
   return (
     <section>
       <PageHeader
-        title="ResearchInsight 目录"
+        title="研究观点目录（ResearchInsight）"
         description="结构化 AI 研究事实及其证据索引。"
       />
       {aiDisclaimer}
@@ -507,7 +507,10 @@ export function ResearchInsightDetailPage() {
   });
   return (
     <section>
-      <PageHeader title="ResearchInsight 证据详情" description={insightId} />
+      <PageHeader
+        title="研究观点证据详情"
+        description="查看观点与原始证据的只读关联。"
+      />
       {insight.data ? (
         <InsightCard insight={insight.data} />
       ) : (

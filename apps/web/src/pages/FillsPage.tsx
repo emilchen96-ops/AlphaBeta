@@ -77,7 +77,7 @@ export function FillsPage() {
       <Alert
         showIcon
         type="warning"
-        title="仅包含本地 SIMULATED 成交"
+        title="仅包含本地模拟成交（SIMULATED）"
         description="本页不能创建、编辑、删除或强制记账；不连接真实券商或 MiniQMT，不会产生真实交易。"
       />
       <Card style={{ marginTop: 16 }}>
@@ -111,7 +111,7 @@ export function FillsPage() {
           />
           <Input
             allowClear
-            placeholder="Order UUID"
+            placeholder="关联订单编号"
             style={{ width: 260 }}
             onPressEnter={(event) => {
               setPage(1);
@@ -187,7 +187,7 @@ export function FillsPage() {
         />
       </Card>
       <Drawer
-        title="Fill 详情（只读）"
+        title="成交详情（Fill，只读）"
         open={Boolean(selectedId)}
         onClose={() => {
           setSelectedId(undefined);

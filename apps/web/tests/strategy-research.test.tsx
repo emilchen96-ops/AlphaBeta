@@ -135,8 +135,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("策略目录加载并展示安全边界", async () => {
   renderRoute("/strategies");
-  expect(await screen.findByText("SMA Crossover")).toBeInTheDocument();
-  expect(screen.getByText(/Signal 是研究输出，不是订单/)).toBeInTheDocument();
+  expect(
+    await screen.findAllByText("均线交叉策略（SMA Crossover）"),
+  ).not.toHaveLength(0);
+  expect(screen.getByText(/研究信号（Signal）是研究输出/)).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /买入|卖出|自动交易|转为订单/ }),
   ).not.toBeInTheDocument();
@@ -146,11 +148,11 @@ test("动态参数表单覆盖 integer decimal boolean enum", async () => {
   renderRoute("/strategies");
   const entry = await screen.findByText("创建研究运行");
   fireEvent.click(entry.closest("button") ?? entry);
-  expect(screen.getByText(/short_window · 短窗口/)).toBeInTheDocument();
-  expect(screen.getByText(/quantity · 参考数量/)).toBeInTheDocument();
-  expect(screen.getByText(/enabled · 启用/)).toBeInTheDocument();
-  expect(screen.getByText(/mode · 模式/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "运行历史研究" })).toBeEnabled();
+  expect(screen.getAllByText("短期均线周期（short_window）").length).toBe(2);
+  expect(screen.getAllByText("每次交易数量（quantity）").length).toBe(2);
+  expect(screen.getAllByText("是否启用（enabled）").length).toBe(2);
+  expect(screen.getAllByText("运行模式（mode）").length).toBe(2);
+  expect(screen.getByRole("button", { name: "开始研究" })).toBeEnabled();
 });
 
 test("研究运行列表支持状态展示和筛选", async () => {
@@ -169,11 +171,9 @@ test("FAILED运行详情展示脱敏错误和Signal边界", async () => {
 
 test("Signal页面展示Decimal字符串与研究原因", async () => {
   renderRoute(`/signals?strategy_run_id=${runId}`);
-  expect(await screen.findByText("12.34000000")).toBeInTheDocument();
+  expect(await screen.findByText("12.34")).toBeInTheDocument();
   expect(screen.getByText("SMA crossover")).toBeInTheDocument();
-  expect(
-    screen.getByText(/只创建 RiskDecision，不创建订单/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/只创建风控决策，不创建订单/)).toBeInTheDocument();
 });
 
 test("策略目录展示版本和后端参数说明", async () => {
@@ -196,8 +196,10 @@ test("运行详情展示规范化参数", async () => {
 
 test("Signal页面提供研究筛选而没有交易动作", async () => {
   renderRoute("/signals");
-  expect(await screen.findByPlaceholderText("运行 ID")).toBeInTheDocument();
-  expect(screen.getByText("Signal 类型")).toBeInTheDocument();
+  expect(
+    await screen.findByPlaceholderText("策略运行编号"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("信号类型")).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /立即执行|创建Fill/ }),
   ).not.toBeInTheDocument();

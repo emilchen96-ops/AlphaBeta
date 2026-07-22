@@ -132,7 +132,7 @@ export function IntradayMarketDataPage() {
       await refresh();
       void message.success(
         dryRun
-          ? `Dry-run读取 ${result.rows_valid} 根有效Bar`
+          ? `试运行预览读取 ${result.rows_valid} 根有效分钟K线`
           : `导入 ${result.bars_inserted} 根, 聚合新增 ${result.aggregated_bars_created} 根`,
       );
     },
@@ -186,21 +186,21 @@ export function IntradayMarketDataPage() {
       <Alert
         type="warning"
         showIcon
-        message="历史研究数据, 不连接实时WebSocket, 不接MiniQMT"
+        title="历史研究数据，不连接实时 WebSocket，不接 MiniQMT"
         description="Bar时间表示区间开始; 数据库存UTC, 页面按Asia/Shanghai理解。BT02与分钟回放代码尚未开发。"
       />
       <Tabs
         items={[
           {
             key: "providers",
-            label: "Provider状态",
+            label: "数据提供方状态",
             children: (
               <Table
                 rowKey="provider_key"
                 pagination={false}
                 dataSource={providers.data?.items ?? []}
                 columns={[
-                  { title: "Provider", dataIndex: "provider_key" },
+                  { title: "数据提供方", dataIndex: "provider_key" },
                   {
                     title: "状态",
                     dataIndex: "health",
@@ -223,17 +223,17 @@ export function IntradayMarketDataPage() {
             label: "导入任务",
             children: (
               <Space
-                direction="vertical"
+                orientation="vertical"
                 size="large"
                 style={{ width: "100%" }}
               >
-                <Card title="确定性Fixture">
+                <Card title="确定性测试数据（Fixture）">
                   <Space wrap>
                     <Checkbox
                       checked={dryRun}
                       onChange={(event) => setDryRun(event.target.checked)}
                     >
-                      Dry-run
+                      试运行预览（Dry-run）
                     </Checkbox>
                     <Button
                       type="primary"
@@ -246,7 +246,7 @@ export function IntradayMarketDataPage() {
                 </Card>
                 <Alert
                   type="info"
-                  message="本地文件通过CLI安全导入; 页面没有无响应的上传按钮"
+                  title="本地文件通过命令行（CLI）安全导入；页面不提供无响应的上传按钮"
                   description="python -m alphadesk_api.cli.intraday import-file --path <file.csv> --source-timezone Asia/Shanghai --aggregate 5m,15m,30m,60m"
                 />
                 <Table
@@ -280,7 +280,7 @@ export function IntradayMarketDataPage() {
             label: "覆盖度",
             children: (
               <Space
-                direction="vertical"
+                orientation="vertical"
                 size="large"
                 style={{ width: "100%" }}
               >
@@ -361,12 +361,12 @@ export function IntradayMarketDataPage() {
             key: "aggregation",
             label: "跨周期聚合",
             children: (
-              <Card title="RAW 1分钟 → RAW 5/15/30/60分钟">
+              <Card title="不复权（RAW）1分钟 → 5/15/30/60分钟">
                 <Space wrap>
                   <Select
                     style={{ width: 260 }}
                     value={effectiveInstrument}
-                    placeholder="选择Fixture标的"
+                    placeholder="选择测试标的"
                     options={instruments.data?.items.map((item) => ({
                       value: item.id,
                       label: `${item.symbol} ${item.name}`,
@@ -437,7 +437,7 @@ export function IntradayMarketDataPage() {
             key: "quality",
             label: "数据质量",
             children: (
-              <Space direction="vertical" style={{ width: "100%" }}>
+              <Space orientation="vertical" style={{ width: "100%" }}>
                 <Space wrap>
                   <Select
                     value={qualityTimeframe}

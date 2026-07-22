@@ -128,21 +128,19 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("扫描器目录展示安全边界和动态参数", async () => {
   renderRoute("/scanners");
-  expect(await screen.findByText("成交量异常放大")).toBeInTheDocument();
+  expect(await screen.findAllByText(/成交量异常筛选/)).not.toHaveLength(0);
   expect(screen.getByText(/扫描结果仅为规则筛选结果/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /创建扫描运行/ }));
-  expect(screen.getByText(/volume_window · 历史均量窗口/)).toBeInTheDocument();
-  expect(
-    screen.getByText(/minimum_volume_ratio · 最小成交量倍数/),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "运行历史日线扫描" }),
-  ).toBeEnabled();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.getAllByText(/平均成交量计算周期/)).not.toHaveLength(0);
+  expect(screen.getAllByText(/最低成交量倍数/)).not.toHaveLength(0);
+  expect(screen.getAllByRole("spinbutton").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByRole("button", { name: "开始扫描" })).toBeEnabled();
 });
 
 test("扫描运行列表提供筛选和详情入口", async () => {
   renderRoute("/scan-runs");
-  expect(await screen.findByText("volume_anomaly")).toBeInTheDocument();
+  expect(await screen.findByText(/成交量异常筛选/)).toBeInTheDocument();
   expect(screen.getByText("扫描器筛选")).toBeInTheDocument();
   expect(screen.getByText("状态筛选")).toBeInTheDocument();
   expect(screen.getByText(/当前不是实时扫描/)).toBeInTheDocument();
@@ -150,16 +148,14 @@ test("扫描运行列表提供筛选和详情入口", async () => {
 
 test("扫描详情展示结果、指标和跨页面只读链接", async () => {
   renderRoute(`/scan-runs/${runId}`);
-  expect(await screen.findByText("600000.SSE · 浦发银行")).toBeInTheDocument();
+  expect(await screen.findByText("浦发银行（600000.SH）")).toBeInTheDocument();
   expect(screen.getByText("3.5")).toBeInTheDocument();
   expect(screen.getByText(/"volume_ratio": "3.5"/)).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Instrument 与行情" }),
+    screen.getByRole("button", { name: "标的与行情" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "策略目录" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "研究 Signal" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "研究信号" })).toBeInTheDocument();
 });
 
 test.each(["/scanners", "/scan-runs", `/scan-runs/${runId}`])(

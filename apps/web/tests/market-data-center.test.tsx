@@ -271,7 +271,7 @@ test("数据中心展示真实后端五区、覆盖不足和安全边界", async
   expect(await screen.findByText("历史行情数据中心")).toBeInTheDocument();
   expect(screen.getByText("1. 数据总览")).toBeInTheDocument();
   expect(screen.getByText("2. 市场参考数据与价格语义")).toBeInTheDocument();
-  expect(screen.getByText("3. Universe 覆盖情况")).toBeInTheDocument();
+  expect(screen.getByText("3. 股票池（Universe）覆盖情况")).toBeInTheDocument();
   expect(screen.getByText("4. 同步运行与每日更新")).toBeInTheDocument();
   expect(screen.getByText("5. 数据质量")).toBeInTheDocument();
   expect(screen.getByText("6. 功能可用性")).toBeInTheDocument();
@@ -286,9 +286,11 @@ test("数据中心展示真实后端五区、覆盖不足和安全边界", async
   ).not.toBeInTheDocument();
 }, 30_000);
 
-test("dry-run 与实际更新提交受保护并准确显示部分失败", async () => {
+test("试运行预览与实际更新提交受保护并准确显示部分失败", async () => {
   renderRoute("/market-data-center");
-  const dryRun = await screen.findByRole("button", { name: "Dry-run 预览" });
+  const dryRun = await screen.findByRole("button", {
+    name: "试运行预览（Dry-run）",
+  });
   fireEvent.click(dryRun);
   expect(await screen.findByText("更新预览")).toBeInTheDocument();
   const calls = vi.mocked(fetch).mock.calls;
@@ -304,7 +306,7 @@ test("dry-run 与实际更新提交受保护并准确显示部分失败", async 
   expect(screen.getByText(/失败 1，新增 1/)).toBeInTheDocument();
 }, 35_000);
 
-test("质量检查与 Issue type 筛选请求均由后端驱动", async () => {
+test("质量检查与问题类型筛选请求均由后端驱动", async () => {
   const user = userEvent.setup();
   renderRoute("/market-data-center");
   await user.click(
@@ -321,7 +323,7 @@ test("质量检查与 Issue type 筛选请求均由后端驱动", async () => {
         ),
     ).toBe(true),
   );
-  fireEvent.change(screen.getByPlaceholderText("Issue type"), {
+  fireEvent.change(screen.getByPlaceholderText("问题类型"), {
     target: { value: "STALE_DATA" },
   });
   await waitFor(() =>

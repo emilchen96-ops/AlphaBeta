@@ -49,6 +49,7 @@ import type {
   QualitySeverity,
   ReadinessCapability,
 } from "../types/market";
+import { displayEnum, formatDateTime, shortId } from "../utils/display";
 
 const readinessColors: Record<string, string> = {
   READY: "success",
@@ -76,7 +77,7 @@ function count(metadata: Record<string, unknown>, key: string) {
 
 function operationLabel(metadata: Record<string, unknown>) {
   const value = metadata.operation;
-  return typeof value === "string" ? value : "HISTORICAL_SYNC";
+  return displayEnum(typeof value === "string" ? value : "HISTORICAL_SYNC");
 }
 
 export function MarketDataCenterPage() {
@@ -165,7 +166,7 @@ export function MarketDataCenterPage() {
       setSelectedQualityRun(result.run.id);
       await refreshAll();
       void message.success(
-        `质量检查完成：ERROR ${result.run.error_count}，WARNING ${result.run.warning_count}`,
+        `质量检查完成：错误 ${result.run.error_count}，警告 ${result.run.warning_count}`,
       );
     },
     onError: (error: Error) => void message.error(error.message),
@@ -240,31 +241,31 @@ export function MarketDataCenterPage() {
           column={{ xs: 1, md: 3 }}
           style={{ marginTop: 16 }}
         >
-          <Descriptions.Item label="Provider">
+          <Descriptions.Item label="数据提供方（Provider）">
             {overview.data?.provider ?? "—"}
           </Descriptions.Item>
           <Descriptions.Item label="周期 / 复权">
             {overview.data
-              ? `${overview.data.timeframe} / ${overview.data.adjustment_type}`
+              ? `${displayEnum(overview.data.timeframe)} / ${displayEnum(overview.data.adjustment_type)}`
               : "—"}
           </Descriptions.Item>
           <Descriptions.Item label="覆盖范围">{`${dateText(overview.data?.earliest_bar ?? null)} — ${dateText(overview.data?.latest_bar ?? null)}`}</Descriptions.Item>
-          <Descriptions.Item label="Scanner">
+          <Descriptions.Item label="条件扫描器">
             <Tag color={overview.data?.scanner_ready ? "success" : "warning"}>
-              {overview.data?.scanner_ready ? "READY" : "PARTIAL / NOT_READY"}
+              {overview.data?.scanner_ready ? "可用" : "部分可用或不可用"}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Strategy">
+          <Descriptions.Item label="策略研究">
             <Tag color={overview.data?.strategy_ready ? "success" : "warning"}>
-              {overview.data?.strategy_ready ? "READY" : "PARTIAL / NOT_READY"}
+              {overview.data?.strategy_ready ? "可用" : "部分可用或不可用"}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="BT01">
+          <Descriptions.Item label="日线回测（BT01）">
             <Tag
               color={overview.data?.backtest_data_ready ? "success" : "warning"}
             >
-              数据 {overview.data?.backtest_data_ready ? "READY" : "NOT_READY"}{" "}
-              · 代码 WORKING
+              数据{overview.data?.backtest_data_ready ? "可用" : "不可用"} ·
+              功能已实现
             </Tag>
           </Descriptions.Item>
         </Descriptions>
@@ -274,8 +275,8 @@ export function MarketDataCenterPage() {
         <Alert
           showIcon
           type="info"
-          title="RAW 是成交、Fill、费用与账本的权威价格"
-          description="QFQ 仅供技术指标、趋势策略和长期研究使用；涨跌停识别与模拟成交始终读取 RAW。"
+          title="不复权价格（RAW）是成交、成交记录（Fill）、费用与账本的权威价格"
+          description="前复权价格（QFQ）仅供技术指标、趋势策略和长期研究使用；涨跌停识别与模拟成交始终读取不复权价格。"
           style={{ marginBottom: 16 }}
         />
         <Flex wrap gap={12} align="center" style={{ marginBottom: 16 }}>
@@ -283,10 +284,11 @@ export function MarketDataCenterPage() {
             checked={referenceDryRun}
             onChange={(event) => setReferenceDryRun(event.target.checked)}
           >
-            Dry-run（不写数据库）
+            试运行预览（Dry-run，不写数据库）
           </Checkbox>
           <Typography.Text type="secondary">
-            Provider：Fixture（离线、确定性）；Tushare 未配置时不会联网。
+            数据提供方：测试数据（Fixture，离线且结果确定）；Tushare
+            未配置时不会联网。
           </Typography.Text>
         </Flex>
         <Tabs
@@ -318,9 +320,7 @@ export function MarketDataCenterPage() {
                           : "warning"
                       }
                     >
-                      {referenceStatus.data?.calendar_ready
-                        ? "READY"
-                        : "MISSING"}
+                      {referenceStatus.data?.calendar_ready ? "可用" : "缺失"}
                     </Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="操作">
@@ -348,7 +348,7 @@ export function MarketDataCenterPage() {
                   <Descriptions.Item label="最新因子日期">
                     {referenceStatus.data?.latest_factor_date ?? "—"}
                   </Descriptions.Item>
-                  <Descriptions.Item label="QFQ 可用股票">
+                  <Descriptions.Item label="前复权（QFQ）可用股票">
                     {referenceStatus.data?.qfq_ready_instruments ?? 0}
                   </Descriptions.Item>
                   <Descriptions.Item label="状态">
@@ -360,8 +360,8 @@ export function MarketDataCenterPage() {
                       }
                     >
                       {referenceStatus.data?.adjusted_price_ready
-                        ? "READY"
-                        : "MISSING"}
+                        ? "可用"
+                        : "缺失"}
                     </Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="操作">
@@ -405,7 +405,7 @@ export function MarketDataCenterPage() {
             },
             {
               key: "lifecycle",
-              label: "Instrument 生命周期",
+              label: "标的生命周期（Instrument）",
               children: (
                 <Descriptions size="small" column={{ xs: 1, md: 3 }}>
                   <Descriptions.Item label="生命周期事件">
@@ -432,25 +432,31 @@ export function MarketDataCenterPage() {
             },
             {
               key: "readiness",
-              label: "语义与 Readiness",
+              label: "数据语义与可用性（Readiness）",
               children: (
                 <Space orientation="vertical" style={{ width: "100%" }}>
                   <Space wrap>
                     {[
-                      ["RAW", referenceStatus.data?.raw_price_ready],
-                      ["QFQ", referenceStatus.data?.adjusted_price_ready],
-                      ["Calendar", referenceStatus.data?.calendar_ready],
-                      ["Suspension", referenceStatus.data?.suspension_ready],
-                      ["Scanner", referenceStatus.data?.scanner_ready],
-                      ["Strategy", referenceStatus.data?.strategy_ready],
-                      ["Backtest", referenceStatus.data?.backtest_ready],
-                      ["Replay", referenceStatus.data?.replay_ready],
+                      [
+                        "不复权价格（RAW）",
+                        referenceStatus.data?.raw_price_ready,
+                      ],
+                      [
+                        "前复权价格（QFQ）",
+                        referenceStatus.data?.adjusted_price_ready,
+                      ],
+                      ["交易日历", referenceStatus.data?.calendar_ready],
+                      ["停复牌数据", referenceStatus.data?.suspension_ready],
+                      ["条件扫描", referenceStatus.data?.scanner_ready],
+                      ["策略研究", referenceStatus.data?.strategy_ready],
+                      ["日线回测", referenceStatus.data?.backtest_ready],
+                      ["行情回放", referenceStatus.data?.replay_ready],
                     ].map(([label, ready]) => (
                       <Tag
                         key={String(label)}
                         color={ready ? "success" : "warning"}
                       >
-                        {String(label)} {ready ? "READY" : "NOT READY"}
+                        {String(label)}：{ready ? "可用" : "不可用"}
                       </Tag>
                     ))}
                   </Space>
@@ -469,9 +475,9 @@ export function MarketDataCenterPage() {
         />
       </Card>
 
-      <Card title="3. Universe 覆盖情况" style={{ marginTop: 16 }}>
+      <Card title="3. 股票池（Universe）覆盖情况" style={{ marginTop: 16 }}>
         <Descriptions size="small" column={{ xs: 1, md: 4 }}>
-          <Descriptions.Item label="Universe">
+          <Descriptions.Item label="股票池（Universe）">
             {coverage.data?.name ?? "research"}
           </Descriptions.Item>
           <Descriptions.Item label="有行情">
@@ -501,12 +507,12 @@ export function MarketDataCenterPage() {
             { title: "最早", render: (_, item) => dateText(item.earliest_bar) },
             { title: "最新", render: (_, item) => dateText(item.latest_bar) },
             {
-              title: "Mapping",
+              title: "标的映射",
               render: (_, item) => (
                 <Tag
                   color={item.mapping_status === "MAPPED" ? "success" : "error"}
                 >
-                  {item.mapping_status}
+                  {item.mapping_status === "MAPPED" ? "已映射" : "未映射"}
                 </Tag>
               ),
             },
@@ -556,7 +562,7 @@ export function MarketDataCenterPage() {
             disabled={dailyUpdate.isPending}
             onClick={() => dailyUpdate.mutate(true)}
           >
-            Dry-run 预览
+            试运行预览（Dry-run）
           </Button>
           <Button
             type="primary"
@@ -601,9 +607,9 @@ export function MarketDataCenterPage() {
           scroll={{ x: 1300 }}
           columns={[
             {
-              title: "Run",
+              title: "运行记录",
               render: (_, item) => (
-                <Typography.Text code>{item.id.slice(0, 8)}</Typography.Text>
+                <Typography.Text code>{shortId(item.id)}</Typography.Text>
               ),
             },
             {
@@ -648,14 +654,13 @@ export function MarketDataCenterPage() {
               render: (_, item) =>
                 count(item.metadata, "failed_instrument_count"),
             },
-            { title: "fetched", dataIndex: "total_received" },
-            { title: "inserted", dataIndex: "total_inserted" },
-            { title: "updated", dataIndex: "total_updated" },
-            { title: "invalid", dataIndex: "total_rejected" },
+            { title: "获取数量", dataIndex: "total_received" },
+            { title: "新增数量", dataIndex: "total_inserted" },
+            { title: "更新数量", dataIndex: "total_updated" },
+            { title: "无效数量", dataIndex: "total_rejected" },
             {
               title: "开始",
-              render: (_, item) =>
-                new Date(item.started_at).toLocaleString("zh-CN"),
+              render: (_, item) => formatDateTime(item.started_at),
             },
             { title: "错误", dataIndex: "error_summary" },
           ]}
@@ -675,17 +680,17 @@ export function MarketDataCenterPage() {
           </Button>
           <Select
             allowClear
-            placeholder="Severity"
+            placeholder="严重程度"
             value={severity}
             onChange={setSeverity}
             style={{ width: 140 }}
             options={["ERROR", "WARNING", "INFO"].map((value) => ({
               value,
-              label: value,
+              label: displayEnum(value),
             }))}
           />
           <Input.Search
-            placeholder="Issue type"
+            placeholder="问题类型"
             allowClear
             value={issueType}
             onChange={(event) => setIssueType(event.target.value)}
@@ -700,17 +705,17 @@ export function MarketDataCenterPage() {
           onRow={(item) => ({ onClick: () => setSelectedQualityRun(item.id) })}
           columns={[
             {
-              title: "Run",
+              title: "检查记录",
               render: (_, item) => (
-                <Typography.Text code>{item.id.slice(0, 8)}</Typography.Text>
+                <Typography.Text code>{shortId(item.id)}</Typography.Text>
               ),
             },
             { title: "状态", dataIndex: "status" },
             { title: "股票", dataIndex: "instruments_checked" },
             { title: "K线", dataIndex: "bars_checked" },
-            { title: "ERROR", dataIndex: "error_count" },
-            { title: "WARNING", dataIndex: "warning_count" },
-            { title: "INFO", dataIndex: "info_count" },
+            { title: "错误", dataIndex: "error_count" },
+            { title: "警告", dataIndex: "warning_count" },
+            { title: "提示", dataIndex: "info_count" },
           ]}
         />
         {qualityDetail.data?.integrity_mismatches.length ? (
@@ -729,7 +734,7 @@ export function MarketDataCenterPage() {
           scroll={{ x: 1100 }}
           columns={[
             {
-              title: "Severity",
+              title: "严重程度",
               render: (_, item) => (
                 <Tag
                   color={
@@ -740,12 +745,18 @@ export function MarketDataCenterPage() {
                         : "default"
                   }
                 >
-                  {item.severity}
+                  {displayEnum(item.severity)}
                 </Tag>
               ),
             },
-            { title: "Issue", dataIndex: "issue_type" },
-            { title: "Instrument", dataIndex: "instrument_id" },
+            {
+              title: "问题类型",
+              render: (_, item) => displayEnum(item.issue_type),
+            },
+            {
+              title: "内部标的编号",
+              render: (_, item) => shortId(item.instrument_id),
+            },
             {
               title: "时间范围",
               render: (_, item) =>
@@ -778,7 +789,7 @@ export function MarketDataCenterPage() {
                     ) : undefined
                   }
                 >
-                  {item.status}
+                  {displayEnum(item.status)}
                 </Tag>
               ),
             },
@@ -802,14 +813,14 @@ export function MarketDataCenterPage() {
                     type="link"
                     onClick={() => void navigate("/scanners")}
                   >
-                    Scanner
+                    条件扫描
                   </Button>
                 ) : item.capability_key.startsWith("strategy") ? (
                   <Button
                     type="link"
                     onClick={() => void navigate("/strategies")}
                   >
-                    Strategy
+                    策略研究
                   </Button>
                 ) : item.capability_key === "backtest_daily" ? (
                   <Button

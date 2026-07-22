@@ -22,6 +22,12 @@ import { createStrategyRun, getStrategyCatalog } from "../api/strategies";
 import { systemCapabilitiesQueryOptions } from "../api/system";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { StrategyParameterDefinition } from "../types/strategies";
+import {
+  displayEnum,
+  displayParameter,
+  displayStrategy,
+  formatInstrument,
+} from "../utils/display";
 
 interface RunFormValues {
   strategy_key: string;
@@ -131,13 +137,13 @@ export function StrategiesPage() {
     <section>
       <PageHeader
         title="策略目录"
-        description="选择受信任策略与历史数据，生成可审计的研究 Signal。"
+        description="选择受信任策略与历史数据，生成可审计的研究信号（Signal）。"
       />
       <Alert
         showIcon
         type="warning"
-        title="Signal 是研究输出，不是订单"
-        description="不会创建 Order、调用风控或 Broker，也不会修改资金和持仓。reference_price 仅供参考；当前不是绩效回测，也没有实时策略调度。"
+        title="研究信号（Signal）是研究输出，不是订单"
+        description="不会创建订单、调用风控或券商接口（Broker），也不会修改资金和持仓。参考价格（reference_price）仅供研究；当前不是绩效回测，也没有实时策略调度。"
       />
       {unavailable ? (
         <Alert
@@ -156,7 +162,7 @@ export function StrategiesPage() {
         {catalog.data?.map((item) => (
           <Card
             key={item.strategy_key}
-            title={item.display_name}
+            title={displayStrategy(item.strategy_key)}
             extra={
               <Space wrap>
                 <Button
@@ -182,17 +188,17 @@ export function StrategiesPage() {
           >
             <Typography.Paragraph>{item.description}</Typography.Paragraph>
             <Space wrap>
-              <Tag>{item.strategy_key}</Tag>
+              <Tag>{displayStrategy(item.strategy_key)}</Tag>
               <Tag color="blue">v{item.version}</Tag>
               {item.supported_timeframes.map((value) => (
-                <Tag key={value}>{value}</Tag>
+                <Tag key={value}>{displayEnum(value)}</Tag>
               ))}
             </Space>
             <Typography.Title level={5}>参数定义</Typography.Title>
             {item.parameters.map((parameter) => (
               <Typography.Paragraph key={parameter.name}>
-                <code>{parameter.name}</code> · {parameter.type} ·{" "}
-                {parameter.description}
+                <strong>{displayParameter(parameter.name)}</strong> ·{" "}
+                {displayEnum(parameter.type)} · {parameter.description}
               </Typography.Paragraph>
             ))}
           </Card>
@@ -200,7 +206,7 @@ export function StrategiesPage() {
       </Space>
       {selected ? (
         <Card
-          title={`创建 ${selected.display_name} 历史研究运行`}
+          title={`创建${displayStrategy(selected.strategy_key)}历史研究运行`}
           style={{ marginTop: 16 }}
         >
           <Form form={form} layout="vertical">
@@ -219,7 +225,7 @@ export function StrategiesPage() {
                 onSearch={setInstrumentSearch}
                 options={instruments.data?.items.map((item) => ({
                   value: item.id,
-                  label: `${item.symbol}.${item.exchange} · ${item.name}`,
+                  label: formatInstrument(item),
                 }))}
               />
             </Form.Item>
@@ -237,15 +243,17 @@ export function StrategiesPage() {
             <Form.Item
               name="price_adjustment_mode"
               label="策略价格模式"
-              tooltip="QFQ 只用于指标和 Signal 参考价；不会作为成交或账本价格。"
+              tooltip="前复权（QFQ）只用于指标和研究信号参考价；不会作为成交或账本价格。"
               rules={[{ required: true }]}
             >
               <Select
                 options={[
-                  { value: "RAW", label: "RAW（未复权，兼容模式）" },
+                  { value: "RAW", label: "不复权（RAW，兼容模式）" },
                   {
                     value: "QFQ",
-                    label: qfqReady ? "QFQ（前复权）" : "QFQ（数据未就绪）",
+                    label: qfqReady
+                      ? "前复权（QFQ）"
+                      : "前复权（QFQ，数据未就绪）",
                     disabled: !qfqReady,
                   },
                 ]}
@@ -271,7 +279,8 @@ export function StrategiesPage() {
               <Form.Item
                 key={definition.name}
                 name={["parameters", definition.name]}
-                label={`${definition.name} · ${definition.description}`}
+                label={displayParameter(definition.name)}
+                tooltip={definition.description}
                 valuePropName={
                   definition.type === "boolean" ? "checked" : "value"
                 }
@@ -280,20 +289,13 @@ export function StrategiesPage() {
                 <ParameterInput definition={definition} />
               </Form.Item>
             ))}
-            <Form.Item
-              name="idempotency_key"
-              label="幂等键"
-              rules={[{ required: true }]}
-            >
-              <Input />
-            </Form.Item>
             <Button
               type="primary"
               loading={mutation.isPending}
               disabled={unavailable || mutation.isPending}
               onClick={() => void submit()}
             >
-              运行历史研究
+              开始研究
             </Button>
           </Form>
         </Card>

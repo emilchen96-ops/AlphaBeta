@@ -5,7 +5,12 @@ import {
   PlusOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Alert,
   App,
@@ -43,6 +48,7 @@ import {
   valueAccount,
 } from "../api/accounts";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { getInstrument } from "../api/market";
 import { useMarketQuotes } from "../hooks/useMarketQuotes";
 import type {
   AccountSnapshot,
@@ -52,16 +58,15 @@ import type {
   Reconciliation,
   ValuationStatus,
 } from "../types/accounting";
-
-function decimal(value: string | null | undefined, digits = 2) {
-  if (value == null) return "—";
-  const [integer, fraction = ""] = value.split(".");
-  const sign = integer.startsWith("-") ? "-" : "";
-  const grouped = integer
-    .replace("-", "")
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${sign}${grouped}.${fraction.padEnd(digits, "0").slice(0, digits)}`;
-}
+import {
+  displayEnum,
+  formatDateTime,
+  formatInstrument,
+  formatMoney,
+  formatPrice,
+  formatQuantity,
+  shortId,
+} from "../utils/display";
 
 const valuationColor: Record<ValuationStatus, string> = {
   COMPLETE: "success",
@@ -93,6 +98,19 @@ export function PortfolioPage() {
   });
   const liveQuotes = useMarketQuotes(
     summary.data?.positions.map((position) => position.instrument_id) ?? [],
+  );
+  const positionInstrumentQueries = useQueries({
+    queries: (summary.data?.positions ?? []).map((position) => ({
+      queryKey: ["instrument", position.instrument_id],
+      queryFn: () => getInstrument(position.instrument_id),
+      staleTime: 5 * 60_000,
+    })),
+  });
+  const positionInstruments = new Map(
+    positionInstrumentQueries
+      .map((query) => query.data)
+      .filter((item) => item !== undefined)
+      .map((item) => [item.id, item]),
   );
   useEffect(() => {
     if (Object.keys(liveQuotes.quotes).length > 0) {
@@ -216,8 +234,8 @@ export function PortfolioPage() {
           <Alert
             type="info"
             showIcon
-            title={`盘中估值：${liveSummary.data?.status ?? "UNAVAILABLE"}`}
-            description={`实时链路 ${liveQuotes.status}；免费行情仅供研究，不用于交易决策。盘中总权益 ${decimal(liveSummary.data?.total_equity)}。`}
+            title={`盘中估值：${displayEnum(liveSummary.data?.status ?? "UNAVAILABLE")}`}
+            description={`实时链路：${displayEnum(liveQuotes.status.toUpperCase())}；免费行情仅供研究，不用于交易决策。盘中总权益 ${formatMoney(liveSummary.data?.total_equity)}。`}
           />
           <Flex
             justify="space-between"
@@ -234,10 +252,10 @@ export function PortfolioPage() {
                     : "warning"
                 }
               >
-                {summary.data.account.status}
+                {displayEnum(summary.data.account.status)}
               </Tag>
               <Typography.Text type="secondary">
-                结算规则：{summary.data.account.settlement_policy}
+                结算规则：{displayEnum(summary.data.account.settlement_policy)}
               </Typography.Text>
             </Space>
             <Space wrap>
@@ -270,7 +288,7 @@ export function PortfolioPage() {
             <Alert
               showIcon
               type="warning"
-              title={`估值状态：${snapshot.valuation_status}`}
+              title={`估值状态：${displayEnum(snapshot.valuation_status)}`}
               description="存在缺失或陈旧行情时，总权益不会被伪装成完整数值。"
             />
           ) : null}
@@ -279,8 +297,7 @@ export function PortfolioPage() {
               <Card>
                 <Statistic
                   title="总权益"
-                  value={decimal(snapshot?.total_equity)}
-                  prefix="¥"
+                  value={formatMoney(snapshot?.total_equity)}
                 />
               </Card>
             </Col>
@@ -288,8 +305,7 @@ export function PortfolioPage() {
               <Card>
                 <Statistic
                   title="可用资金"
-                  value={decimal(balance?.available_cash)}
-                  prefix="¥"
+                  value={formatMoney(balance?.available_cash)}
                 />
               </Card>
             </Col>
@@ -297,8 +313,7 @@ export function PortfolioPage() {
               <Card>
                 <Statistic
                   title="已实现盈亏"
-                  value={decimal(snapshot?.realized_pnl ?? "0")}
-                  prefix="¥"
+                  value={formatMoney(snapshot?.realized_pnl ?? "0")}
                 />
               </Card>
             </Col>
@@ -306,8 +321,7 @@ export function PortfolioPage() {
               <Card>
                 <Statistic
                   title="未实现盈亏"
-                  value={decimal(snapshot?.unrealized_pnl)}
-                  prefix="¥"
+                  value={formatMoney(snapshot?.unrealized_pnl)}
                 />
               </Card>
             </Col>
@@ -326,33 +340,59 @@ export function PortfolioPage() {
                       locale={{ emptyText: "暂无持仓" }}
                       columns={[
                         {
-                          title: "标的 ID",
-                          dataIndex: "instrument_id",
-                          ellipsis: true,
+                          title: "股票名称与代码",
+                          render: (_, item) => {
+                            const instrument = positionInstruments.get(
+                              item.instrument_id,
+                            );
+                            return (
+                              <Typography.Text
+                                title={`内部标的编号：${item.instrument_id}`}
+                              >
+                                {instrument
+                                  ? formatInstrument(instrument)
+                                  : `标的信息加载中（${shortId(item.instrument_id)}）`}
+                              </Typography.Text>
+                            );
+                          },
                         },
-                        { title: "总数量", dataIndex: "total_quantity" },
-                        { title: "可用", dataIndex: "available_quantity" },
-                        { title: "待结算", dataIndex: "unsettled_quantity" },
+                        {
+                          title: "总数量",
+                          dataIndex: "total_quantity",
+                          render: formatQuantity,
+                        },
+                        {
+                          title: "可用",
+                          dataIndex: "available_quantity",
+                          render: formatQuantity,
+                        },
+                        {
+                          title: "待结算",
+                          dataIndex: "unsettled_quantity",
+                          render: formatQuantity,
+                        },
                         {
                           title: "平均成本",
                           dataIndex: "average_cost",
-                          render: (value: string) => decimal(value),
+                          render: (value: string) => formatPrice(value),
                         },
                         {
                           title: "最新价",
                           dataIndex: "last_price",
-                          render: (value: string | null) => decimal(value),
+                          render: (value: string | null) => formatPrice(value),
                         },
                         {
                           title: "市值",
                           dataIndex: "market_value",
-                          render: (value: string | null) => decimal(value),
+                          render: (value: string | null) => formatMoney(value),
                         },
                         {
                           title: "估值",
                           dataIndex: "valuation_status",
                           render: (value: ValuationStatus) => (
-                            <Tag color={valuationColor[value]}>{value}</Tag>
+                            <Tag color={valuationColor[value]}>
+                              {displayEnum(value)}
+                            </Tag>
                           ),
                         },
                       ]}
@@ -369,14 +409,30 @@ export function PortfolioPage() {
                       loading={cashLedger.isLoading}
                       pagination={false}
                       columns={[
-                        { title: "时间", dataIndex: "occurred_at" },
-                        { title: "类型", dataIndex: "entry_type" },
-                        { title: "变动", dataIndex: "total_delta" },
-                        { title: "余额", dataIndex: "total_cash_after" },
+                        {
+                          title: "时间",
+                          dataIndex: "occurred_at",
+                          render: formatDateTime,
+                        },
+                        {
+                          title: "类型",
+                          dataIndex: "entry_type",
+                          render: displayEnum,
+                        },
+                        {
+                          title: "变动",
+                          dataIndex: "total_delta",
+                          render: formatMoney,
+                        },
+                        {
+                          title: "余额",
+                          dataIndex: "total_cash_after",
+                          render: formatMoney,
+                        },
                         {
                           title: "费用",
                           dataIndex: "fee_amount",
-                          render: (value: string | null) => decimal(value),
+                          render: (value: string | null) => formatMoney(value),
                         },
                       ]}
                     />
@@ -392,13 +448,30 @@ export function PortfolioPage() {
                       loading={positionLedger.isLoading}
                       pagination={false}
                       columns={[
-                        { title: "时间", dataIndex: "occurred_at" },
-                        { title: "类型", dataIndex: "entry_type" },
-                        { title: "数量变动", dataIndex: "quantity_delta" },
-                        { title: "成本变动", dataIndex: "cost_basis_delta" },
+                        {
+                          title: "时间",
+                          dataIndex: "occurred_at",
+                          render: formatDateTime,
+                        },
+                        {
+                          title: "类型",
+                          dataIndex: "entry_type",
+                          render: displayEnum,
+                        },
+                        {
+                          title: "数量变动",
+                          dataIndex: "quantity_delta",
+                          render: formatQuantity,
+                        },
+                        {
+                          title: "成本变动",
+                          dataIndex: "cost_basis_delta",
+                          render: formatMoney,
+                        },
                         {
                           title: "已实现变动",
                           dataIndex: "realized_pnl_delta",
+                          render: formatMoney,
                         },
                       ]}
                     />
@@ -414,12 +487,20 @@ export function PortfolioPage() {
                       loading={snapshots.isLoading}
                       pagination={false}
                       columns={[
-                        { title: "时间", dataIndex: "as_of" },
-                        { title: "状态", dataIndex: "valuation_status" },
+                        {
+                          title: "时间",
+                          dataIndex: "as_of",
+                          render: formatDateTime,
+                        },
+                        {
+                          title: "状态",
+                          dataIndex: "valuation_status",
+                          render: displayEnum,
+                        },
                         {
                           title: "总权益",
                           dataIndex: "total_equity",
-                          render: (value: string | null) => decimal(value),
+                          render: (value: string | null) => formatMoney(value),
                         },
                         { title: "已定价", dataIndex: "priced_position_count" },
                         {
@@ -440,7 +521,11 @@ export function PortfolioPage() {
                       loading={reconciliations.isLoading}
                       pagination={false}
                       columns={[
-                        { title: "开始时间", dataIndex: "started_at" },
+                        {
+                          title: "开始时间",
+                          dataIndex: "started_at",
+                          render: formatDateTime,
+                        },
                         {
                           title: "状态",
                           dataIndex: "status",
@@ -448,7 +533,7 @@ export function PortfolioPage() {
                             <Tag
                               color={value === "MATCHED" ? "success" : "error"}
                             >
-                              {value}
+                              {displayEnum(value)}
                             </Tag>
                           ),
                         },

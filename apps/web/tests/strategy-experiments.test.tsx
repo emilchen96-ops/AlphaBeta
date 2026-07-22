@@ -239,7 +239,9 @@ test("加载实验列表并明确区分部分失败状态", async () => {
   renderRoute("/strategy-experiments");
   expect(await screen.findByText("部分组合失败")).toBeInTheDocument();
   expect(screen.getByText("grid_strategy")).toBeInTheDocument();
-  expect(screen.getByText(/Signal 数量只表示触发频率/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/研究信号（Signal）数量只表示触发频率/),
+  ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /买入|交易|执行/ }),
   ).not.toBeInTheDocument();
@@ -256,11 +258,13 @@ test("实验列表提供空状态、策略状态和创建时间筛选", async ()
 
 test("目录预选驱动五类参数网格并显示默认值和组合预览", async () => {
   renderRoute("/strategy-experiments?strategy_key=grid_strategy");
-  expect(await screen.findByText("window · integer")).toBeInTheDocument();
-  expect(screen.getByText("threshold · decimal")).toBeInTheDocument();
-  expect(screen.getByText("enabled · boolean")).toBeInTheDocument();
-  expect(screen.getByText("mode · enum")).toBeInTheDocument();
-  expect(screen.getByText("label · string")).toBeInTheDocument();
+  expect(
+    await screen.findByText("观察周期（window） · 整数"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("阈值（threshold） · 小数")).toBeInTheDocument();
+  expect(screen.getByText("是否启用（enabled） · 是/否")).toBeInTheDocument();
+  expect(screen.getByText("运行模式（mode） · 选项")).toBeInTheDocument();
+  expect(screen.getByText("标签（label） · 文本")).toBeInTheDocument();
   expect(screen.getByText(/默认值：0.10000000/)).toBeInTheDocument();
   expect(screen.getByText("组合数量预览：1")).toBeInTheDocument();
 });
@@ -293,14 +297,14 @@ test("详情展示组合、Signal对比、跳转与保留精度的重合矩阵",
     await screen.findByText(/threshold=\[0\.10000000/),
   ).toBeInTheDocument();
   expect(screen.getAllByText("组合运行失败").length).toBeGreaterThan(0);
-  expect(screen.getByText("BUY")).toBeInTheDocument();
-  expect(screen.getByText("SELL")).toBeInTheDocument();
+  expect(screen.getByText("买入信号")).toBeInTheDocument();
+  expect(screen.getByText("卖出信号")).toBeInTheDocument();
   expect(screen.getAllByText("0.333333333333333333").length).toBe(2);
   expect(screen.getByRole("link", { name: "运行详情" })).toHaveAttribute(
     "href",
     `/strategy-runs/${runId}`,
   );
-  expect(screen.getByRole("link", { name: "Signal" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "研究信号" })).toHaveAttribute(
     "href",
     `/signals?strategy_run_id=${runId}`,
   );
@@ -312,7 +316,7 @@ test("同步创建期间按钮禁用以防重复提交", async () => {
     resolvePost = resolve;
   });
   renderRoute("/strategy-experiments?strategy_key=grid_strategy");
-  await screen.findByText("window · integer");
+  await screen.findByText("观察周期（window） · 整数");
   const instrumentSelect = screen.getByLabelText("标的");
   fireEvent.mouseDown(instrumentSelect);
   fireEvent.click(await screen.findByText(/600000\.SSE/));

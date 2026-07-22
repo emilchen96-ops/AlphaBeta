@@ -8,6 +8,7 @@ import {
   Input,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -24,6 +25,16 @@ import {
 } from "../api/risk";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { RiskDecision, RiskRuleResult } from "../types/risk";
+import {
+  displayEnum,
+  formatDateTime,
+  formatInstrument,
+  formatMoney,
+  formatPercentRatio,
+  formatQuantity,
+  isTestData,
+  shortId,
+} from "../utils/display";
 
 const labels = {
   ALLOW: "风控通过",
@@ -74,6 +85,7 @@ export function RiskDecisionsPage() {
   const [evaluatedFrom, setEvaluatedFrom] = useState("");
   const [evaluatedTo, setEvaluatedTo] = useState("");
   const [hasOrder, setHasOrder] = useState<boolean>();
+  const [showTestData, setShowTestData] = useState(false);
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const instruments = useQuery({
     queryKey: ["risk-instruments", instrumentSearch],
@@ -113,7 +125,7 @@ export function RiskDecisionsPage() {
     <section>
       <PageHeader
         title="风控决策"
-        description="查看人工订单与研究 Signal 的只读风控审计结果。"
+        description="查看人工订单与研究信号（Signal）的只读风控审计结果。"
       />
       <Alert
         showIcon
@@ -142,9 +154,14 @@ export function RiskDecisionsPage() {
             aria-label="来源类型"
             placeholder="来源类型"
             style={{ width: 180 }}
-            options={["MANUAL_ORDER", "STRATEGY_SIGNAL", "SYSTEM"].map(
-              (value) => ({ value }),
-            )}
+            options={[
+              "MANUAL_ORDER",
+              "STRATEGY_SIGNAL",
+              "REPLAY",
+              "BACKTEST",
+              "BROKER_ORDER",
+              "SYSTEM",
+            ].map((value) => ({ value, label: displayEnum(value) }))}
             onChange={(value) => {
               resetPage();
               setSourceType(value as string | undefined);
@@ -174,7 +191,7 @@ export function RiskDecisionsPage() {
             onSearch={setInstrumentSearch}
             options={instruments.data?.items.map((item) => ({
               value: item.id,
-              label: `${item.symbol}.${item.exchange}`,
+              label: formatInstrument(item),
             }))}
             onChange={(value) => {
               resetPage();
@@ -213,6 +230,10 @@ export function RiskDecisionsPage() {
               setHasOrder(value as boolean | undefined);
             }}
           />
+          <Space>
+            <Switch checked={showTestData} onChange={setShowTestData} />
+            <Typography.Text>显示测试数据</Typography.Text>
+          </Space>
         </Space>
         {decisions.isError ? (
           <Alert
@@ -224,7 +245,9 @@ export function RiskDecisionsPage() {
         <Table<RiskDecision>
           rowKey="id"
           loading={decisions.isLoading}
-          dataSource={decisions.data?.items ?? []}
+          dataSource={(decisions.data?.items ?? []).filter(
+            (item) => showTestData || !isTestData(item),
+          )}
           locale={{ emptyText: <Empty description="暂无风控决策" /> }}
           pagination={{
             current: page,
@@ -233,7 +256,14 @@ export function RiskDecisionsPage() {
             onChange: setPage,
           }}
           columns={[
-            { title: "Decision ID", render: (_, item) => item.id.slice(0, 8) },
+            {
+              title: "决策时间",
+              render: (_, item) => formatDateTime(item.evaluated_at),
+            },
+            {
+              title: "股票名称与代码",
+              render: (_, item) => formatInstrument(item.instrument),
+            },
             {
               title: "结果",
               render: (_, item) => (
@@ -242,42 +272,34 @@ export function RiskDecisionsPage() {
             },
             {
               title: "来源",
-              render: (_, item) =>
-                `${item.source_type} · ${item.source_id?.slice(0, 8) ?? "—"}`,
+              render: (_, item) => displayEnum(item.source_type),
             },
             {
               title: "账户",
               render: (_, item) =>
-                item.account.name ??
-                item.account.code ??
-                item.account_id.slice(0, 8),
+                item.account.name ?? item.account.code ?? "未知账户",
             },
+            { title: "方向", dataIndex: "side", render: displayEnum },
             {
-              title: "标的",
-              render: (_, item) =>
-                `${item.instrument.symbol ?? "—"}.${item.instrument.exchange ?? ""}`,
+              title: "数量",
+              render: (_, item) => formatQuantity(item.quantity),
             },
-            { title: "方向", dataIndex: "side" },
-            { title: "数量", render: (_, item) => exact(item.quantity) },
             {
               title: "估算金额",
-              render: (_, item) => exact(item.estimated_notional),
+              render: (_, item) => formatMoney(item.estimated_notional),
             },
             {
-              title: "预计单标的权重",
-              render: (_, item) => exact(item.projected_instrument_weight),
+              title: "主要原因",
+              render: (_, item) =>
+                item.rule_results.find((rule) => rule.decision !== "ALLOW")
+                  ?.message ??
+                item.rule_results[0]?.message ??
+                item.warnings[0] ??
+                "未触发限制",
             },
             {
-              title: "预计总暴露",
-              render: (_, item) => exact(item.projected_total_exposure),
-            },
-            {
-              title: "关联 Order",
-              render: (_, item) => item.order_id?.slice(0, 8) ?? "—",
-            },
-            {
-              title: "评估时间",
-              render: (_, item) => new Date(item.evaluated_at).toLocaleString(),
+              title: "关联订单",
+              render: (_, item) => (item.order_id ? "已创建" : "未创建"),
             },
             {
               title: "操作",
@@ -291,7 +313,6 @@ export function RiskDecisionsPage() {
               ),
             },
           ]}
-          scroll={{ x: 1500 }}
         />
       </Card>
     </section>
@@ -318,7 +339,10 @@ export function RiskDecisionDetailPage() {
   const item = detail.data;
   return (
     <section>
-      <PageHeader title="风控决策详情" description={`Decision ${item.id}`} />
+      <PageHeader
+        title="风控决策详情"
+        description="查看不可修改的风控请求、规则和审计事实。"
+      />
       <Alert
         showIcon
         type={
@@ -339,7 +363,21 @@ export function RiskDecisionDetailPage() {
           {
             key: "source",
             label: "来源",
-            children: `${item.source_type} · ${item.source_id ?? "—"}`,
+            children: (
+              <Space orientation="vertical" size={0}>
+                <Typography.Text>
+                  {displayEnum(item.source_type)}
+                </Typography.Text>
+                {item.source_id ? (
+                  <Typography.Text
+                    type="secondary"
+                    copyable={{ text: item.source_id }}
+                  >
+                    关联来源编号：{shortId(item.source_id)}
+                  </Typography.Text>
+                ) : null}
+              </Space>
+            ),
           },
           {
             key: "account",
@@ -349,18 +387,22 @@ export function RiskDecisionDetailPage() {
           {
             key: "instrument",
             label: "标的",
-            children: `${item.instrument.symbol ?? "—"}.${item.instrument.exchange ?? ""}`,
+            children: formatInstrument(item.instrument),
           },
           {
             key: "side",
             label: "方向 / 类型",
-            children: `${item.side ?? "—"} / ${item.order_type ?? "—"}`,
+            children: `${displayEnum(item.side)} / ${displayEnum(item.order_type)}`,
           },
-          { key: "quantity", label: "数量", children: exact(item.quantity) },
+          {
+            key: "quantity",
+            label: "数量",
+            children: formatQuantity(item.quantity),
+          },
           {
             key: "notional",
             label: "估算金额",
-            children: exact(item.estimated_notional),
+            children: formatMoney(item.estimated_notional),
           },
         ]}
       />
@@ -409,27 +451,25 @@ export function RiskDecisionDetailPage() {
           {
             key: "notional",
             label: "估算金额",
-            children: exact(item.estimated_notional),
+            children: formatMoney(item.estimated_notional),
           },
           {
             key: "weight",
             label: "预计单标的权重",
-            children: exact(item.projected_instrument_weight),
+            children: formatPercentRatio(item.projected_instrument_weight),
           },
           {
             key: "exposure",
             label: "预计总暴露",
-            children: exact(item.projected_total_exposure),
+            children: formatPercentRatio(item.projected_total_exposure),
           },
         ]}
       />
       <Typography.Title level={4}>8. 关联订单</Typography.Title>
       {item.order_id ? (
-        <Link to={`/orders?order_id=${item.order_id}`}>
-          查看 Order {item.order_id}
-        </Link>
+        <Link to={`/orders?order_id=${item.order_id}`}>查看关联订单</Link>
       ) : (
-        <Typography.Text type="secondary">未创建 Order</Typography.Text>
+        <Typography.Text type="secondary">未创建订单</Typography.Text>
       )}
       <Typography.Title level={4}>9. 审计信息</Typography.Title>
       <Descriptions
@@ -437,18 +477,37 @@ export function RiskDecisionDetailPage() {
         items={[
           {
             key: "correlation",
-            label: "Correlation ID",
-            children: item.correlation_id,
+            label: "请求链路编号（Correlation ID）",
+            children: (
+              <Typography.Text copyable={{ text: item.correlation_id }}>
+                {shortId(item.correlation_id)}
+              </Typography.Text>
+            ),
           },
           {
             key: "evaluated",
             label: "评估时间",
-            children: new Date(item.evaluated_at).toLocaleString(),
+            children: formatDateTime(item.evaluated_at),
           },
           {
             key: "warnings",
-            label: "Warnings",
+            label: "提示信息",
             children: item.warnings.join("、") || "无",
+          },
+        ]}
+      />
+      <Descriptions
+        bordered
+        style={{ marginTop: 16 }}
+        items={[
+          {
+            key: "decision-id",
+            label: "风控决策编号",
+            children: (
+              <Typography.Text copyable={{ text: item.id }}>
+                {shortId(item.id)}
+              </Typography.Text>
+            ),
           },
         ]}
       />
@@ -486,7 +545,7 @@ export function RiskLimitsPage() {
           style={{ marginTop: 16 }}
           showIcon
           type="error"
-          title="Kill Switch 已开启"
+          title="紧急停止开关（Kill Switch）已开启"
           description="当前配置将拒绝新的订单风险请求。此页面不提供关闭按钮。"
         />
       ) : null}
@@ -504,12 +563,16 @@ export function RiskLimitsPage() {
               {
                 key: "weight",
                 label: "单标的最大权重",
-                children: limits.data.max_instrument_weight ?? "未配置限制",
+                children: limits.data.max_instrument_weight
+                  ? formatPercentRatio(limits.data.max_instrument_weight)
+                  : "未配置限制",
               },
               {
                 key: "exposure",
                 label: "最大总暴露",
-                children: limits.data.max_total_exposure ?? "未配置限制",
+                children: limits.data.max_total_exposure
+                  ? formatPercentRatio(limits.data.max_total_exposure)
+                  : "未配置限制",
               },
               {
                 key: "frequency",
@@ -535,7 +598,7 @@ export function RiskLimitsPage() {
               },
               {
                 key: "kill",
-                label: "Kill Switch",
+                label: "紧急停止开关（Kill Switch）",
                 children: limits.data.kill_switch_enabled ? "已开启" : "未开启",
               },
               {
@@ -546,7 +609,7 @@ export function RiskLimitsPage() {
               {
                 key: "effective",
                 label: "生效时间",
-                children: new Date(limits.data.effective_at).toLocaleString(),
+                children: formatDateTime(limits.data.effective_at),
               },
             ]}
           />

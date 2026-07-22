@@ -2,7 +2,12 @@ import {
   ExperimentOutlined,
   SafetyCertificateOutlined,
 } from "@ant-design/icons";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -18,6 +23,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -42,11 +48,12 @@ import {
   listBacktests,
 } from "../api/backtests";
 import { ApiError } from "../api/client";
-import { getInstruments } from "../api/market";
+import { getInstrument, getInstruments } from "../api/market";
 import { getStrategyCatalog } from "../api/strategies";
 import { BacktestLineChart } from "../components/BacktestCharts/BacktestCharts";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
+  BacktestEquityPoint,
   BacktestFill,
   BacktestMetrics,
   BacktestOrder,
@@ -58,6 +65,22 @@ import type {
   CreateBacktestRequest,
 } from "../types/backtests";
 import type { StrategyParameterDefinition } from "../types/strategies";
+import type { Instrument } from "../types/market";
+import {
+  displayEnum,
+  displayParameter,
+  displayStrategy,
+  formatDateTime,
+  formatInstrument,
+  formatMoney,
+  formatNumber,
+  formatPercentRatio,
+  formatPrice,
+  formatQuantity,
+  isTestData,
+  localizeReason,
+  shortId,
+} from "../utils/display";
 
 const statusColor: Record<BacktestRun["status"], string> = {
   CREATED: "default",
@@ -79,7 +102,7 @@ function BoundaryNotice() {
       showIcon
       type="warning"
       title="历史回测边界"
-      description="回测结果不代表未来收益。T 日收盘信号只会在下一根可用日线的开盘阶段尝试执行；当前不使用实时行情、不连接券商、不会产生真实交易。费用与滑点均为模拟配置，部分公司行为可能未完整还原，暂不支持分钟或 Tick 回测，Signal 也不是实时投资建议。"
+      description="回测结果不代表未来收益。T 日收盘信号只会在下一根可用日线的开盘阶段尝试执行；当前不使用实时行情、不连接券商、不会产生真实交易。费用与滑点均为模拟配置，部分公司行为可能未完整还原，暂不支持分钟或逐笔（Tick）回测，研究信号（Signal）也不是实时投资建议。"
     />
   );
 }
@@ -118,23 +141,16 @@ function ErrorNotice({ error }: { error: unknown }) {
   );
 }
 
-function formatDate(value?: string | null) {
-  return value ? new Date(value).toLocaleString("zh-CN") : "—";
-}
-
-function percent(value?: string | null) {
-  return value === null || value === undefined
-    ? "—"
-    : `${(Number(value) * 100).toFixed(2)}%`;
-}
+const formatDate = formatDateTime;
+const percent = formatPercentRatio;
 
 function parameterInput(definition: StrategyParameterDefinition) {
   if (definition.type === "boolean") {
     return (
       <Select
         options={[
-          { label: "true", value: true },
-          { label: "false", value: false },
+          { label: "是", value: true },
+          { label: "否", value: false },
         ]}
       />
     );
@@ -178,7 +194,7 @@ interface BacktestFormValues {
   transfer_fee_rate: string;
   slippage_basis_points: string;
   maximum_volume_participation?: string | null;
-  idempotency_key: string;
+  idempotency_key?: string;
   strategy_price_adjustment_mode: "RAW" | "QFQ";
   parameters?: Record<string, string | number | boolean>;
 }
@@ -191,6 +207,7 @@ export function BacktestPage() {
   const [form] = Form.useForm<BacktestFormValues>();
   const [page, setPage] = useState(1);
   const [instrumentSearch, setInstrumentSearch] = useState("");
+  const [showTestData, setShowTestData] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const selectedKey = Form.useWatch("strategy_key", form);
@@ -241,10 +258,10 @@ export function BacktestPage() {
       order_type: values.order_type,
       time_in_force: values.time_in_force,
       fee_configuration: {
-        commission_rate: String(values.commission_rate),
+        commission_rate: String(Number(values.commission_rate) / 100),
         minimum_commission: String(values.minimum_commission),
-        stamp_duty_rate: String(values.stamp_duty_rate),
-        transfer_fee_rate: String(values.transfer_fee_rate),
+        stamp_duty_rate: String(Number(values.stamp_duty_rate) / 100),
+        transfer_fee_rate: String(Number(values.transfer_fee_rate) / 100),
       },
       slippage_configuration: {
         basis_points: String(values.slippage_basis_points),
@@ -252,9 +269,9 @@ export function BacktestPage() {
       },
       maximum_volume_participation: !values.maximum_volume_participation?.trim()
         ? null
-        : String(values.maximum_volume_participation),
+        : String(Number(values.maximum_volume_participation) / 100),
       benchmark_symbol: null,
-      idempotency_key: values.idempotency_key.trim(),
+      idempotency_key: values.idempotency_key?.trim() || newIdempotencyKey(),
     };
     mutation.mutate(body);
   };
@@ -269,7 +286,7 @@ export function BacktestPage() {
       title: "策略",
       dataIndex: "strategy_key",
       render: (value: string, run) => (
-        <Link to={`/backtest/${run.id}`}>{value}</Link>
+        <Link to={`/backtest/${run.id}`}>{displayStrategy(value)}</Link>
       ),
     },
     {
@@ -280,16 +297,16 @@ export function BacktestPage() {
       ),
     },
     { title: "交易日", dataIndex: "sessions_processed" },
-    { title: "Signal", dataIndex: "signals_generated" },
+    { title: "研究信号", dataIndex: "signals_generated" },
     { title: "订单", dataIndex: "orders_created" },
-    { title: "Fill", dataIndex: "fills_generated" },
+    { title: "成交", dataIndex: "fills_generated" },
   ];
 
   return (
     <section className="backtest-page">
       <PageHeader
         title="A 股日线回测"
-        description="使用本地历史日线，按确定性事件时钟运行 Strategy → Risk → Order → 模拟 Broker → 账本。"
+        description="使用本地历史日线，依次完成策略、风控、订单、模拟成交和账本记账。"
       />
       <BoundaryNotice />
       <Card title="创建回测" className="backtest-section">
@@ -301,12 +318,12 @@ export function BacktestPage() {
             order_type: "LIMIT",
             time_in_force: "DAY",
             data_source_code: "BAOSTOCK",
-            commission_rate: "0.0003",
+            commission_rate: "0.03",
             minimum_commission: "5",
-            stamp_duty_rate: "0.0005",
-            transfer_fee_rate: "0.00001",
+            stamp_duty_rate: "0.05",
+            transfer_fee_rate: "0.001",
             slippage_basis_points: "2",
-            maximum_volume_participation: "0.1",
+            maximum_volume_participation: "10",
             idempotency_key: newIdempotencyKey(),
             strategy_price_adjustment_mode: "RAW",
           }}
@@ -322,7 +339,7 @@ export function BacktestPage() {
                   loading={catalog.isLoading}
                   options={catalog.data?.map((item) => ({
                     value: item.strategy_key,
-                    label: `${item.display_name} · ${item.version}`,
+                    label: `${displayStrategy(item.strategy_key)} · ${item.version}`,
                   }))}
                 />
               </Form.Item>
@@ -330,14 +347,14 @@ export function BacktestPage() {
             <Col xs={24} md={6}>
               <Form.Item
                 name="strategy_price_adjustment_mode"
-                label="策略价格模式"
-                tooltip="仅影响策略输入和 Signal；SESSION_OPEN 成交、Fill、费用与账本始终使用 RAW。"
+                label="策略价格复权模式"
+                tooltip="仅影响策略输入和研究信号；开盘成交、费用与账本始终使用不复权价格。"
                 rules={[{ required: true }]}
               >
                 <Select
                   options={[
-                    { value: "RAW", label: "RAW（未复权）" },
-                    { value: "QFQ", label: "QFQ（前复权，仅策略）" },
+                    { value: "RAW", label: "不复权（RAW）" },
+                    { value: "QFQ", label: "前复权（QFQ，仅策略）" },
                   ]}
                 />
               </Form.Item>
@@ -354,16 +371,26 @@ export function BacktestPage() {
                     { value: "BAOSTOCK", label: "BaoStock（D01 本地日线）" },
                     {
                       value: "BT01_DEMO",
-                      label: "BT01 Demo（本地 Fixture）",
+                      label: "BT01 测试数据（本地 Fixture）",
                     },
-                  ]}
+                  ].filter(
+                    (option) => showTestData || option.value !== "BT01_DEMO",
+                  )}
                 />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={6}>
+              <Form.Item label="测试数据">
+                <Space>
+                  <Switch checked={showTestData} onChange={setShowTestData} />
+                  <Typography.Text>显示测试数据</Typography.Text>
+                </Space>
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item
                 name="instrument_ids"
-                label="Instrument（可多选）"
+                label="回测股票（可多选）"
                 rules={[{ required: true }]}
               >
                 <Select
@@ -372,10 +399,12 @@ export function BacktestPage() {
                   filterOption={false}
                   onSearch={setInstrumentSearch}
                   loading={instruments.isLoading}
-                  options={instruments.data?.items.map((item) => ({
-                    value: item.id,
-                    label: `${item.symbol} · ${item.name} · ${item.exchange}`,
-                  }))}
+                  options={instruments.data?.items
+                    .filter((item) => showTestData || !isTestData(item))
+                    .map((item) => ({
+                      value: item.id,
+                      label: formatInstrument(item),
+                    }))}
                 />
               </Form.Item>
             </Col>
@@ -410,12 +439,22 @@ export function BacktestPage() {
             </Col>
             <Col xs={12} md={3}>
               <Form.Item name="order_type" label="订单类型">
-                <Select options={[{ value: "LIMIT" }, { value: "MARKET" }]} />
+                <Select
+                  options={[
+                    { value: "LIMIT", label: "限价单（LIMIT）" },
+                    { value: "MARKET", label: "市价单（MARKET）" },
+                  ]}
+                />
               </Form.Item>
             </Col>
             <Col xs={12} md={3}>
-              <Form.Item name="time_in_force" label="TIF">
-                <Select options={[{ value: "DAY" }, { value: "GTC" }]} />
+              <Form.Item name="time_in_force" label="订单有效期（TIF）">
+                <Select
+                  options={[
+                    { value: "DAY", label: "当日有效（DAY）" },
+                    { value: "GTC", label: "撤销前有效（GTC）" },
+                  ]}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -430,7 +469,7 @@ export function BacktestPage() {
                   <Col xs={24} md={8} key={definition.name}>
                     <Form.Item
                       name={["parameters", definition.name]}
-                      label={definition.name}
+                      label={displayParameter(definition.name)}
                       tooltip={definition.description}
                       initialValue={definition.default ?? undefined}
                     >
@@ -448,10 +487,10 @@ export function BacktestPage() {
           >
             <Row gutter={16}>
               {[
-                ["commission_rate", "佣金率"],
-                ["minimum_commission", "最低佣金"],
-                ["stamp_duty_rate", "印花税率"],
-                ["transfer_fee_rate", "过户费率"],
+                ["commission_rate", "佣金率（%）"],
+                ["minimum_commission", "最低佣金（元）"],
+                ["stamp_duty_rate", "印花税率（%）"],
+                ["transfer_fee_rate", "过户费率（%）"],
                 ["slippage_basis_points", "滑点（基点）"],
               ].map(([name, label]) => (
                 <Col xs={24} sm={12} md={4} key={name}>
@@ -467,7 +506,7 @@ export function BacktestPage() {
               <Col xs={24} sm={12} md={4}>
                 <Form.Item
                   name="maximum_volume_participation"
-                  label="最大成交量参与率（可空）"
+                  label="最大成交量参与率（%，可空）"
                   tooltip="留空表示不额外限制成交量参与率"
                 >
                   <Input allowClear placeholder="留空表示不限制" />
@@ -475,29 +514,6 @@ export function BacktestPage() {
               </Col>
             </Row>
           </Card>
-          <Form.Item
-            name="idempotency_key"
-            label="幂等键"
-            tooltip="保留并重复提交同一个键，可安全复用已有运行；修改配置时请生成新键。"
-            rules={[
-              { required: true, message: "请输入幂等键" },
-              { max: 128, message: "幂等键不能超过 128 个字符" },
-            ]}
-          >
-            <Input
-              suffix={
-                <Button
-                  type="text"
-                  size="small"
-                  onClick={() =>
-                    form.setFieldValue("idempotency_key", newIdempotencyKey())
-                  }
-                >
-                  生成新键
-                </Button>
-              }
-            />
-          </Form.Item>
           <Space>
             <Button
               type="primary"
@@ -505,11 +521,10 @@ export function BacktestPage() {
               loading={mutation.isPending}
               onClick={() => void submit()}
             >
-              同步运行回测
+              开始回测
             </Button>
             <Typography.Text type="secondary">
-              请求会同步运行，规模受后端 instruments / bars / sessions
-              上限控制。
+              回测将在当前请求中运行；完成前请勿关闭页面。股票、K线和交易日数量受安全上限控制。
             </Typography.Text>
           </Space>
           <ErrorNotice error={mutation.error} />
@@ -536,29 +551,29 @@ export function BacktestPage() {
 
 function MetricCards({ metrics }: { metrics: BacktestMetrics }) {
   const cards = [
-    ["初始权益", metrics.initial_equity],
-    ["期末权益", metrics.final_equity],
+    ["初始权益", formatMoney(metrics.initial_equity)],
+    ["期末权益", formatMoney(metrics.final_equity)],
     ["总收益", percent(metrics.total_return)],
     ["年化收益", percent(metrics.annualized_return)],
     ["最大回撤", percent(metrics.maximum_drawdown)],
-    ["Sharpe", metrics.sharpe_ratio ?? "—"],
-    ["Fill 数", metrics.fill_count],
+    ["夏普比率（Sharpe）", formatNumber(metrics.sharpe_ratio)],
+    ["成交数量", metrics.fill_count],
     [
-      "买入 / 卖出 Fill",
+      "买入 / 卖出成交",
       `${metrics.buy_fill_count} / ${metrics.sell_fill_count}`,
     ],
-    ["总成交额", metrics.total_turnover],
-    ["总费用", metrics.total_fees],
-    ["佣金", metrics.total_commission],
-    ["印花税", metrics.total_stamp_duty],
-    ["过户费", metrics.total_transfer_fee],
-    ["其他费用", metrics.total_other_fee],
-    ["已实现盈亏", metrics.realized_pnl],
+    ["总成交额", formatMoney(metrics.total_turnover)],
+    ["总费用", formatMoney(metrics.total_fees)],
+    ["佣金", formatMoney(metrics.total_commission)],
+    ["印花税", formatMoney(metrics.total_stamp_duty)],
+    ["过户费", formatMoney(metrics.total_transfer_fee)],
+    ["其他费用", formatMoney(metrics.total_other_fee)],
+    ["已实现盈亏", formatMoney(metrics.realized_pnl)],
     ["胜率", percent(metrics.win_rate)],
     ["亏损率", percent(metrics.loss_rate)],
-    ["平均盈利", metrics.average_win ?? "—"],
-    ["平均亏损", metrics.average_loss ?? "—"],
-    ["Profit Factor", metrics.profit_factor ?? "—"],
+    ["平均盈利", formatMoney(metrics.average_win)],
+    ["平均亏损", formatMoney(metrics.average_loss)],
+    ["盈亏比（Profit Factor）", formatNumber(metrics.profit_factor)],
     ["年化波动率", percent(metrics.annualized_volatility)],
     ["平均敞口", percent(metrics.average_exposure)],
     ["最大敞口", percent(metrics.maximum_exposure)],
@@ -576,100 +591,145 @@ function MetricCards({ metrics }: { metrics: BacktestMetrics }) {
   );
 }
 
-const signalColumns: ColumnsType<BacktestSignal> = [
-  { title: "Signal 时间", dataIndex: "generated_at", render: formatDate },
-  { title: "Bar 时间", dataIndex: "bar_timestamp", render: formatDate },
-  { title: "Instrument", dataIndex: "instrument_id" },
-  { title: "类型", dataIndex: "signal_type" },
-  { title: "方向", dataIndex: "side" },
-  { title: "状态", dataIndex: "status" },
-  {
-    title: "目标",
-    render: (_, item) =>
-      item.target_quantity !== null
-        ? `数量 ${item.target_quantity}`
-        : item.target_weight !== null
-          ? `权重 ${percent(item.target_weight)}`
-          : "—",
-  },
-  {
-    title: "参考价",
-    dataIndex: "reference_price",
-    render: (value) => factText(value),
-  },
-  { title: "原因", dataIndex: "reason", render: (value) => factText(value) },
-];
+type InstrumentMap = Map<string, Instrument>;
 
-const riskColumns: ColumnsType<BacktestRiskDecision> = [
-  { title: "评估时间", dataIndex: "evaluated_at", render: formatDate },
-  { title: "Instrument", dataIndex: "instrument_id" },
-  { title: "决策", dataIndex: "overall_decision" },
-  {
-    title: "估算金额",
-    dataIndex: "estimated_notional",
-    render: (value) => factText(value),
-  },
-  {
-    title: "标的权重",
-    dataIndex: "projected_instrument_weight",
-    render: percent,
-  },
-  { title: "总敞口", dataIndex: "projected_total_exposure", render: percent },
-  {
-    title: "提示",
-    dataIndex: "warnings",
-    render: (items: string[]) => items.join("；") || "—",
-  },
-];
+function instrumentLabel(id: string, instruments: InstrumentMap) {
+  const instrument = instruments.get(id);
+  return instrument
+    ? formatInstrument(instrument)
+    : `未知标的（${shortId(id)}）`;
+}
 
-const orderColumns: ColumnsType<BacktestOrder> = [
-  { title: "创建时间", dataIndex: "created_at", render: formatDate },
-  { title: "Instrument", dataIndex: "instrument_id" },
-  { title: "方向", dataIndex: "side" },
-  { title: "类型", dataIndex: "order_type" },
-  { title: "TIF", dataIndex: "time_in_force" },
-  { title: "状态", dataIndex: "status" },
-  { title: "委托数量", dataIndex: "requested_quantity" },
-  { title: "成交数量", dataIndex: "filled_quantity" },
-  {
-    title: "限价",
-    dataIndex: "limit_price",
-    render: (value) => factText(value),
-  },
-  {
-    title: "均价",
-    dataIndex: "average_fill_price",
-    render: (value) => factText(value),
-  },
-  {
-    title: "最终时间",
-    render: (_, item) =>
-      formatDate(
-        item.completed_at ??
-          item.expired_at ??
-          item.submitted_at ??
-          item.confirmed_at,
-      ),
-  },
-];
+function signalColumns(
+  instruments: InstrumentMap,
+): ColumnsType<BacktestSignal> {
+  return [
+    { title: "信号时间", dataIndex: "generated_at", render: formatDate },
+    { title: "K线时间", dataIndex: "bar_timestamp", render: formatDate },
+    {
+      title: "股票名称与代码",
+      dataIndex: "instrument_id",
+      render: (value: string) => instrumentLabel(value, instruments),
+    },
+    { title: "类型", dataIndex: "signal_type", render: displayEnum },
+    { title: "方向", dataIndex: "side", render: displayEnum },
+    { title: "状态", dataIndex: "status", render: displayEnum },
+    {
+      title: "目标",
+      render: (_, item) =>
+        item.target_quantity !== null
+          ? `数量 ${formatQuantity(item.target_quantity)} 股`
+          : item.target_weight !== null
+            ? `权重 ${percent(item.target_weight)}`
+            : "—",
+    },
+    {
+      title: "参考价",
+      dataIndex: "reference_price",
+      render: (value: string | null) => formatPrice(value),
+    },
+    { title: "原因", dataIndex: "reason", render: localizeReason },
+  ];
+}
 
-const fillColumns: ColumnsType<BacktestFill> = [
-  { title: "成交时间", dataIndex: "executed_at", render: formatDate },
-  { title: "Instrument", dataIndex: "instrument_id" },
-  { title: "数量", dataIndex: "quantity" },
-  { title: "价格", dataIndex: "price" },
-  { title: "成交额", dataIndex: "gross_amount" },
-  { title: "佣金", dataIndex: "commission" },
-  { title: "税费", dataIndex: "tax" },
-  { title: "其他费用", dataIndex: "other_fee" },
-  { title: "净额", dataIndex: "net_amount" },
-  { title: "接收时间", dataIndex: "received_at", render: formatDate },
-];
+function riskColumns(
+  instruments: InstrumentMap,
+): ColumnsType<BacktestRiskDecision> {
+  return [
+    { title: "评估时间", dataIndex: "evaluated_at", render: formatDate },
+    {
+      title: "股票名称与代码",
+      dataIndex: "instrument_id",
+      render: (value: string) => instrumentLabel(value, instruments),
+    },
+    { title: "决策", dataIndex: "overall_decision", render: displayEnum },
+    {
+      title: "估算金额",
+      dataIndex: "estimated_notional",
+      render: formatMoney,
+    },
+    {
+      title: "标的权重",
+      dataIndex: "projected_instrument_weight",
+      render: (value: string | null) => percent(value),
+    },
+    {
+      title: "总敞口",
+      dataIndex: "projected_total_exposure",
+      render: (value: string | null) => percent(value),
+    },
+    {
+      title: "提示",
+      dataIndex: "warnings",
+      render: (items: string[]) => items.join("；") || "—",
+    },
+  ];
+}
+
+function orderColumns(instruments: InstrumentMap): ColumnsType<BacktestOrder> {
+  return [
+    { title: "创建时间", dataIndex: "created_at", render: formatDate },
+    {
+      title: "股票名称与代码",
+      dataIndex: "instrument_id",
+      render: (value: string) => instrumentLabel(value, instruments),
+    },
+    { title: "方向", dataIndex: "side", render: displayEnum },
+    { title: "类型", dataIndex: "order_type", render: displayEnum },
+    { title: "订单有效期", dataIndex: "time_in_force", render: displayEnum },
+    { title: "状态", dataIndex: "status", render: displayEnum },
+    {
+      title: "委托数量",
+      dataIndex: "requested_quantity",
+      render: formatQuantity,
+    },
+    { title: "成交数量", dataIndex: "filled_quantity", render: formatQuantity },
+    {
+      title: "限价",
+      dataIndex: "limit_price",
+      render: formatPrice,
+    },
+    {
+      title: "均价",
+      dataIndex: "average_fill_price",
+      render: formatPrice,
+    },
+    {
+      title: "最终时间",
+      render: (_, item) =>
+        formatDate(
+          item.completed_at ??
+            item.expired_at ??
+            item.submitted_at ??
+            item.confirmed_at,
+        ),
+    },
+  ];
+}
+
+function fillColumns(instruments: InstrumentMap): ColumnsType<BacktestFill> {
+  return [
+    { title: "成交时间", dataIndex: "executed_at", render: formatDate },
+    {
+      title: "股票名称与代码",
+      dataIndex: "instrument_id",
+      render: (value: string) => instrumentLabel(value, instruments),
+    },
+    { title: "数量", dataIndex: "quantity", render: formatQuantity },
+    { title: "价格", dataIndex: "price", render: formatPrice },
+    { title: "成交额", dataIndex: "gross_amount", render: formatMoney },
+    { title: "佣金", dataIndex: "commission", render: formatMoney },
+    { title: "税费", dataIndex: "tax", render: formatMoney },
+    { title: "其他费用", dataIndex: "other_fee", render: formatMoney },
+    { title: "净额", dataIndex: "net_amount", render: formatMoney },
+    { title: "接收时间", dataIndex: "received_at", render: formatDate },
+  ];
+}
 
 const timelineColumns: ColumnsType<BacktestTimelineEvent> = [
   { title: "序号", dataIndex: "sequence_number" },
   { title: "权威时间", dataIndex: "occurred_at", render: formatDate },
-  { title: "事件类型", dataIndex: "event_type" },
+  { title: "事件类型", dataIndex: "event_type", render: displayEnum },
   { title: "摘要", dataIndex: "summary" },
   {
     title: "详情",
@@ -728,6 +788,31 @@ export function BacktestDetailPage() {
       };
     },
   });
+  const factInstrumentIds = useMemo(() => {
+    if (!detail.data) return [];
+    return Array.from(
+      new Set([
+        ...detail.data.trades.map((item) => item.instrument_id),
+        ...detail.data.signals.map((item) => item.instrument_id),
+        ...detail.data.risks.map((item) => item.instrument_id),
+        ...detail.data.orders.map((item) => item.instrument_id),
+        ...detail.data.fills.map((item) => item.instrument_id),
+      ]),
+    );
+  }, [detail.data]);
+  const factInstrumentQueries = useQueries({
+    queries: factInstrumentIds.map((id) => ({
+      queryKey: ["instrument", id],
+      queryFn: () => getInstrument(id),
+      staleTime: 5 * 60_000,
+    })),
+  });
+  const factInstruments = new Map(
+    factInstrumentQueries
+      .map((query) => query.data)
+      .filter((item) => item !== undefined)
+      .map((item) => [item.id, item]),
+  );
   if (detail.isLoading) return <Spin size="large" />;
   if (detail.error)
     return (
@@ -739,20 +824,24 @@ export function BacktestDetailPage() {
   if (!detail.data) return <Empty description="回测不存在" />;
   const data = detail.data;
   const tradeColumns: ColumnsType<BacktestTrade> = [
-    { title: "Instrument", dataIndex: "instrument_id" },
+    {
+      title: "股票名称与代码",
+      dataIndex: "instrument_id",
+      render: (value: string) => instrumentLabel(value, factInstruments),
+    },
     { title: "开仓", dataIndex: "opened_at", render: formatDate },
     { title: "平仓", dataIndex: "closed_at", render: formatDate },
-    { title: "数量", dataIndex: "quantity" },
-    { title: "入场价", dataIndex: "entry_price" },
-    { title: "离场价", dataIndex: "exit_price" },
-    { title: "费用", dataIndex: "fees" },
-    { title: "净盈亏", dataIndex: "net_pnl" },
+    { title: "数量", dataIndex: "quantity", render: formatQuantity },
+    { title: "入场价", dataIndex: "entry_price", render: formatPrice },
+    { title: "离场价", dataIndex: "exit_price", render: formatPrice },
+    { title: "费用", dataIndex: "fees", render: formatMoney },
+    { title: "净盈亏", dataIndex: "net_pnl", render: formatMoney },
   ];
   return (
     <section className="backtest-page">
       <PageHeader
-        title={`回测详情 · ${data.run.strategy_key}`}
-        description={`Run ${data.run.id}`}
+        title={`回测详情 · ${displayStrategy(data.run.strategy_key)}`}
+        description="查看策略日线回测的绩效和完整事实链。"
         action={<Link to="/backtest">返回回测列表</Link>}
       />
       <BoundaryNotice />
@@ -761,12 +850,12 @@ export function BacktestDetailPage() {
           <Tag color={statusColor[data.run.status]}>
             {statusText[data.run.status]}
           </Tag>
-          <Tag>BACKTEST</Tag>
+          <Tag>日线回测</Tag>
           <Tag
             color={data.integrity.passed ? "green" : "red"}
             icon={<SafetyCertificateOutlined />}
           >
-            Integrity {data.integrity.passed ? "通过" : "存在差异"}
+            完整性检查：{data.integrity.passed ? "通过" : "存在差异"}
           </Tag>
         </Space>
         <Descriptions bordered size="small" column={{ xs: 1, md: 2, xl: 3 }}>
@@ -774,15 +863,21 @@ export function BacktestDetailPage() {
             {data.run.strategy_version}
           </Descriptions.Item>
           <Descriptions.Item label="独立账户">
-            {data.run.account_id ?? "—"}
+            {data.run.account_id ? (
+              <Typography.Text copyable={{ text: data.run.account_id }}>
+                {shortId(data.run.account_id)}
+              </Typography.Text>
+            ) : (
+              "—"
+            )}
           </Descriptions.Item>
-          <Descriptions.Item label="StrategyRun">
-            {data.run.strategy_run_id ?? "—"}
+          <Descriptions.Item label="策略运行记录">
+            {data.run.strategy_run_id ? shortId(data.run.strategy_run_id) : "—"}
           </Descriptions.Item>
-          <Descriptions.Item label="Bars">
+          <Descriptions.Item label="K线数量">
             {data.run.bars_processed}
           </Descriptions.Item>
-          <Descriptions.Item label="Sessions">
+          <Descriptions.Item label="交易日数量">
             {data.run.sessions_processed}
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">
@@ -804,7 +899,7 @@ export function BacktestDetailPage() {
             showIcon
             type="info"
             title="指标计算提示"
-            description={data.metrics.warnings.join("；")}
+            description={data.metrics.warnings.map(localizeReason).join("；")}
           />
         ) : null}
         {data.metrics ? (
@@ -848,32 +943,37 @@ export function BacktestDetailPage() {
         </Col>
       </Row>
       <Card title="现金与市值" className="backtest-section">
-        <Table
+        <Table<BacktestEquityPoint>
           rowKey="id"
           size="small"
           dataSource={data.equity}
           pagination={{ pageSize: 10 }}
           columns={[
             { title: "日期", dataIndex: "timestamp", render: formatDate },
-            { title: "现金", dataIndex: "cash" },
-            { title: "市值", dataIndex: "market_value" },
-            { title: "总权益", dataIndex: "total_equity" },
+            { title: "现金", dataIndex: "cash", render: formatMoney },
+            { title: "市值", dataIndex: "market_value", render: formatMoney },
+            { title: "总权益", dataIndex: "total_equity", render: formatMoney },
             {
               title: "总敞口金额",
               dataIndex: "gross_exposure",
-              render: (value: string) => factText(value),
+              render: formatMoney,
             },
             {
               title: "净敞口金额",
               dataIndex: "net_exposure",
-              render: (value: string) => factText(value),
+              render: formatMoney,
             },
             { title: "持仓数", dataIndex: "positions_count" },
-            { title: "回撤", dataIndex: "drawdown", render: percent },
+            {
+              title: "回撤",
+              dataIndex: "drawdown",
+              render: (value: string | null) => percent(value),
+            },
             {
               title: "估值提示",
               dataIndex: "warnings",
-              render: (items: string[]) => items.join("；") || "—",
+              render: (items: string[]) =>
+                items.map(localizeReason).join("；") || "—",
             },
           ]}
         />
@@ -891,12 +991,12 @@ export function BacktestDetailPage() {
           items={[
             {
               key: "signals",
-              label: `Signal (${data.signals.length})`,
+              label: `研究信号（${data.signals.length}）`,
               children: (
                 <Table
                   rowKey="id"
                   dataSource={data.signals}
-                  columns={signalColumns}
+                  columns={signalColumns(factInstruments)}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: true }}
                 />
@@ -904,12 +1004,12 @@ export function BacktestDetailPage() {
             },
             {
               key: "risks",
-              label: `RiskDecision (${data.risks.length})`,
+              label: `风控决策（${data.risks.length}）`,
               children: (
                 <Table
                   rowKey="id"
                   dataSource={data.risks}
-                  columns={riskColumns}
+                  columns={riskColumns(factInstruments)}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: true }}
                 />
@@ -917,12 +1017,12 @@ export function BacktestDetailPage() {
             },
             {
               key: "orders",
-              label: `Order (${data.orders.length})`,
+              label: `订单（${data.orders.length}）`,
               children: (
                 <Table
                   rowKey="id"
                   dataSource={data.orders}
-                  columns={orderColumns}
+                  columns={orderColumns(factInstruments)}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: true }}
                 />
@@ -930,12 +1030,12 @@ export function BacktestDetailPage() {
             },
             {
               key: "fills",
-              label: `Fill / 费用 (${data.fills.length})`,
+              label: `成交与费用（${data.fills.length}）`,
               children: (
                 <Table
                   rowKey="id"
                   dataSource={data.fills}
-                  columns={fillColumns}
+                  columns={fillColumns(factInstruments)}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: true }}
                 />
@@ -943,7 +1043,7 @@ export function BacktestDetailPage() {
             },
             {
               key: "timeline",
-              label: `Timeline (${data.timeline.length})`,
+              label: `事件时间线（${data.timeline.length}）`,
               children: (
                 <Table
                   rowKey="id"

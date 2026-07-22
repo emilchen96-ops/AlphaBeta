@@ -109,10 +109,10 @@ test("shows offline provider boundary, CLI import guidance and BT02 code status"
   renderRoute("/intraday-market-data");
   expect(await screen.findByText("分钟行情数据中心")).toBeInTheDocument();
   expect(await screen.findByText("D03_FIXTURE")).toBeInTheDocument();
-  expect(screen.getByText(/不连接实时WebSocket/)).toBeInTheDocument();
+  expect(screen.getByText(/不连接实时 WebSocket/)).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: "导入任务" }));
   expect(
-    await screen.findByText(/本地文件通过CLI安全导入/),
+    await screen.findByText(/本地文件通过命令行（CLI）安全导入/),
   ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /上传/ }),

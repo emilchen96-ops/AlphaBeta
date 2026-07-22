@@ -22,6 +22,15 @@ import {
 } from "../api/scanners";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { ScanResult, ScanRun } from "../types/scanners";
+import {
+  displayParameter,
+  displayScanner,
+  formatDateTime,
+  formatInstrument,
+  formatPrice,
+  formatNumber,
+  shortId,
+} from "../utils/display";
 
 const statusText: Record<string, string> = {
   CREATED: "已创建",
@@ -100,10 +109,18 @@ export function ScanRunsPage() {
           }}
           columns={[
             {
-              title: "运行",
-              render: (_, item) => item.scan_run_id.slice(0, 8),
+              title: "扫描记录",
+              render: (_, item) => (
+                <Space orientation="vertical" size={0}>
+                  <Typography.Text>
+                    {formatDateTime(item.created_at)}
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    {displayScanner(item.scanner_key)}
+                  </Typography.Text>
+                </Space>
+              ),
             },
-            { title: "扫描器", dataIndex: "scanner_key" },
             {
               title: "状态",
               render: (_, item) => <Tag>{statusText[item.status]}</Tag>,
@@ -116,7 +133,7 @@ export function ScanRunsPage() {
             { title: "匹配", dataIndex: "matches_found" },
             {
               title: "截止时间",
-              render: (_, item) => new Date(item.as_of).toLocaleString(),
+              render: (_, item) => formatDateTime(item.as_of),
             },
             {
               title: "操作",
@@ -154,14 +171,15 @@ export function ScanRunDetailPage() {
   const item = detail.data;
   return (
     <section>
-      <PageHeader title="扫描运行详情" description={runId} />
+      <PageHeader
+        title="扫描运行详情"
+        description="查看本次扫描配置、统计和匹配结果。"
+      />
       {warning}
       <Space wrap style={{ marginTop: 16 }}>
-        <Button onClick={() => void navigate("/market")}>
-          Instrument 与行情
-        </Button>
+        <Button onClick={() => void navigate("/market")}>标的与行情</Button>
         <Button onClick={() => void navigate("/strategies")}>策略目录</Button>
-        <Button onClick={() => void navigate("/signals")}>研究 Signal</Button>
+        <Button onClick={() => void navigate("/signals")}>研究信号</Button>
       </Space>
       {item ? (
         <Card style={{ marginTop: 16 }}>
@@ -179,7 +197,7 @@ export function ScanRunDetailPage() {
               {
                 key: "scanner",
                 label: "扫描器",
-                children: `${item.scanner_key} v${item.scanner_version}`,
+                children: `${displayScanner(item.scanner_key)} · ${item.scanner_version}`,
               },
               {
                 key: "status",
@@ -191,7 +209,7 @@ export function ScanRunDetailPage() {
               {
                 key: "universe",
                 label: "股票池",
-                children: `${item.instrument_ids.length} 个 Instrument`,
+                children: `${item.instrument_ids.length} 只股票`,
               },
               {
                 key: "count",
@@ -201,7 +219,15 @@ export function ScanRunDetailPage() {
               {
                 key: "params",
                 label: "规范化参数",
-                children: <pre>{JSON.stringify(item.parameters, null, 2)}</pre>,
+                children: (
+                  <Space orientation="vertical" size={2}>
+                    {Object.entries(item.parameters).map(([name, value]) => (
+                      <Typography.Text key={name}>
+                        {displayParameter(name)}：{String(value)}
+                      </Typography.Text>
+                    ))}
+                  </Space>
+                ),
               },
               {
                 key: "completed",
@@ -210,7 +236,22 @@ export function ScanRunDetailPage() {
               },
             ]}
           />
-          <Typography.Title level={4}>ScanResult</Typography.Title>
+          <Descriptions
+            size="small"
+            style={{ marginTop: 16 }}
+            items={[
+              {
+                key: "internal-id",
+                label: "内部扫描编号",
+                children: (
+                  <Typography.Text copyable={{ text: item.scan_run_id }}>
+                    {shortId(item.scan_run_id)}
+                  </Typography.Text>
+                ),
+              },
+            ]}
+          />
+          <Typography.Title level={4}>扫描结果</Typography.Title>
           <Table<ScanResult>
             rowKey="scan_result_id"
             dataSource={results.data?.items ?? []}
@@ -220,15 +261,21 @@ export function ScanRunDetailPage() {
               { title: "排名", dataIndex: "rank" },
               {
                 title: "标的",
-                render: (_, value) =>
-                  `${value.instrument.symbol}.${value.instrument.exchange} · ${value.instrument.name}`,
+                render: (_, value) => formatInstrument(value.instrument),
               },
-              { title: "评分", dataIndex: "score" },
-              { title: "参考价", dataIndex: "reference_price" },
+              {
+                title: "评分",
+                dataIndex: "score",
+                render: (value: string | number | null) => formatNumber(value),
+              },
+              {
+                title: "参考价",
+                dataIndex: "reference_price",
+                render: formatPrice,
+              },
               {
                 title: "匹配时间",
-                render: (_, value) =>
-                  new Date(value.matched_at).toLocaleString(),
+                render: (_, value) => formatDateTime(value.matched_at),
               },
               { title: "规则说明", dataIndex: "reason" },
               {

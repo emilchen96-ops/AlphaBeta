@@ -32,7 +32,7 @@ test("K线加载时显示骨架", () => {
 test("空行情显示明确提示", () => {
   render(<CandlestickChart bars={[]} loading={false} />);
   expect(
-    screen.getByText("暂无行情数据，请先运行演示数据导入"),
+    screen.getByText("暂无行情数据，请先前往数据中心下载历史行情"),
   ).toBeInTheDocument();
 });
 

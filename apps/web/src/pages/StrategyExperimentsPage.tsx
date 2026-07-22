@@ -46,6 +46,7 @@ import type {
   StrategyParameterDefinition,
   StrategySignalOverlap,
 } from "../types/strategies";
+import { displayEnum, displayParameter } from "../utils/display";
 import { estimateCombinationCount } from "./strategyExperimentUtils";
 
 const MAX_COMBINATIONS_HINT = 50;
@@ -99,8 +100,8 @@ function ResearchBoundary() {
     <Alert
       showIcon
       type="warning"
-      title="这是历史批量研究，不是回测；Signal 不是 Order"
-      description="Signal 数量只表示触发频率，不代表盈利能力或策略质量。当前没有收益与回撤计算，不调用风控、Broker 或 MiniQMT，不创建订单与 Fill，不修改现金和持仓，也不进行实时运行。"
+      title="这是历史批量研究，不是回测；研究信号不是订单"
+      description="研究信号（Signal）数量只表示触发频率，不代表盈利能力或策略质量。当前没有收益与回撤计算，不调用风控、券商接口（Broker）或 MiniQMT，不创建订单与成交（Fill），不修改现金和持仓，也不进行实时运行。"
     />
   );
 }
@@ -117,7 +118,7 @@ function ParameterTags({
     <Space wrap size={[4, 4]}>
       {entries.map(([key, value]) => (
         <Tag key={key}>
-          {key}={String(value)}
+          {displayParameter(key)}={String(value)}
         </Tag>
       ))}
     </Space>
@@ -144,26 +145,29 @@ function GridEditor({
 }) {
   const constraints = [
     definition.min_value !== null
-      ? `min ${String(definition.min_value)}`
+      ? `最小值 ${String(definition.min_value)}`
       : null,
     definition.max_value !== null
-      ? `max ${String(definition.max_value)}`
+      ? `最大值 ${String(definition.max_value)}`
       : null,
     definition.choices.length
-      ? `choices ${definition.choices.join(" / ")}`
+      ? `可选值 ${definition.choices.join(" / ")}`
       : null,
   ].filter(Boolean);
   const options =
     definition.type === "boolean"
       ? [
-          { value: "true", label: "true" },
-          { value: "false", label: "false" },
+          { value: "true", label: "是" },
+          { value: "false", label: "否" },
         ]
       : definition.type === "enum"
         ? definition.choices.map((value) => ({ value, label: value }))
         : undefined;
   return (
-    <Card size="small" title={`${definition.name} · ${definition.type}`}>
+    <Card
+      size="small"
+      title={`${displayParameter(definition.name)} · ${displayEnum(definition.type)}`}
+    >
       <Typography.Paragraph type="secondary">
         {definition.description}；默认值：
         {String(definition.default ?? "未设置")}
@@ -552,7 +556,7 @@ export function StrategyExperimentsPage() {
             { title: "组合", dataIndex: "combination_count" },
             { title: "完成", dataIndex: "runs_completed" },
             { title: "失败", dataIndex: "runs_failed" },
-            { title: "Signal", dataIndex: "total_signals" },
+            { title: "研究信号", dataIndex: "total_signals" },
             { title: "创建时间", dataIndex: "created_at", render: formatDate },
             {
               title: "完成时间",
@@ -592,13 +596,13 @@ function runColumns(): ColumnsType<StrategyExperimentRun> {
       title: "状态",
       dataIndex: "run_status",
       filters: ["CREATED", "RUNNING", "COMPLETED", "FAILED"].map((value) => ({
-        text: value,
+        text: displayEnum(value),
         value,
       })),
       onFilter: (value, item) => item.run_status === value,
     },
     { title: "K 线数", dataIndex: "bars_processed" },
-    { title: "Signal", dataIndex: "signals_generated" },
+    { title: "研究信号", dataIndex: "signals_generated" },
     {
       title: "提示",
       dataIndex: "warning",
@@ -611,7 +615,7 @@ function runColumns(): ColumnsType<StrategyExperimentRun> {
           <Space>
             <Link to={`/strategy-runs/${item.strategy_run_id}`}>运行详情</Link>
             <Link to={`/signals?strategy_run_id=${item.strategy_run_id}`}>
-              Signal
+              研究信号
             </Link>
           </Space>
         ) : (
@@ -640,17 +644,19 @@ function comparisonColumns(): ColumnsType<StrategyExperimentComparisonRow> {
       title: "状态",
       dataIndex: "run_status",
       render: (value: StrategyExperimentRun["run_status"]) => (
-        <Tag color={value === "FAILED" ? "error" : "success"}>{value}</Tag>
+        <Tag color={value === "FAILED" ? "error" : "success"}>
+          {displayEnum(value)}
+        </Tag>
       ),
     },
     { title: "K 线数", dataIndex: "bars_processed" },
     {
-      title: "Signal 总数",
+      title: "研究信号总数",
       dataIndex: "total_signals",
       sorter: (a, b) => a.total_signals - b.total_signals,
     },
-    { title: "BUY", dataIndex: "buy_signals" },
-    { title: "SELL", dataIndex: "sell_signals" },
+    { title: "买入信号", dataIndex: "buy_signals" },
+    { title: "卖出信号", dataIndex: "sell_signals" },
     { title: "首次触发", dataIndex: "first_signal_at", render: formatDate },
     { title: "末次触发", dataIndex: "last_signal_at", render: formatDate },
     { title: "触发标的数", dataIndex: "signaled_instrument_count" },
@@ -789,7 +795,7 @@ export function StrategyExperimentDetailPage() {
               <Descriptions.Item label="失败数">
                 {item.runs_failed}
               </Descriptions.Item>
-              <Descriptions.Item label="Signal 总数">
+              <Descriptions.Item label="研究信号总数">
                 {item.total_signals}
               </Descriptions.Item>
               <Descriptions.Item label="研究区间">
@@ -828,11 +834,11 @@ export function StrategyExperimentDetailPage() {
               pagination={false}
             />
           </Card>
-          <Card title="Signal 对比" style={{ marginTop: 16 }}>
+          <Card title="研究信号对比" style={{ marginTop: 16 }}>
             <Alert
               type="info"
               showIcon
-              title="Signal 数量只表示触发频率，不代表收益或策略质量。"
+              title="研究信号数量只表示触发频率，不代表收益或策略质量。"
               style={{ marginBottom: 12 }}
             />
             <Table
@@ -844,9 +850,9 @@ export function StrategyExperimentDetailPage() {
               pagination={false}
             />
           </Card>
-          <Card title="Signal 重合度矩阵" style={{ marginTop: 16 }}>
+          <Card title="研究信号重合度矩阵" style={{ marginTop: 16 }}>
             <Typography.Paragraph type="secondary">
-              重合度基于标的、K 线时间和 Signal 方向的 Jaccard
+              重合度基于标的、K 线时间和信号方向的杰卡德系数（Jaccard）
               相似度；高重合度不代表更高收益。
             </Typography.Paragraph>
             <OverlapMatrix indexes={indexes} overlaps={overlap.data ?? []} />

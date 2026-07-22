@@ -11,7 +11,7 @@ export function CandlestickChart({
 }) {
   if (loading) return <Skeleton active paragraph={{ rows: 8 }} />;
   if (!bars.length)
-    return <Empty description="暂无行情数据，请先运行演示数据导入" />;
+    return <Empty description="暂无行情数据，请先前往数据中心下载历史行情" />;
   const visible = bars.slice(-90);
   const highs = visible.map((bar) => Number(bar.high));
   const lows = visible.map((bar) => Number(bar.low));

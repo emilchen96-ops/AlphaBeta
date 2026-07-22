@@ -219,7 +219,7 @@ test("分析详情区分 AI 推断、不确定性和可追溯原始证据", asyn
     `/information/${itemId}`,
   );
   expect(screen.getByText("100 / 80 / 合计 180")).toBeInTheDocument();
-  expect(screen.getByText("REAL · 真实 Provider")).toBeInTheDocument();
+  expect(screen.getByText("真实服务（REAL）")).toBeInTheDocument();
   expect(screen.getByText("0 USD")).toBeInTheDocument();
 });
 
@@ -234,9 +234,9 @@ test("真实 Provider 可用时显示安全端点并允许连接测试", async (
     screen.getByRole("button", { name: /创建真实研究分析/ }),
   ).toBeEnabled();
   await userEvent.click(
-    screen.getByRole("button", { name: "测试真实 Provider 连通性" }),
+    screen.getByRole("button", { name: "测试真实模型服务连通性" }),
   );
-  expect(await screen.findByText(/Provider 连通成功/)).toBeInTheDocument();
+  expect(await screen.findByText(/模型服务连通成功/)).toBeInTheDocument();
   expect(screen.queryByText(/super-secret|api_key/i)).not.toBeInTheDocument();
 });
 

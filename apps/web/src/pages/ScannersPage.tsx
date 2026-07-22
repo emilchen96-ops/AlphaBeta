@@ -8,6 +8,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Select,
   Space,
   Switch,
@@ -25,6 +26,12 @@ import type {
   ScannerParameterDefinition,
   ScannerParameterValue,
 } from "../types/scanners";
+import {
+  displayEnum,
+  displayParameter,
+  displayScanner,
+  formatInstrument,
+} from "../utils/display";
 
 interface RunFormValues {
   scanner_key: string;
@@ -41,13 +48,34 @@ function ParameterInput({
 }: {
   definition: ScannerParameterDefinition;
 }) {
-  if (definition.type === "boolean") return <Switch />;
+  if (definition.type === "boolean")
+    return <Switch checkedChildren="是" unCheckedChildren="否" />;
   if (definition.type === "integer") {
     return (
       <InputNumber
         precision={0}
         min={Number(definition.min_value ?? undefined)}
         max={Number(definition.max_value ?? undefined)}
+        style={{ width: "100%" }}
+      />
+    );
+  }
+  const percent = scannerPercentParameters.has(definition.name);
+  if (definition.type === "decimal") {
+    return (
+      <InputNumber
+        stringMode
+        min={
+          definition.min_value === null
+            ? undefined
+            : Number(definition.min_value) * (percent ? 100 : 1)
+        }
+        max={
+          definition.max_value === null
+            ? undefined
+            : Number(definition.max_value) * (percent ? 100 : 1)
+        }
+        suffix={percent ? "%" : undefined}
         style={{ width: "100%" }}
       />
     );
@@ -59,6 +87,12 @@ function ParameterInput({
     />
   );
 }
+
+const scannerPercentParameters = new Set([
+  "limit_up_threshold",
+  "baseline_tolerance",
+  "minimum_current_volume_ratio",
+]);
 
 export function ScannersPage() {
   const { message } = App.useApp();
@@ -109,7 +143,12 @@ export function ScannersPage() {
       parameters: Object.fromEntries(
         scanner?.parameters
           .filter((item) => item.default !== null)
-          .map((item) => [item.name, item.default]) ?? [],
+          .map((item) => [
+            item.name,
+            scannerPercentParameters.has(item.name)
+              ? Number(item.default) * 100
+              : item.default,
+          ]) ?? [],
       ),
       idempotency_key: `scan:${crypto.randomUUID()}`,
       price_adjustment_mode: "RAW",
@@ -121,11 +160,20 @@ export function ScannersPage() {
       ...values,
       as_of: new Date(values.as_of).toISOString(),
       parameters: Object.fromEntries(
-        Object.entries(values.parameters ?? {}).filter(
-          ([, value]) => value !== "",
-        ),
+        Object.entries(values.parameters ?? {})
+          .filter(([, value]) => value !== "")
+          .map(([name, value]) => [
+            name,
+            scannerPercentParameters.has(name) && value !== null
+              ? String(Number(value) / 100)
+              : value,
+          ]),
       ),
     });
+  };
+
+  const restoreDefaults = () => {
+    if (selected) openRun(selected.scanner_key);
   };
 
   return (
@@ -153,13 +201,9 @@ export function ScannersPage() {
         <Button onClick={() => void navigate("/scan-runs")}>
           查看扫描运行
         </Button>
-        <Button onClick={() => void navigate("/market")}>
-          查看 Instrument 与行情
-        </Button>
+        <Button onClick={() => void navigate("/market")}>查看标的与行情</Button>
         <Button onClick={() => void navigate("/strategies")}>查看策略</Button>
-        <Button onClick={() => void navigate("/signals")}>
-          查看研究 Signal
-        </Button>
+        <Button onClick={() => void navigate("/signals")}>查看研究信号</Button>
       </Space>
       <Space
         orientation="vertical"
@@ -169,7 +213,7 @@ export function ScannersPage() {
         {catalog.data?.map((item) => (
           <Card
             key={item.scanner_key}
-            title={item.display_name}
+            title={displayScanner(item.scanner_key)}
             extra={
               <Button
                 icon={<FilterOutlined />}
@@ -182,7 +226,7 @@ export function ScannersPage() {
           >
             <Typography.Paragraph>{item.description}</Typography.Paragraph>
             <Space wrap>
-              <Tag>{item.scanner_key}</Tag>
+              <Tag>{displayScanner(item.scanner_key)}</Tag>
               <Tag color="blue">v{item.version}</Tag>
               <Tag>历史日线</Tag>
               <Tag color="orange">非实时</Tag>
@@ -190,26 +234,45 @@ export function ScannersPage() {
             <Typography.Title level={5}>参数定义</Typography.Title>
             {item.parameters.map((parameter) => (
               <Typography.Paragraph key={parameter.name}>
-                <code>{parameter.name}</code> · {parameter.type} ·{" "}
-                {parameter.description}
+                <strong>{displayParameter(parameter.name)}</strong> ·{" "}
+                {displayEnum(parameter.type)} · {parameter.description}
               </Typography.Paragraph>
             ))}
           </Card>
         ))}
       </Space>
-      {selected ? (
-        <Card
-          title={`创建 ${selected.display_name} 扫描运行`}
-          style={{ marginTop: 16 }}
-        >
+      <Modal
+        open={Boolean(selected)}
+        title={
+          selected
+            ? `创建${displayScanner(selected.scanner_key)}扫描运行`
+            : "创建扫描运行"
+        }
+        width={760}
+        okText="开始扫描"
+        cancelText="取消"
+        confirmLoading={mutation.isPending}
+        okButtonProps={{ disabled: unavailable || mutation.isPending }}
+        onCancel={() => {
+          setSelectedKey(undefined);
+          form.resetFields();
+        }}
+        onOk={() => void submit()}
+        destroyOnHidden
+      >
+        {selected ? (
           <Form form={form} layout="vertical">
-            <Form.Item name="scanner_key" label="扫描器">
-              <Input disabled />
-            </Form.Item>
+            <Alert
+              showIcon
+              type="info"
+              title="配置历史日线扫描"
+              description="选择研究股票池、截止时间和规则参数。扫描结果仅供研究，不会创建信号或订单。"
+              style={{ marginBottom: 16 }}
+            />
             <Form.Item
               name="instrument_ids"
-              label="Instrument 股票池"
-              rules={[{ required: true }]}
+              label="研究股票池"
+              rules={[{ required: true, message: "请至少选择一只股票" }]}
             >
               <Select
                 mode="multiple"
@@ -218,8 +281,9 @@ export function ScannersPage() {
                 onSearch={setInstrumentSearch}
                 options={instruments.data?.items.map((item) => ({
                   value: item.id,
-                  label: `${item.symbol}.${item.exchange} · ${item.name}`,
+                  label: formatInstrument(item),
                 }))}
+                placeholder="按股票代码或名称搜索并选择"
               />
             </Form.Item>
             <Form.Item
@@ -235,7 +299,7 @@ export function ScannersPage() {
             </Form.Item>
             <Form.Item
               name="price_adjustment_mode"
-              label="价格模式"
+              label="价格复权模式"
               tooltip={
                 selected.scanner_key === "limit_up_pullback"
                   ? "涨停识别必须使用真实 RAW 价格。"
@@ -246,10 +310,12 @@ export function ScannersPage() {
               <Select
                 disabled={selected.scanner_key === "limit_up_pullback"}
                 options={[
-                  { value: "RAW", label: "RAW（未复权）" },
+                  { value: "RAW", label: "不复权（RAW）" },
                   {
                     value: "QFQ",
-                    label: qfqReady ? "QFQ（前复权）" : "QFQ（数据未就绪）",
+                    label: qfqReady
+                      ? "前复权（QFQ）"
+                      : "前复权（QFQ，数据未就绪）",
                     disabled:
                       !qfqReady || selected.scanner_key === "limit_up_pullback",
                   },
@@ -267,7 +333,8 @@ export function ScannersPage() {
               <Form.Item
                 key={definition.name}
                 name={["parameters", definition.name]}
-                label={`${definition.name} · ${definition.description}`}
+                label={displayParameter(definition.name)}
+                tooltip={definition.description}
                 valuePropName={
                   definition.type === "boolean" ? "checked" : "value"
                 }
@@ -276,24 +343,10 @@ export function ScannersPage() {
                 <ParameterInput definition={definition} />
               </Form.Item>
             ))}
-            <Form.Item
-              name="idempotency_key"
-              label="幂等键"
-              rules={[{ required: true }]}
-            >
-              <Input />
-            </Form.Item>
-            <Button
-              type="primary"
-              loading={mutation.isPending}
-              disabled={unavailable || mutation.isPending}
-              onClick={() => void submit()}
-            >
-              运行历史日线扫描
-            </Button>
+            <Button onClick={restoreDefaults}>恢复默认参数</Button>
           </Form>
-        </Card>
-      ) : null}
+        ) : null}
+      </Modal>
     </section>
   );
 }

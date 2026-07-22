@@ -200,7 +200,7 @@ export function ReplayRunsPage() {
             </Form.Item>
             <Form.Item
               name="instrument_ids"
-              label="Instrument"
+              label="股票标的"
               rules={[{ required: true }]}
             >
               <Select
@@ -232,7 +232,7 @@ export function ReplayRunsPage() {
             <Form.Item name="order_type" label="订单类型">
               <Select options={[{ value: "LIMIT" }, { value: "MARKET" }]} />
             </Form.Item>
-            <Form.Item name="time_in_force" label="TIF">
+            <Form.Item name="time_in_force" label="订单有效期（TIF）">
               <Select options={[{ value: "DAY" }, { value: "GTC" }]} />
             </Form.Item>
             <Form.Item
@@ -303,13 +303,6 @@ export function ReplayRunsPage() {
               ))}
             </div>
           </Card>
-          <Form.Item
-            name="idempotency_key"
-            label="幂等键"
-            rules={[{ required: true }]}
-          >
-            <Input />
-          </Form.Item>
           <Button type="primary" htmlType="submit" loading={create.isPending}>
             创建历史回放
           </Button>
@@ -442,7 +435,7 @@ export function ReplayMarketPanel({
 }) {
   const currentBar = state?.current_bar as Record<string, unknown> | undefined;
   return (
-    <Card title="当前历史 Session / K 线">
+    <Card title="当前历史交易日（Session）/ K 线">
       <Descriptions column={2} size="small">
         <Descriptions.Item label="业务日期">
           {run.current_session_date ?? "尚未推进"}
@@ -636,7 +629,7 @@ export function ReplayRunDetailPage() {
         <Alert
           showIcon
           type="error"
-          title="Replay Worker 离线"
+          title="回放执行服务（Replay Worker）离线"
           description="请启动 replay_worker；已提交的事实不会丢失。若 lease 过期，系统会暂停并要求手工恢复。"
         />
       ) : null}
@@ -644,13 +637,13 @@ export function ReplayRunDetailPage() {
         <Space wrap size="large">
           <Statistic title="状态" value={run.data.status} />
           <Statistic
-            title="当前 Session"
+            title="当前交易日（Session）"
             value={run.data.current_session_date ?? "—"}
           />
           <Statistic title="速度" value={run.data.speed_mode} />
-          <Statistic title="Signal" value={run.data.signals_generated} />
+          <Statistic title="研究信号" value={run.data.signals_generated} />
           <Statistic
-            title="Order / Fill"
+            title="订单 / 成交"
             value={`${run.data.orders_created} / ${run.data.fills_generated}`}
           />
           <Tag color={run.data.worker_online ? "success" : "error"}>
@@ -711,7 +704,7 @@ export function ReplayRunDetailPage() {
           ]}
         />
       </Card>
-      <Card title="最终 Metrics 与 Integrity" className="details-card">
+      <Card title="最终指标与完整性检查" className="details-card">
         <Descriptions column={2} bordered size="small">
           {Object.entries(run.data.final_summary ?? {}).map(([key, value]) => (
             <Descriptions.Item key={key} label={key}>

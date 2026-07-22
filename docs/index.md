@@ -1,5 +1,8 @@
 # AlphaDesk 文档索引
 
+> UX01 前端中文化、业务可读性、内部编号降噪和关键交互规范见
+> [前端可读性规范](ux_conventions.md)。该整改不改变 API、数据库或交易安全边界。
+
 ## D02 市场数据语义
 
 - [A 股交易日历](trading_calendar.md)

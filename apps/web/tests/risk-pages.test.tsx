@@ -152,18 +152,20 @@ test("风控详情展示规则、快照、限制与订单跳转", async () => {
   ).toBeInTheDocument();
   expect(await screen.findByText("account_eligibility")).toBeInTheDocument();
   expect(screen.getByText(/实际使用的风险限制/)).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /查看 Order/ })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: /查看关联订单/ })).toHaveAttribute(
     "href",
     `/orders?order_id=${base.order_id}`,
   );
 });
 
-test("限制页只读并在 Kill Switch 开启时告警", async () => {
+test("限制页只读并在紧急停止开关开启时告警", async () => {
   renderRoute("/risk/limits");
   expect(
     await screen.findByRole("heading", { name: "当前风控限制" }),
   ).toBeInTheDocument();
-  expect(await screen.findByText("Kill Switch 已开启")).toBeInTheDocument();
+  expect(
+    await screen.findByText("紧急停止开关（Kill Switch）已开启"),
+  ).toBeInTheDocument();
   expect(screen.getByText(/不允许通过浏览器修改风控限制/)).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /开启|关闭|保存/ }),

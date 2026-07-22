@@ -237,23 +237,23 @@ test("回测列表展示配置入口、时间规则和本地运行记录", async
   renderRoute("/backtest");
   expect(await screen.findByText("A 股日线回测")).toBeInTheDocument();
   expect(screen.getByText("历史回测边界")).toBeInTheDocument();
-  expect(screen.getByText("同步运行回测")).toBeInTheDocument();
-  expect(await screen.findByText("sma_crossover")).toBeInTheDocument();
+  expect(screen.getByText("开始回测")).toBeInTheDocument();
+  expect(await screen.findByText(/均线交叉策略/)).toBeInTheDocument();
 });
 
 test("回测详情展示指标、曲线、事实与完整性状态", async () => {
   renderRoute(`/backtest/${runId}`);
   expect(
-    await screen.findByText("回测详情 · sma_crossover"),
+    await screen.findByText(/回测详情 · 均线交叉策略/),
   ).toBeInTheDocument();
-  expect(screen.getByText("Integrity 通过")).toBeInTheDocument();
+  expect(screen.getByText("完整性检查：通过")).toBeInTheDocument();
   expect(screen.getByText("权益曲线")).toBeInTheDocument();
   expect(screen.getByText("回撤曲线")).toBeInTheDocument();
   expect(
-    screen.getByText("PROFIT_FACTOR_UNDEFINED_NO_LOSS_TRADES"),
+    screen.getByText("没有亏损交易，利润因子无法计算"),
   ).toBeInTheDocument();
   await waitFor(() => expect(screen.getByText("1.00%")).toBeInTheDocument());
-  expect(screen.getByText("1200")).toBeInTheDocument();
+  expect(screen.getByText("¥1,200.00")).toBeInTheDocument();
   expect(screen.queryByText("120000.00%")).not.toBeInTheDocument();
   expect(screen.getByText("SMA crossed above")).toBeInTheDocument();
   expect(
@@ -261,15 +261,21 @@ test("回测详情展示指标、曲线、事实与完整性状态", async () =>
   ).not.toBeInTheDocument();
 }, 60_000);
 
-test("创建表单提交用户提供的幂等键并允许成交量参与率留空", async () => {
+test("创建表单自动生成内部幂等键并允许成交量参与率留空", async () => {
   const user = userEvent.setup();
   renderRoute("/backtest");
 
+  await user.click(screen.getByRole("switch"));
+
   await user.click(await screen.findByLabelText("策略"));
-  await user.click(await screen.findByText(/SMA Crossover/));
+  await user.click(
+    await screen.findByText(/SMA Crossover/, {
+      selector: ".ant-select-item-option-content",
+    }),
+  );
   await user.click(screen.getByLabelText("本地历史数据源"));
-  await user.click(await screen.findByText(/BT01 Demo/));
-  await user.click(screen.getByLabelText(/Instrument/));
+  await user.click(await screen.findByText(/BT01 测试数据/));
+  await user.click(screen.getByLabelText(/回测股票/));
   await user.click(await screen.findByText(/600000/));
   fireEvent.change(screen.getByLabelText("开始日期"), {
     target: { value: "2026-01-01" },
@@ -277,22 +283,19 @@ test("创建表单提交用户提供的幂等键并允许成交量参与率留�
   fireEvent.change(screen.getByLabelText(/结束日期/), {
     target: { value: "2026-01-15" },
   });
-  fireEvent.change(screen.getByLabelText("幂等键"), {
-    target: { value: "backtest:reusable-test" },
-  });
   fireEvent.change(screen.getByLabelText(/最大成交量参与率/), {
     target: { value: "" },
   });
-  await user.click(screen.getByRole("button", { name: /同步运行回测/ }));
+  await user.click(screen.getByRole("button", { name: /开始回测/ }));
 
   await waitFor(() => expect(submittedBody).not.toBeNull());
   expect(submittedBody).toMatchObject({
-    idempotency_key: "backtest:reusable-test",
     maximum_volume_participation: null,
     strategy_key: "sma_crossover",
     data_source_code: "BT01_DEMO",
     instrument_ids: ["instrument-1"],
   });
+  expect(String(submittedBody?.idempotency_key)).toMatch(/^backtest:/);
 }, 60_000);
 
 test.each(["CREATED", "RUNNING", "FAILED"] as const)(
@@ -320,17 +323,17 @@ test.each(["CREATED", "RUNNING", "FAILED"] as const)(
   },
 );
 
-test("事实标签分别展示 Signal、Risk、Order、Fill 与 Timeline 的关键字段", async () => {
+test("事实标签分别展示研究信号、风控、订单、成交与时间线的关键字段", async () => {
   const user = userEvent.setup();
   renderRoute(`/backtest/${runId}`);
   expect(await screen.findByText("SMA crossed above")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("tab", { name: /RiskDecision/ }));
-  expect(screen.getByText("PASS")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /Order/ }));
-  expect(screen.getByText("FILLED")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /Fill/ }));
-  expect(screen.getByText("1007.01")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /Timeline/ }));
+  await user.click(screen.getByRole("tab", { name: /风控决策/ }));
+  expect(screen.getByText("风控通过")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: /订单/ }));
+  expect(screen.getByText("全部成交")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: /成交与费用/ }));
+  expect(screen.getByText("¥1,007.01")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: /事件时间线/ }));
   expect(screen.getByText("Execute pending orders")).toBeInTheDocument();
 }, 60_000);

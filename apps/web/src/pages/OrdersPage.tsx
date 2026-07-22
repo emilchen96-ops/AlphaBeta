@@ -455,7 +455,7 @@ export function OrdersPage() {
           </Form.Item>
           <Form.Item
             name="instrument_id"
-            label="Instrument"
+            label="股票标的"
             rules={[{ required: true }]}
           >
             <Select
@@ -481,7 +481,7 @@ export function OrdersPage() {
                 options={[{ value: "LIMIT" }, { value: "MARKET" }]}
               />
             </Form.Item>
-            <Form.Item name="time_in_force" label="TIF">
+            <Form.Item name="time_in_force" label="订单有效期（TIF）">
               <Select
                 style={{ width: 120 }}
                 options={[{ value: "DAY" }, { value: "GTC" }]}
@@ -647,7 +647,7 @@ export function OrdersPage() {
                 icon={<CloseCircleOutlined />}
                 showIcon
                 type="warning"
-                title={`Outbox 状态：${factStatus(detail.data.outbox[0])}`}
+                title={`本地发件箱（Outbox）状态：${factStatus(detail.data.outbox[0])}`}
                 description="本地模拟执行后 Outbox 会被 SUPPRESSED；SUPPRESSED 不等于 PUBLISHED。"
               />
             ) : (

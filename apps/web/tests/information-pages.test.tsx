@@ -101,7 +101,7 @@ test("手工录入表单支持来源、正文、Instrument与主题", async () =
   fireEvent.click(screen.getByRole("button", { name: /手工录入/ }));
   expect(await screen.findByLabelText("来源名称")).toBeInTheDocument();
   expect(screen.getByLabelText("正文")).toBeInTheDocument();
-  expect(screen.getByText("Instrument 关联")).toBeInTheDocument();
+  expect(screen.getByText("关联标的")).toBeInTheDocument();
   expect(screen.getByLabelText("主题 key")).toBeInTheDocument();
 });
 

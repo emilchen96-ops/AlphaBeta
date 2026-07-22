@@ -2,6 +2,7 @@ import { apiRequest } from "./client";
 import type {
   AdjustmentType,
   InstrumentPage,
+  Instrument,
   MarketBarsResponse,
   MarketDataSource,
   MarketTimeframe,
@@ -27,6 +28,10 @@ export function getInstruments(keyword: string) {
   const query = new URLSearchParams({ page: "1", page_size: "50" });
   if (keyword.trim()) query.set("keyword", keyword.trim());
   return apiRequest<InstrumentPage>(`/api/v1/instruments?${query}`);
+}
+
+export function getInstrument(id: string) {
+  return apiRequest<Instrument>(`/api/v1/instruments/${id}`);
 }
 
 export function getLatestQuotes(instrumentIds: string[]) {

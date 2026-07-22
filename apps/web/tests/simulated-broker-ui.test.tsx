@@ -168,7 +168,7 @@ test("成交记录页面只读展示费用拆分", async () => {
     screen.getByText(/不能创建、编辑、删除或强制记账/),
   ).toBeInTheDocument();
   fireEvent.click(await screen.findByText(fill.fill_id));
-  expect(await screen.findByText("Fill 详情（只读）")).toBeInTheDocument();
+  expect(await screen.findByText("成交详情（Fill，只读）")).toBeInTheDocument();
   expect(
     await screen.findByText("印花税", {}, { timeout: 10_000 }),
   ).toBeInTheDocument();
