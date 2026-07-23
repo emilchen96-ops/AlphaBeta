@@ -34,8 +34,30 @@ class ScannerParameterType(StrEnum):
 
 class ScanRunStatus(StrEnum):
     CREATED = "CREATED"
+    QUEUED = "QUEUED"
+    RESOLVING = "RESOLVING"
+    CHECKING_DATA = "CHECKING_DATA"
+    BACKFILLING = "BACKFILLING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
+class ScanUniverseType(StrEnum):
+    ALL_ACTIVE_A_SHARES = "ALL_ACTIVE_A_SHARES"
+    CUSTOM_INSTRUMENTS = "CUSTOM_INSTRUMENTS"
+
+
+class ScanMemberStatus(StrEnum):
+    INCLUDED = "INCLUDED"
+    EXCLUDED = "EXCLUDED"
+    DATA_MISSING = "DATA_MISSING"
+    BACKFILL_REQUESTED = "BACKFILL_REQUESTED"
+    READY = "READY"
+    SCANNED = "SCANNED"
+    MATCHED = "MATCHED"
     FAILED = "FAILED"
 
 
@@ -49,6 +71,8 @@ class ScannerParameterDefinition:
     name: str
     parameter_type: ScannerParameterType
     description: str
+    display_name: str | None = None
+    unit: str | None = None
     default: ScannerParameterValue = None
     required: bool = False
     nullable: bool = False
@@ -58,6 +82,8 @@ class ScannerParameterDefinition:
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", non_empty(self.name, "name"))
         object.__setattr__(self, "description", non_empty(self.description, "description"))
+        if self.display_name is not None:
+            object.__setattr__(self, "display_name", non_empty(self.display_name, "display_name"))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -224,6 +250,8 @@ class VolumeAnomalyScanner(BaseScanner):
                 name="volume_window",
                 parameter_type=ScannerParameterType.INTEGER,
                 description="历史均量窗口, 不包含当前K线",
+                display_name="平均成交量计算周期",
+                unit="交易日",
                 default=20,
                 min_value=1,
                 max_value=500,
@@ -232,6 +260,8 @@ class VolumeAnomalyScanner(BaseScanner):
                 name="minimum_volume_ratio",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="最小成交量倍数",
+                display_name="最低成交量倍数",
+                unit="倍",
                 default=Decimal("2"),
                 min_value=Decimal("0"),
             ),
@@ -239,6 +269,8 @@ class VolumeAnomalyScanner(BaseScanner):
                 name="minimum_amount",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="可选最小成交额",
+                display_name="最低成交额",
+                unit="元",
                 nullable=True,
                 min_value=Decimal("0"),
             ),
@@ -246,6 +278,8 @@ class VolumeAnomalyScanner(BaseScanner):
                 name="minimum_price",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="可选最小收盘价",
+                display_name="最低股价",
+                unit="元",
                 nullable=True,
                 min_value=Decimal("0"),
             ),
@@ -253,12 +287,16 @@ class VolumeAnomalyScanner(BaseScanner):
                 name="minimum_daily_return",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="可选最小日收益率",
+                display_name="最低当日涨跌幅",
+                unit="%",
                 nullable=True,
             ),
             ScannerParameterDefinition(
                 name="maximum_daily_return",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="可选最大日收益率",
+                display_name="最高当日涨跌幅",
+                unit="%",
                 nullable=True,
             ),
         ),
@@ -335,6 +373,8 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="lookback_days",
                 parameter_type=ScannerParameterType.INTEGER,
                 description="向前查找涨停近似K线的交易日数量",
+                display_name="回溯交易日数",
+                unit="交易日",
                 default=20,
                 min_value=2,
                 max_value=500,
@@ -343,6 +383,8 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="limit_up_threshold",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="涨停近似收益率阈值",
+                display_name="涨停判定阈值",
+                unit="%",
                 default=Decimal("0.095"),
                 min_value=Decimal("0"),
                 max_value=Decimal("1"),
@@ -351,6 +393,8 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="baseline_tolerance",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="当前价格与起涨基准价的最大距离",
+                display_name="基准价容差",
+                unit="%",
                 default=Decimal("0.05"),
                 min_value=Decimal("0"),
                 max_value=Decimal("1"),
@@ -359,6 +403,8 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="minimum_days_after_limit_up",
                 parameter_type=ScannerParameterType.INTEGER,
                 description="涨停近似日至当前的最小交易日间隔",
+                display_name="涨停后最短间隔",
+                unit="交易日",
                 default=2,
                 min_value=1,
                 max_value=500,
@@ -367,6 +413,8 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="maximum_days_after_limit_up",
                 parameter_type=ScannerParameterType.INTEGER,
                 description="可选最大交易日间隔",
+                display_name="涨停后最长间隔",
+                unit="交易日",
                 nullable=True,
                 min_value=1,
                 max_value=500,
@@ -375,12 +423,15 @@ class LimitUpPullbackScanner(BaseScanner):
                 name="require_current_above_baseline",
                 parameter_type=ScannerParameterType.BOOLEAN,
                 description="要求当前价格不低于起涨基准价",
+                display_name="当前价格不低于起涨基准价",
                 default=True,
             ),
             ScannerParameterDefinition(
                 name="minimum_current_volume_ratio",
                 parameter_type=ScannerParameterType.DECIMAL,
                 description="可选当前成交量相对历史均量下限",
+                display_name="当前成交量最低比例",
+                unit="倍",
                 nullable=True,
                 min_value=Decimal("0"),
             ),
@@ -529,6 +580,40 @@ def scanner_request_fingerprint(payload: Mapping[str, object]) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def scanner_required_history_bars(
+    scanner_key: str, parameters: Mapping[str, ScannerParameterValue]
+) -> int:
+    """Return the minimum deterministic daily-bar count needed by one rule."""
+
+    if scanner_key == "volume_anomaly":
+        return int(parameters.get("volume_window") or 20) + 1
+    if scanner_key == "limit_up_pullback":
+        return int(parameters.get("lookback_days") or 20) + 1
+    raise ScannerError("SCANNER_NOT_FOUND", f"scanner '{scanner_key}' does not exist")
+
+
+def is_st_instrument(instrument: Instrument) -> bool:
+    """Centralized ST classification using formal metadata first and name fallback."""
+
+    metadata_value = instrument.metadata.get("is_st")
+    if isinstance(metadata_value, bool):
+        return metadata_value
+    normalized = instrument.name.strip().upper().replace("\uff33\uff34", "ST")
+    return normalized.startswith(("ST", "*ST", "S*ST"))
+
+
+def is_delisting_instrument(instrument: Instrument) -> bool:
+    """Identify delisting-consolidation shares from formal metadata or name."""
+
+    metadata_value = instrument.metadata.get("is_delisting")
+    if isinstance(metadata_value, bool):
+        return metadata_value
+    status = str(instrument.metadata.get("security_status", "")).strip().upper()
+    if status in {"DELISTING", "DELISTING_CONSOLIDATION", "TERMINATING"}:
+        return True
+    return "退市" in instrument.name or instrument.name.strip().upper().startswith("退")
+
+
 @dataclass(slots=True, kw_only=True)
 class ScanRun:
     scanner_key: str
@@ -543,6 +628,18 @@ class ScanRun:
     request_fingerprint: str
     correlation_id: UUID
     price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
+    universe_filters: dict[str, object] = field(default_factory=dict)
+    source_code: str = "MINIQMT"
+    total_instruments: int = 0
+    excluded_instruments: int = 0
+    data_ready_instruments: int = 0
+    backfill_requested: int = 0
+    backfill_failed: int = 0
+    insufficient_history: int = 0
+    failed_instruments: int = 0
+    progress_percent: int = 0
+    cancel_requested: bool = False
+    backfill_requested_at: datetime | None = None
     id: UUID = field(default_factory=uuid4)
     instruments_scanned: int = 0
     matches_found: int = 0
@@ -565,26 +662,69 @@ class ScanRun:
         if len(self.request_fingerprint) != 64:
             raise ValueError("request_fingerprint must be SHA-256 hex")
         self.instrument_ids = tuple(sorted(set(self.instrument_ids), key=str))
-        if not self.instrument_ids:
+        if (
+            self.universe_type == ScanUniverseType.CUSTOM_INSTRUMENTS.value
+            and not self.instrument_ids
+        ):
             raise ValueError("instrument_ids must not be empty")
         if self.timeframe is not MarketTimeframe.DAY_1:
             raise ValueError("only DAY_1 scans are supported")
         self.as_of = as_utc(self.as_of, "as_of")
-        if self.instruments_scanned < 0 or self.matches_found < 0:
+        counters = (
+            self.total_instruments,
+            self.excluded_instruments,
+            self.data_ready_instruments,
+            self.backfill_requested,
+            self.backfill_failed,
+            self.insufficient_history,
+            self.instruments_scanned,
+            self.matches_found,
+            self.failed_instruments,
+        )
+        if any(value < 0 for value in counters):
             raise ValueError("scan counters must be non-negative")
+        if not 0 <= self.progress_percent <= 100:
+            raise ValueError("progress_percent must be between zero and one hundred")
         for name in ("started_at", "completed_at", "failed_at"):
             value = getattr(self, name)
             if value is not None:
                 setattr(self, name, as_utc(value, name))
+        if self.backfill_requested_at is not None:
+            self.backfill_requested_at = as_utc(self.backfill_requested_at, "backfill_requested_at")
         self.created_at = as_utc(self.created_at, "created_at")
         self.updated_at = as_utc(self.updated_at, "updated_at")
 
     def mark_running(self, occurred_at: datetime) -> None:
-        if self.status is not ScanRunStatus.CREATED:
-            raise ValueError("only CREATED scan runs can start")
+        if self.status not in {
+            ScanRunStatus.CREATED,
+            ScanRunStatus.QUEUED,
+            ScanRunStatus.RESOLVING,
+            ScanRunStatus.CHECKING_DATA,
+            ScanRunStatus.BACKFILLING,
+        }:
+            raise ValueError("scan run cannot start from its current status")
         now = as_utc(occurred_at, "occurred_at")
         self.status = ScanRunStatus.RUNNING
-        self.started_at = now
+        self.started_at = self.started_at or now
+        self.updated_at = now
+
+    def mark_phase(
+        self, status: ScanRunStatus, occurred_at: datetime, *, progress_percent: int
+    ) -> None:
+        if status not in {
+            ScanRunStatus.QUEUED,
+            ScanRunStatus.RESOLVING,
+            ScanRunStatus.CHECKING_DATA,
+            ScanRunStatus.BACKFILLING,
+            ScanRunStatus.RUNNING,
+        }:
+            raise ValueError("invalid in-progress scan phase")
+        if not 0 <= progress_percent <= 99:
+            raise ValueError("in-progress percent must be between zero and ninety-nine")
+        now = as_utc(occurred_at, "occurred_at")
+        self.status = status
+        self.started_at = self.started_at or (now if status is not ScanRunStatus.QUEUED else None)
+        self.progress_percent = progress_percent
         self.updated_at = now
 
     def mark_completed(self, occurred_at: datetime, instruments: int, matches: int) -> None:
@@ -596,6 +736,29 @@ class ScanRun:
         self.status = ScanRunStatus.COMPLETED
         self.instruments_scanned = instruments
         self.matches_found = matches
+        self.progress_percent = 100
+        self.completed_at = now
+        self.updated_at = now
+
+    def mark_partial(self, occurred_at: datetime, instruments: int, matches: int) -> None:
+        self.mark_completed(occurred_at, instruments, matches)
+        self.status = ScanRunStatus.PARTIAL
+
+    def request_cancel(self, occurred_at: datetime) -> None:
+        if self.status in {
+            ScanRunStatus.COMPLETED,
+            ScanRunStatus.PARTIAL,
+            ScanRunStatus.FAILED,
+            ScanRunStatus.CANCELED,
+        }:
+            raise ValueError("completed scan run cannot be canceled")
+        now = as_utc(occurred_at, "occurred_at")
+        self.cancel_requested = True
+        self.updated_at = now
+
+    def mark_canceled(self, occurred_at: datetime) -> None:
+        now = as_utc(occurred_at, "occurred_at")
+        self.status = ScanRunStatus.CANCELED
         self.completed_at = now
         self.updated_at = now
 
@@ -606,6 +769,32 @@ class ScanRun:
         self.error_code = non_empty(code, "error_code")[:64]
         self.error_message = non_empty(message, "error_message")[:512]
         self.updated_at = now
+
+
+@dataclass(slots=True, kw_only=True)
+class ScanRunMember:
+    scan_run_id: UUID
+    instrument_id: UUID
+    symbol: str
+    exchange: str
+    instrument_name: str
+    status: ScanMemberStatus
+    reason_code: str | None = None
+    reason: str | None = None
+    bars_available: int = 0
+    required_bars: int = 0
+    id: UUID = field(default_factory=uuid4)
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+    def __post_init__(self) -> None:
+        self.symbol = non_empty(self.symbol, "symbol")
+        self.exchange = non_empty(self.exchange, "exchange")
+        self.instrument_name = non_empty(self.instrument_name, "instrument_name")
+        if self.bars_available < 0 or self.required_bars < 0:
+            raise ValueError("bar counters must be non-negative")
+        self.created_at = as_utc(self.created_at, "created_at")
+        self.updated_at = as_utc(self.updated_at, "updated_at")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -1,10 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Alert,
+  App,
   Button,
   Card,
   Descriptions,
   Empty,
+  Progress,
   Select,
   Space,
   Table,
@@ -15,7 +17,9 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import {
+  cancelScanRun,
   getScannerCatalog,
+  getScanMembers,
   getScanResults,
   getScanRun,
   getScanRuns,
@@ -27,26 +31,37 @@ import {
   displayScanner,
   formatDateTime,
   formatInstrument,
-  formatPrice,
   formatNumber,
+  formatPrice,
   shortId,
 } from "../utils/display";
 
 const statusText: Record<string, string> = {
   CREATED: "已创建",
-  RUNNING: "运行中",
+  QUEUED: "等待中",
+  RESOLVING: "正在解析股票范围",
+  CHECKING_DATA: "正在检查历史数据",
+  BACKFILLING: "正在补齐历史数据",
+  RUNNING: "正在扫描",
   COMPLETED: "已完成",
+  PARTIAL: "部分完成",
   FAILED: "运行失败",
+  CANCELED: "已取消",
+  INCLUDED: "已纳入范围",
+  EXCLUDED: "已排除",
+  DATA_MISSING: "历史数据不足",
+  BACKFILL_REQUESTED: "已请求补数",
+  READY: "数据就绪",
+  SCANNED: "已扫描未命中",
+  MATCHED: "已命中",
 };
 
-const warning = (
-  <Alert
-    showIcon
-    type="info"
-    title="历史规则筛选，不代表投资建议"
-    description="当前不是实时扫描，不会自动创建订单、调用风控或 Broker，也不会修改账户和账本。"
-  />
-);
+const terminalStatuses = new Set([
+  "COMPLETED",
+  "PARTIAL",
+  "FAILED",
+  "CANCELED",
+]);
 
 export function ScanRunsPage() {
   const navigate = useNavigate();
@@ -61,14 +76,19 @@ export function ScanRunsPage() {
     queryKey: ["scan-runs", page, scannerKey, status],
     queryFn: () =>
       getScanRuns({ page, page_size: 20, scanner_key: scannerKey, status }),
+    refetchInterval: 3000,
   });
   return (
     <section>
-      <PageHeader title="扫描运行" description="可审计的历史日线扫描记录。" />
-      {warning}
-      <Card style={{ marginTop: 16 }}>
+      <PageHeader
+        title="扫描运行"
+        description="查看全A股日线扫描任务、数据准备进度和命中数量。"
+      />
+      <Card>
         <Space wrap style={{ marginBottom: 16 }}>
-          <Button onClick={() => void navigate("/scanners")}>新建扫描</Button>
+          <Button type="primary" onClick={() => void navigate("/scanners")}>
+            新建全市场扫描
+          </Button>
           <Select<string>
             allowClear
             placeholder="扫描器筛选"
@@ -85,11 +105,18 @@ export function ScanRunsPage() {
           <Select<string>
             allowClear
             placeholder="状态筛选"
-            style={{ width: 160 }}
-            options={Object.entries(statusText).map(([value, label]) => ({
-              value,
-              label,
-            }))}
+            style={{ width: 190 }}
+            options={[
+              "QUEUED",
+              "RESOLVING",
+              "CHECKING_DATA",
+              "BACKFILLING",
+              "RUNNING",
+              "COMPLETED",
+              "PARTIAL",
+              "FAILED",
+              "CANCELED",
+            ].map((value) => ({ value, label: statusText[value] }))}
             onChange={(value) => {
               setPage(1);
               setStatus(value);
@@ -109,31 +136,48 @@ export function ScanRunsPage() {
           }}
           columns={[
             {
-              title: "扫描记录",
+              title: "扫描任务",
               render: (_, item) => (
                 <Space orientation="vertical" size={0}>
                   <Typography.Text>
-                    {formatDateTime(item.created_at)}
+                    {displayScanner(item.scanner_key)}
                   </Typography.Text>
                   <Typography.Text type="secondary">
-                    {displayScanner(item.scanner_key)}
+                    {formatDateTime(item.created_at)} · {shortId(item.scan_run_id)}
                   </Typography.Text>
                 </Space>
               ),
             },
             {
-              title: "状态",
-              render: (_, item) => <Tag>{statusText[item.status]}</Tag>,
+              title: "状态与进度",
+              render: (_, item) => (
+                <Space orientation="vertical" size={2}>
+                  <Tag>{statusText[item.status] ?? item.status}</Tag>
+                  <Progress
+                    percent={item.progress_percent}
+                    size="small"
+                    style={{ width: 120 }}
+                  />
+                </Space>
+              ),
             },
             {
-              title: "股票池",
-              render: (_, item) => item.instrument_ids.length,
+              title: "扫描范围",
+              render: (_, item) => (
+                <Space orientation="vertical" size={0}>
+                  <Typography.Text>全部A股</Typography.Text>
+                  <Typography.Text type="secondary">
+                    总数 {item.total_instruments} · 排除{" "}
+                    {item.excluded_instruments}
+                  </Typography.Text>
+                </Space>
+              ),
             },
             { title: "已扫描", dataIndex: "instruments_scanned" },
-            { title: "匹配", dataIndex: "matches_found" },
+            { title: "命中", dataIndex: "matches_found" },
             {
-              title: "截止时间",
-              render: (_, item) => formatDateTime(item.as_of),
+              title: "扫描日期",
+              render: (_, item) => item.as_of.slice(0, 10),
             },
             {
               title: "操作",
@@ -156,30 +200,58 @@ export function ScanRunsPage() {
 }
 
 export function ScanRunDetailPage() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const { runId = "" } = useParams();
+  const [resultPage, setResultPage] = useState(1);
   const detail = useQuery({
     queryKey: ["scan-run", runId],
     queryFn: () => getScanRun(runId),
     enabled: Boolean(runId),
+    refetchInterval: (query) =>
+      terminalStatuses.has(query.state.data?.status ?? "") ? false : 2000,
   });
   const results = useQuery({
-    queryKey: ["scan-results", runId],
-    queryFn: () => getScanResults(runId),
+    queryKey: ["scan-results", runId, resultPage],
+    queryFn: () => getScanResults(runId, { page: resultPage, page_size: 50 }),
     enabled: Boolean(runId),
+    refetchInterval: () =>
+      terminalStatuses.has(detail.data?.status ?? "") ? false : 3000,
+  });
+  const members = useQuery({
+    queryKey: ["scan-members", runId],
+    queryFn: () => getScanMembers(runId),
+    enabled: Boolean(runId),
+    refetchInterval: () =>
+      terminalStatuses.has(detail.data?.status ?? "") ? false : 3000,
+  });
+  const cancel = useMutation({
+    mutationFn: () => cancelScanRun(runId),
+    onSuccess: () => {
+      void message.success("已提交取消请求");
+      void detail.refetch();
+    },
+    onError: (error: Error) => void message.error(error.message),
   });
   const item = detail.data;
   return (
     <section>
       <PageHeader
         title="扫描运行详情"
-        description="查看本次扫描配置、统计和匹配结果。"
+        description="查看全A股范围解析、MiniQMT数据准备、扫描进度和匹配结果。"
       />
-      {warning}
-      <Space wrap style={{ marginTop: 16 }}>
-        <Button onClick={() => void navigate("/market")}>标的与行情</Button>
-        <Button onClick={() => void navigate("/strategies")}>策略目录</Button>
-        <Button onClick={() => void navigate("/signals")}>研究信号</Button>
+      <Space wrap>
+        <Button onClick={() => void navigate("/scan-runs")}>返回扫描运行</Button>
+        <Button onClick={() => void navigate("/market")}>查看行情</Button>
+        {item && !terminalStatuses.has(item.status) ? (
+          <Button
+            danger
+            loading={cancel.isPending}
+            onClick={() => cancel.mutate()}
+          >
+            取消任务
+          </Button>
+        ) : null}
       </Space>
       {item ? (
         <Card style={{ marginTop: 16 }}>
@@ -188,8 +260,23 @@ export function ScanRunDetailPage() {
               type="error"
               title="扫描失败"
               description={item.error?.message ?? "扫描运行失败"}
+              style={{ marginBottom: 16 }}
             />
           ) : null}
+          {item.status === "PARTIAL" ? (
+            <Alert
+              type="warning"
+              title="扫描已部分完成"
+              description="部分股票因历史数据不足或单股计算失败被跳过，请查看下方范围统计。"
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
+          <Progress
+            percent={item.progress_percent}
+            status={item.status === "FAILED" ? "exception" : undefined}
+            format={() => statusText[item.current_phase] ?? item.current_phase}
+            style={{ marginBottom: 16 }}
+          />
           <Descriptions
             bordered
             column={2}
@@ -202,23 +289,40 @@ export function ScanRunDetailPage() {
               {
                 key: "status",
                 label: "状态",
-                children: statusText[item.status],
+                children: statusText[item.status] ?? item.status,
               },
-              { key: "asof", label: "截止时间", children: item.as_of },
-              { key: "timeframe", label: "周期", children: item.timeframe },
+              {
+                key: "asof",
+                label: "扫描日期",
+                children: item.as_of.slice(0, 10),
+              },
+              { key: "timeframe", label: "数据周期", children: "日线" },
               {
                 key: "universe",
-                label: "股票池",
-                children: `${item.instrument_ids.length} 只股票`,
+                label: "扫描范围",
+                children: "全部正常上市A股",
               },
               {
-                key: "count",
-                label: "结果",
-                children: `${item.matches_found} / ${item.instruments_scanned}`,
+                key: "source",
+                label: "数据来源",
+                children:
+                  item.source_code === "MINIQMT"
+                    ? "MiniQMT"
+                    : item.source_code,
+              },
+              {
+                key: "scope-count",
+                label: "范围统计",
+                children: `目录 ${item.total_instruments} · 排除 ${item.excluded_instruments} · 数据就绪 ${item.data_ready_instruments}`,
+              },
+              {
+                key: "scan-count",
+                label: "扫描统计",
+                children: `已扫描 ${item.instruments_scanned} · 命中 ${item.matches_found} · 历史不足 ${item.insufficient_history} · 失败 ${item.failed_instruments}`,
               },
               {
                 key: "params",
-                label: "规范化参数",
+                label: "规则参数",
                 children: (
                   <Space orientation="vertical" size={2}>
                     {Object.entries(item.parameters).map(([name, value]) => (
@@ -232,7 +336,9 @@ export function ScanRunDetailPage() {
               {
                 key: "completed",
                 label: "完成时间",
-                children: item.completed_at ?? "—",
+                children: item.completed_at
+                  ? formatDateTime(item.completed_at)
+                  : "—",
               },
             ]}
           />
@@ -242,7 +348,7 @@ export function ScanRunDetailPage() {
             items={[
               {
                 key: "internal-id",
-                label: "内部扫描编号",
+                label: "扫描任务编号",
                 children: (
                   <Typography.Text copyable={{ text: item.scan_run_id }}>
                     {shortId(item.scan_run_id)}
@@ -251,16 +357,33 @@ export function ScanRunDetailPage() {
               },
             ]}
           />
+          <Typography.Title level={4}>股票范围与数据准备</Typography.Title>
+          <Space wrap>
+            {Object.entries(members.data?.summary ?? {}).map(
+              ([memberStatus, count]) => (
+                <Tag key={memberStatus}>
+                  {statusText[memberStatus] ?? memberStatus}：{count}
+                </Tag>
+              ),
+            )}
+            <Tag>补数请求：{item.backfill_requested}</Tag>
+            <Tag>补数入队失败：{item.backfill_failed}</Tag>
+          </Space>
           <Typography.Title level={4}>扫描结果</Typography.Title>
           <Table<ScanResult>
             rowKey="scan_result_id"
             dataSource={results.data?.items ?? []}
-            pagination={false}
-            locale={{ emptyText: <Empty description="本次扫描无匹配结果" /> }}
+            pagination={{
+              current: resultPage,
+              pageSize: 50,
+              total: results.data?.total ?? 0,
+              onChange: setResultPage,
+            }}
+            locale={{ emptyText: <Empty description="当前没有匹配结果" /> }}
             columns={[
               { title: "排名", dataIndex: "rank" },
               {
-                title: "标的",
+                title: "股票名称与代码",
                 render: (_, value) => formatInstrument(value.instrument),
               },
               {
@@ -274,14 +397,20 @@ export function ScanRunDetailPage() {
                 render: formatPrice,
               },
               {
-                title: "匹配时间",
-                render: (_, value) => formatDateTime(value.matched_at),
+                title: "匹配日期",
+                render: (_, value) => value.matched_at.slice(0, 10),
               },
-              { title: "规则说明", dataIndex: "reason" },
+              { title: "命中原因", dataIndex: "reason" },
               {
-                title: "指标",
+                title: "关键指标",
                 render: (_, value) => (
-                  <pre>{JSON.stringify(value.metrics, null, 2)}</pre>
+                  <Space orientation="vertical" size={0}>
+                    {Object.entries(value.metrics).map(([name, metric]) => (
+                      <Typography.Text key={name}>
+                        {displayParameter(name)}：{String(metric ?? "—")}
+                      </Typography.Text>
+                    ))}
+                  </Space>
                 ),
               },
             ]}

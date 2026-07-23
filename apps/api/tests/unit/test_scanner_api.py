@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Self
 from uuid import UUID
 
@@ -63,6 +64,7 @@ class Store:
     results: list[ScanResult]
     instruments: list[Instrument]
     bars: list[StrategyBar]
+    calendar_open: bool = True
 
 
 class RunRepository:
@@ -83,6 +85,9 @@ class RunRepository:
             (deepcopy(item) for item in self.store.runs.values() if item.idempotency_key == key),
             None,
         )
+
+    async def get_for_update(self, entity_id: UUID) -> ScanRun | None:
+        return await self.get_by_id(entity_id)
 
     async def list(
         self, *, offset: int, limit: int, **filters: object
@@ -133,6 +138,22 @@ class BarRepository:
         return deepcopy([item for item in self.store.bars if item.instrument_id in requested])
 
 
+class CalendarRepository:
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    async def list(
+        self, *, exchange: str | None, start: date | None, end: date | None, limit: int
+    ) -> list[object]:
+        del exchange, start, limit
+        return [
+            SimpleNamespace(
+                session_date=end or NOW.date(),
+                is_open=self.store.calendar_open,
+            )
+        ]
+
+
 class FakeUow:
     def __init__(self, shared: Store) -> None:
         self.shared = shared
@@ -143,6 +164,7 @@ class FakeUow:
         self.scan_results = ResultRepository(self.local)
         self.instruments = InstrumentRepository(self.local)
         self.historical_bars = BarRepository(self.local)
+        self.trading_calendar = CalendarRepository(self.local)
         return self
 
     async def commit(self) -> None:
@@ -219,6 +241,39 @@ def test_catalog_is_stable(scanner_client: tuple[TestClient, Store]) -> None:
     ]
     assert items[1]["parameters"][0]["name"] == "volume_window"
     assert "class" not in items[1] and "path" not in items[1]
+
+
+def test_full_market_request_needs_no_instrument_ids_and_validates_calendar(
+    scanner_client: tuple[TestClient, Store],
+) -> None:
+    client, store = scanner_client
+    response = client.post(
+        "/api/v1/scan-runs",
+        json={
+            "scanner_key": "volume_anomaly",
+            "parameters": {"volume_window": 20, "minimum_volume_ratio": "2"},
+            "scan_date": NOW.date().isoformat(),
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "QUEUED"
+    assert body["universe_type"] == "ALL_ACTIVE_A_SHARES"
+    assert body["instrument_ids"] == []
+    assert body["source_code"] == "MINIQMT"
+    assert body["universe_filters"]["exclude_st"] is True
+    assert body["universe_filters"]["exclude_suspended"] is True
+
+    store.calendar_open = False
+    rejected = client.post(
+        "/api/v1/scan-runs",
+        json={
+            "scanner_key": "volume_anomaly",
+            "scan_date": (NOW.date() + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "SCANNER_DATE_NOT_TRADING_DAY"
 
 
 def test_ranked_results_and_no_trading_capability(

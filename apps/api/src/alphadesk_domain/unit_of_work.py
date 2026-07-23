@@ -54,6 +54,7 @@ from alphadesk_domain.repositories import (
     RiskDecisionRepository,
     RiskRuleEvaluationRepository,
     ScanResultRepository,
+    ScanRunMemberRepository,
     ScanRunRepository,
     SignalRepository,
     StrategyExperimentRepository,
@@ -84,6 +85,7 @@ class UnitOfWork(Protocol):
     strategy_experiments: StrategyExperimentRepository
     strategy_experiment_runs: StrategyExperimentRunRepository
     scan_runs: ScanRunRepository
+    scan_run_members: ScanRunMemberRepository
     scan_results: ScanResultRepository
     information_sources: InformationSourceRepository
     raw_documents: RawDocumentRepository

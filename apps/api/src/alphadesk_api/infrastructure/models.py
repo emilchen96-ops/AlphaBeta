@@ -88,7 +88,7 @@ from alphadesk_domain.replay import (
     ReplayRunStatus,
     ReplaySpeedMode,
 )
-from alphadesk_domain.scanners import ScanRunStatus
+from alphadesk_domain.scanners import ScanMemberStatus, ScanRunStatus
 from alphadesk_domain.strategy import StrategyEnvironment
 from alphadesk_domain.strategy_experiments import StrategyExperimentStatus
 from alphadesk_domain.strategy_runs import StrategyRunStatus
@@ -1863,6 +1863,17 @@ class ScanRunModel(MutableTimestampedModel, Base):
             "AND matches_found <= instruments_scanned",
             name="scan_run_counters_valid",
         ),
+        CheckConstraint(
+            "total_instruments >= 0 AND excluded_instruments >= 0 "
+            "AND data_ready_instruments >= 0 AND backfill_requested >= 0 "
+            "AND backfill_failed >= 0 AND insufficient_history >= 0 "
+            "AND failed_instruments >= 0",
+            name="scan_run_progress_counters_valid",
+        ),
+        CheckConstraint(
+            "progress_percent >= 0 AND progress_percent <= 100",
+            name="scan_run_progress_percent_valid",
+        ),
         CheckConstraint("length(request_fingerprint) = 64", name="scan_run_fingerprint_sha256"),
         Index("ix_scan_runs_scanner_created", "scanner_key", "created_at"),
         Index("ix_scan_runs_status_created", "status", "created_at"),
@@ -1874,15 +1885,29 @@ class ScanRunModel(MutableTimestampedModel, Base):
     scanner_version: Mapped[str] = mapped_column(String(32), nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     universe_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    universe_filters: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
     instrument_ids: Mapped[list[UUID]] = mapped_column(ARRAY(Uuid), nullable=False)
+    source_code: Mapped[str] = mapped_column(String(32), nullable=False, default="MINIQMT")
     timeframe: Mapped[str] = mapped_column(String(32), nullable=False)
     price_adjustment_mode: Mapped[str] = mapped_column(
         String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
     )
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
+    total_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    excluded_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    data_ready_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    backfill_requested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    backfill_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    insufficient_history: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     instruments_scanned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matches_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    backfill_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1891,6 +1916,39 @@ class ScanRunModel(MutableTimestampedModel, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(String(512))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class ScanRunMemberModel(MutableTimestampedModel, Base):
+    __tablename__ = "scan_run_members"
+    __table_args__ = (
+        UniqueConstraint("scan_run_id", "instrument_id", name="uq_scan_run_members_run_instrument"),
+        CheckConstraint(
+            f"status IN ({enum_values(ScanMemberStatus)})",
+            name="scan_run_member_status_valid",
+        ),
+        CheckConstraint(
+            "bars_available >= 0 AND required_bars >= 0",
+            name="scan_run_member_bar_counts_valid",
+        ),
+        Index("ix_scan_run_members_run_status", "scan_run_id", "status"),
+        Index("ix_scan_run_members_instrument", "instrument_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    scan_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("scan_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(64), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(16), nullable=False)
+    instrument_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(String(512))
+    bars_available: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    required_bars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class ScanResultModel(TimestampedModel, Base):

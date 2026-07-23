@@ -40,7 +40,7 @@
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
-> 当前研究工具里程碑为 **SC01 完成**：统一 Scanner、两个 A 股历史日线规则、ScanRun/ScanResult、API、CLI 和页面见 [scanners.md](scanners.md)。结果仅为历史规则筛选，不代表投资建议，不是实时扫描，不创建 Signal 或订单。
+> 当前研究工具里程碑为 **SC01-R 完成**：两个既有规则已升级为 MiniQMT 全 A 股日线后台扫描，包含数据预检、分批补数、范围快照和中文进度页面，详见 [scanners.md](scanners.md)。结果不会创建 Signal 或订单。
 
 > 当前执行里程碑为 **B01 完成开发，等待最终环境验收**：B01-A Broker 契约与确定性计算见
 > [simulated_broker.md](simulated_broker.md)；B01-B Attempt、Fill、M04 原子记账、Command 消费和

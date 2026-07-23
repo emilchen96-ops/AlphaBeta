@@ -178,9 +178,13 @@ python -m alphadesk_api.cli.miniqmt backfill-history --instrument <UUID> --timef
 BaoStock、AKShare、东方财富和 Fixture 适配器仅保留给显式测试环境，不应作为日常补数命令，
 也不会在 MiniQMT 断开时自动启用。所有补数都不会创建 Signal、订单、成交或账本事实。
 
-## SC01 历史日线条件扫描
+## SC01-R MiniQMT 全 A 股日线扫描
 
-启动 API、PostgreSQL 和 Web 后访问 `http://localhost:5173/scanners`。先确保目标 Instrument 已有本地 `DAY_1` 历史 K 线，再选择扫描器、股票池、截止时间和参数运行；结果可在 `/scan-runs` 查询。该功能不会调用风控、Broker 或账本，也不会产生订单。
+启动 PostgreSQL、Redis、API、`scanner_worker`、Web 和 Windows MiniQMT 只读行情
+Agent 后，访问 `http://localhost:5173/scanners`。选择扫描日期和排除条件即可后台扫描
+全部正常上市 A 股；系统会通过 MiniQMT 分批补齐缺少的历史日线，进度和结果在
+`/scan-runs` 查看。首次全市场准备可能耗时较长。扫描不会调用风控、Broker、账本或
+MiniQMT 交易接口，也不会产生订单。完整说明见 [docs/scanners.md](docs/scanners.md)。
 
 ## N01 资讯事件中心
 

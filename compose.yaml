@@ -200,6 +200,44 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  scanner_worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "alphadesk_api.workers.scanners"]
+    environment:
+      ALPHADESK_ENVIRONMENT: ${ALPHADESK_ENVIRONMENT:-development}
+      ALPHADESK_POSTGRES_HOST: postgres
+      ALPHADESK_POSTGRES_PORT: 5432
+      ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+      ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_REDIS_HOST: redis
+      ALPHADESK_REDIS_PORT: 6379
+      ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
+      ALPHADESK_SCANNER_WORKER_POLL_MS: ${ALPHADESK_SCANNER_WORKER_POLL_MS:-1000}
+      ALPHADESK_SCANNER_WORKER_HEARTBEAT_SECONDS: ${ALPHADESK_SCANNER_WORKER_HEARTBEAT_SECONDS:-5}
+      ALPHADESK_SCANNER_BACKFILL_BATCH_SIZE: ${ALPHADESK_SCANNER_BACKFILL_BATCH_SIZE:-50}
+      ALPHADESK_SCANNER_BACKFILL_WAIT_SECONDS: ${ALPHADESK_SCANNER_BACKFILL_WAIT_SECONDS:-120}
+      ALPHADESK_SCANNER_SCAN_BATCH_SIZE: ${ALPHADESK_SCANNER_SCAN_BATCH_SIZE:-250}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:scanners:v1:worker:heartbeat'); x.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   web:
     build:
       context: ./apps/web

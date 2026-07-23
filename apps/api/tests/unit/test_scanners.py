@@ -12,6 +12,8 @@ from alphadesk_domain.scanners import (
     ScannerError,
     ScannerRegistry,
     VolumeAnomalyScanner,
+    is_delisting_instrument,
+    is_st_instrument,
     register_builtin_scanners,
 )
 from alphadesk_domain.strategy import StrategyBar
@@ -152,3 +154,19 @@ def test_registry_returns_new_instances_in_stable_order() -> None:
         "volume_anomaly",
     ]
     assert registry.create("volume_anomaly") is not registry.create("volume_anomaly")
+
+
+def test_special_treatment_classification_is_centralized() -> None:
+    st = instrument()
+    st.name = "*ST测试"
+    assert is_st_instrument(st)
+    st.name = "普通名称"
+    st.metadata["is_st"] = True
+    assert is_st_instrument(st)
+
+    delisting = instrument()
+    delisting.name = "退市测试"
+    assert is_delisting_instrument(delisting)
+    delisting.name = "普通名称"
+    delisting.metadata["security_status"] = "DELISTING_CONSOLIDATION"
+    assert is_delisting_instrument(delisting)

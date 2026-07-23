@@ -78,18 +78,26 @@ flowchart LR
   Event -.禁止.-> Trade[AI / Signal / Risk / Order / Broker / Ledger]
 ```
 
-> SC01 增量：浏览器通过 FastAPI 手工发起历史日线筛选；应用服务从 PostgreSQL 读取既有 MarketBar，将纯 Python Scanner 的匹配结果作为 ScanRun/ScanResult 保存。该链路不使用 Redis，不创建 Signal、RiskDecision、Order 或 Fill，不调用 Broker，也不修改账户和账本。详见 [scanners.md](scanners.md)。
+> SC01-R 增量：浏览器通过 FastAPI 创建全 A 股日线任务，独立
+> `scanner_worker` 从 MiniQMT 目录解析范围、检查 PostgreSQL 历史日线，并通过 Redis
+> 请求 Windows 只读 Agent 分批补数。纯 Python Scanner 仍不依赖基础设施。该链路不创建
+> Signal、RiskDecision、Order 或 Fill，不调用 Broker，也不修改账户和账本。详见
+> [scanners.md](scanners.md)。
 
-## SC01 历史扫描链路
+## SC01-R 全市场历史扫描链路
 
 ```mermaid
 flowchart LR
-  UI[React 扫描表单] --> API[FastAPI ScannerRunService]
-  API --> PG[(PostgreSQL MarketBar)]
-  API --> Core[纯 Python Scanner]
-  Core --> Facts[ScanRun + ScanResult]
+  UI[React 全市场扫描表单] --> API[FastAPI 创建持久化任务]
+  API --> PG[(PostgreSQL)]
+  Worker[scanner_worker] --> PG
+  Worker -->|缺数请求，每批不超过 50 只| Redis[(Redis)]
+  Redis --> Agent[Windows MiniQMT 只读 Agent]
+  Agent -->|标准化 RAW 日线| API
+  Worker --> Core[纯 Python Scanner]
+  Core --> Facts[ScanRun + ScanRunMember + ScanResult]
   Facts --> PG
-  Facts --> UI
+  PG --> UI
   Core -.禁止.-> Trading[Signal / Risk / Order / Broker / Ledger]
 ```
 

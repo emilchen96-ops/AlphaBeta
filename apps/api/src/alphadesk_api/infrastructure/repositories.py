@@ -77,6 +77,7 @@ from alphadesk_api.infrastructure.models import (
     RiskDecisionModel,
     RiskRuleEvaluationModel,
     ScanResultModel,
+    ScanRunMemberModel,
     ScanRunModel,
     SignalModel,
     StrategyExperimentModel,
@@ -180,7 +181,7 @@ from alphadesk_domain.replay import (
     replay_configuration_from_dict,
     replay_configuration_to_dict,
 )
-from alphadesk_domain.scanners import ScanResult, ScanRun
+from alphadesk_domain.scanners import ScanResult, ScanRun, ScanRunMember, ScanRunStatus
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
@@ -1665,6 +1666,22 @@ class SqlAlchemyScanRunRepository(SqlAlchemyRepository[ScanRun, ScanRunModel]):
         )
         return None if row is None else entity_from_model(ScanRun, row)
 
+    async def get_for_update(self, entity_id: UUID) -> ScanRun | None:
+        row = await self._session.scalar(
+            select(ScanRunModel).where(ScanRunModel.id == entity_id).with_for_update()
+        )
+        return None if row is None else entity_from_model(ScanRun, row)
+
+    async def get_next_pending(self, statuses: tuple[ScanRunStatus, ...]) -> ScanRun | None:
+        row = await self._session.scalar(
+            select(ScanRunModel)
+            .where(ScanRunModel.status.in_(tuple(item.value for item in statuses)))
+            .order_by(ScanRunModel.created_at, ScanRunModel.id)
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(ScanRun, row)
+
     async def update(self, entity: ScanRun) -> None:
         values = model_values(model_from_entity(ScanRunModel, entity))
         values.pop("id", None)
@@ -1736,6 +1753,63 @@ class SqlAlchemyScanResultRepository(SqlAlchemyRepository[ScanResult, ScanResult
             )
             or 0
         )
+
+
+class SqlAlchemyScanRunMemberRepository(SqlAlchemyRepository[ScanRunMember, ScanRunMemberModel]):
+    entity_type = ScanRunMember
+    model_type = ScanRunMemberModel
+    _UPSERT_BATCH_SIZE = 1000
+
+    async def upsert_many(self, entities: list[ScanRunMember]) -> None:
+        if not entities:
+            return
+        # asyncpg rejects statements with more than 32,767 bind parameters.
+        # A complete MiniQMT catalog contains thousands of A-share members, so
+        # persist the immutable scope in bounded chunks instead of one INSERT.
+        for start in range(0, len(entities), self._UPSERT_BATCH_SIZE):
+            values = [
+                model_values(model_from_entity(ScanRunMemberModel, item), include_none=True)
+                for item in entities[start : start + self._UPSERT_BATCH_SIZE]
+            ]
+            statement = pg_insert(ScanRunMemberModel).values(values)
+            await self._session.execute(
+                statement.on_conflict_do_update(
+                    constraint="uq_scan_run_members_run_instrument",
+                    set_={
+                        "symbol": statement.excluded.symbol,
+                        "exchange": statement.excluded.exchange,
+                        "instrument_name": statement.excluded.instrument_name,
+                        "status": statement.excluded.status,
+                        "reason_code": statement.excluded.reason_code,
+                        "reason": statement.excluded.reason,
+                        "bars_available": statement.excluded.bars_available,
+                        "required_bars": statement.excluded.required_bars,
+                        "updated_at": statement.excluded.updated_at,
+                    },
+                )
+            )
+        await self._session.flush()
+
+    async def list_by_run(self, run_id: UUID, *, status: str | None = None) -> list[ScanRunMember]:
+        query = select(ScanRunMemberModel).where(ScanRunMemberModel.scan_run_id == run_id)
+        if status is not None:
+            query = query.where(ScanRunMemberModel.status == status)
+        rows = await self._session.scalars(
+            query.order_by(
+                ScanRunMemberModel.exchange,
+                ScanRunMemberModel.symbol,
+                ScanRunMemberModel.instrument_id,
+            )
+        )
+        return [entity_from_model(ScanRunMember, row) for row in rows]
+
+    async def count_by_run(self, run_id: UUID) -> dict[str, int]:
+        rows = await self._session.execute(
+            select(ScanRunMemberModel.status, func.count())
+            .where(ScanRunMemberModel.scan_run_id == run_id)
+            .group_by(ScanRunMemberModel.status)
+        )
+        return {str(status): int(count) for status, count in rows}
 
 
 class SqlAlchemyInformationSourceRepository(

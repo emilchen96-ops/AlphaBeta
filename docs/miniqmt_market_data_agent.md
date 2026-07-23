@@ -41,6 +41,11 @@ D03 会话规则校验并幂等写库。前端断线不影响代理、Redis 或�
 心跳区分在线与离线；页面 WebSocket 使用指数退避重新连接。历史缺口通过行情页或数据中心
 提交受限补数任务，MiniQMT 和 Agent 必须保持运行。
 
+SC01-R 全市场扫描也复用同一历史补数队列。Scanner Worker 先在数据库检查每只股票的
+最低日线数量，只把缺失股票按最多 50 只一批提交给 Agent；它不会在 FastAPI 进程中加载
+XtQuant，也不会建立全市场实时订阅。Agent 处理补数后，Scanner Worker 以数据库中的
+MiniQMT 日线为准重新检查并继续扫描。
+
 Agent 启动或断线重连后，会为当前自选、基准和临时查看范围自动补充最近 14 天日线及
 最近 3 天 1 分钟线；交易日 15:10 后还会执行一次受限日线增量刷新。自动任务仍遵守
 `ALPHADESK_MINIQMT_HISTORY_MAX_INSTRUMENTS`，不会订阅或下载全部 A 股。
