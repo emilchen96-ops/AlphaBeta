@@ -72,8 +72,10 @@ test("K线查询包含周期和复权参数", async () => {
       response({ source_code: "DEMO", items: [], freshness: {} }),
     );
   vi.stubGlobal("fetch", fetchMock);
-  await getBars("i1", "MINUTE_1", "FORWARD");
+  await getBars("i1", "MINUTE_1", "RAW");
   const url = String(fetchMock.mock.calls[0][0]);
   expect(url).toContain("timeframe=MINUTE_1");
-  expect(url).toContain("adjustment_type=FORWARD");
+  expect(url).toContain("adjustment_type=NONE");
+  expect(url).toContain("adjustment_mode=RAW");
+  expect(url).toContain("source_code=MINIQMT");
 });

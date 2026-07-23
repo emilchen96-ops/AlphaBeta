@@ -13,7 +13,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 
 from alphadesk_api.core.config import Settings
-from alphadesk_api.infrastructure.free_market_cache import QUOTE_CHANNEL, QuoteCache
+from alphadesk_api.infrastructure.free_market_cache import (
+    QUOTE_CHANNEL,
+    QuoteCache,
+    quote_payload,
+)
 
 
 @dataclass(slots=True)
@@ -119,7 +123,7 @@ async def market_data_websocket(websocket: WebSocket) -> None:
         return
     await websocket.accept()
     client_id, state = hub.register()
-    cache = QuoteCache(websocket.app.state.redis.client, settings.free_market_quote_ttl_seconds)
+    cache = QuoteCache(websocket.app.state.redis.client, settings.miniqmt_quote_ttl_seconds)
     hub.enqueue(
         state,
         {
@@ -183,16 +187,8 @@ async def market_data_websocket(websocket: WebSocket) -> None:
                             "type": "quote_snapshot",
                             "items": [
                                 {
-                                    "instrument_id": str(item.quote.instrument_id),
-                                    "symbol": item.quote.symbol,
-                                    "source_code": item.quote.source_code,
-                                    "quote_time": item.quote.quote_time.isoformat()
-                                    if item.quote.quote_time
-                                    else None,
-                                    "received_at": item.quote.received_at.isoformat(),
-                                    "last_price": str(item.quote.last_price),
+                                    **quote_payload(item.quote),
                                     "revision": item.revision.revision,
-                                    "quality_status": item.quote.quality_status.value,
                                 }
                                 for item in snapshots
                             ],

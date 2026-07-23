@@ -151,10 +151,15 @@ class StrategyExperimentService:
         registry: StrategyRegistry,
         *,
         max_combinations: int = 50,
+        authoritative_source_code: str | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._registry = registry
-        self._runner = StrategyRunner(uow_factory, registry)
+        self._runner = StrategyRunner(
+            uow_factory,
+            registry,
+            authoritative_source_code=authoritative_source_code,
+        )
         self._max_combinations = max_combinations
 
     async def run(self, request: StrategyExperimentRequest) -> StrategyExperimentResult:

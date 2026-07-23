@@ -1,9 +1,11 @@
 # AlphaDesk 使用指南
 
-> 适用基线：BT01-R（2026-07-21）  
+> 适用基线：MD01（2026-07-23）
 > 适用对象：第一次使用 AlphaDesk，或不清楚页面按钮、数据前置条件和模块边界的用户。
 
-AlphaDesk 当前是一个**仅供本地研究和模拟交易**的个人量化工作台。它已经具备历史日线、条件扫描、策略研究、轻量风控、模拟订单与成交、模拟账户账本、资讯事件和日线回测；它**尚未连接 MiniQMT、真实券商或真实账户**，也没有可用于交易决策的实时行情。
+AlphaDesk 当前是一个**仅供本地研究和模拟交易**的个人量化工作台。MiniQMT 已作为唯一正式
+行情源接入目录、实时快照、历史日线和历史分钟线，但接入严格只读；系统仍未接入真实券商
+交易、真实账户或实盘下单。
 
 ## 1. 先记住这条使用主线
 
@@ -25,7 +27,7 @@ AlphaDesk 当前是一个**仅供本地研究和模拟交易**的个人量化工
 - 扫描、策略和回测需要本地历史日线；
 - 订单需要模拟账户和标的；
 - AI 研究需要资讯事实以及已启用的 AI Provider；
-- 实时行情和 MiniQMT 当前明确不可用。
+- 实时行情需要 MiniQMT 已登录且 Windows 只读 Agent 正在运行。
 
 ## 2. 每次开机后的启动流程
 
@@ -104,12 +106,13 @@ docker compose down
 
 ![历史行情数据中心](assets/user-guide/02-data-center.png)
 
-“数据中心”维护的是 BaoStock A 股**历史日线**，不是实时行情。关键区域：
+“数据中心”维护的是 AlphaDesk 本地保存的 MiniQMT 研究数据，不是多数据源选择页。关键区域：
 
-1. **数据总览**：活跃 A 股、研究池股票、研究池日线、最新行情日；
-2. **Universe 覆盖情况**：研究池内哪些标的有足够 K 线；
-3. **同步运行与每日更新**：预览或执行增量更新；
-4. **质量与 Readiness**：判断 Scanner、Strategy、BT01 是否具备数据条件。
+1. **数据概况**：MiniQMT 连接、有效标的、日线、分钟线和最近同步时间；
+2. **日线行情**：研究范围内哪些标的有足够日线；
+3. **分钟行情**：1/5/15/30/60 分钟覆盖和真实 K 线预览；
+4. **数据质量**：判断扫描、策略和回测是否具备数据条件；
+5. **高级数据管理**：交易日历、复权因子、停复牌、生命周期和技术运行记录。
 
 页面显示 `0`、`NOT_READY` 时，先完成首次初始化。为了避免误操作，首次全量步骤以 CLI 为主。
 
@@ -126,40 +129,29 @@ docker compose exec api python -m alphadesk_api.cli.backtests list
 
 ### 4.3 导入真实历史日线
 
-以下命令会访问 BaoStock。建议先用较小研究池，确认无误后再扩大：
-
-```powershell
-docker compose exec api python -m alphadesk_api.cli.market_data sync-instruments --provider baostock
-docker compose exec api python -m alphadesk_api.cli.market_data create-research-universe --limit 30
-docker compose exec api python -m alphadesk_api.cli.market_data backfill --provider baostock --universe research --timeframe DAY --start 2023-01-01
-docker compose exec api python -m alphadesk_api.cli.market_data verify-quality --universe research --timeframe DAY
-docker compose exec api python -m alphadesk_api.cli.market_data show-readiness --universe research
-```
+先在“行情”页搜索并选择股票，再点“从 MiniQMT 补充历史行情”；也可在数据中心选择股票、
+周期和日期后发起补数。Windows Agent 异步处理任务。
 
 注意：
 
-- 补数是串行、耗时的外部请求，不要反复点击或重复执行；
-- `--limit 30` 表示研究池规模，不是全市场一次性导入；
+- 补数是受限、耗时的本机 MiniQMT 请求，不要反复点击；
+- 系统不会默认下载全市场多年分钟数据；
 - 数据是历史日线，不能当作实时成交价格；
 - 补数不会自动创建 Signal、订单、成交或回测。
 
 ### 4.4 日常更新
 
-```powershell
-docker compose exec api python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research --dry-run
-docker compose exec api python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research
-docker compose exec api python -m alphadesk_api.cli.market_data verify-quality --universe research --timeframe DAY
-```
-
-先执行 `--dry-run` 预览，再执行正式更新。更新完成后回到数据中心点击“刷新数据状态”。
+交易时段内，Agent 会保存已订阅标的的 1 分钟 K 线并生成多周期聚合。Agent 启动或重连后
+会自动修复当前订阅范围的小窗口缺口，交易日 15:10 后自动刷新日线；更大历史范围仍在
+行情页或数据中心按需补数。完成后刷新数据中心并执行质量检查。
 
 ## 5. 左侧菜单速查
 
 | 菜单 | 用途 | 使用前提 | 当前边界 |
 | --- | --- | --- | --- |
 | 总览 | 检查服务和模块可用性 | 服务已启动 | 只读状态 |
-| 数据中心 | 历史日线覆盖、更新和质量 | BaoStock/本地数据 | 无实时行情 |
-| 行情 | 标的目录、自选股、历史行情 | Instrument/MarketBar | 实时 Provider 默认禁用 |
+| 数据中心 | MiniQMT 日线、分钟线覆盖和质量 | MiniQMT + 本地数据库 | 不负责实时看盘 |
+| 行情 | 股票搜索、自选、实时快照和 K 线 | MiniQMT + Agent | 只读行情，不可交易 |
 | 持仓 | 模拟账户、资金、持仓和核对 | 模拟账户 | 不是真实账户 |
 | 条件扫描 | 配置历史规则扫描 | 足量日线 | 结果不是投资建议 |
 | 扫描运行 | 查询 ScanRun 和结果 | 已执行扫描 | 只读事实 |
@@ -370,7 +362,8 @@ docker compose ps
 
 ### 实时行情显示 disconnected
 
-这是当前版本的预期状态。实时 Provider 按安全基线禁用，WebSocket 连接只表示推送管道存在，不表示有交易级实时行情。
+确认 MiniQMT 已登录行情入口、Windows 只读 Agent 正在运行、Redis/API 在线。WebSocket
+断开时页面不会改用其他行情源；已显示的实时价格可能过期，历史 K 线仍可查看。
 
 ### 订单创建失败
 
@@ -386,10 +379,12 @@ docker compose ps
 
 ```text
 □ Docker Desktop 已运行
+□ MiniQMT 已登录行情入口
 □ docker compose up --build -d
+□ Windows 只读行情 Agent 已运行
 □ 总览五项基础状态正常
 □ 需要研究时先检查数据中心最新行情日
-□ 外部补数先 dry-run，再正式执行
+□ 缺少历史数据时只从 MiniQMT 发起补数
 ```
 
 结束使用：
@@ -403,9 +398,9 @@ docker compose ps
 
 ## 14. 当前版本的明确限制
 
-- 没有 MiniQMT/XtQuant Windows 执行器；
+- MiniQMT 当前只有只读行情 Agent，没有交易执行器；
 - 没有真实券商、真实账户或实盘下单；
-- 没有可用于交易决策的实时行情；
+- 实时行情依赖本机 MiniQMT 登录、行情权限和 Agent 在线；
 - AI 真实 Provider 尚未正式接线；
 - 分钟/Tick 回测尚未实现；
 - “审计（计划）”仍是占位入口；

@@ -167,6 +167,10 @@ class Bars:
     async def list_bars(self, **kwargs: object) -> list[StrategyBar]:
         return deepcopy(self.store.bars)
 
+    async def list_authoritative_bars(self, **kwargs: object) -> list[StrategyBar]:
+        assert kwargs["source_code"] == "MINIQMT"
+        return []
+
 
 class FakeUow:
     def __init__(self, shared: Store) -> None:
@@ -202,7 +206,10 @@ class FakeUow:
 
 
 def setup_runner(
-    *, bars: list[StrategyBar] | None = None, failure: str | None = None
+    *,
+    bars: list[StrategyBar] | None = None,
+    failure: str | None = None,
+    authoritative_source_code: str | None = None,
 ) -> tuple[StrategyRunner, Store, list[RecordingStrategy]]:
     store = Store({}, [], list(bars or []))
     instances: list[RecordingStrategy] = []
@@ -215,7 +222,15 @@ def setup_runner(
 
     registry.register(RecordingStrategy.metadata, (), factory)
     uow_factory = cast(UnitOfWorkFactory, lambda: FakeUow(store))
-    return StrategyRunner(uow_factory, registry), store, instances
+    return (
+        StrategyRunner(
+            uow_factory,
+            registry,
+            authoritative_source_code=authoritative_source_code,
+        ),
+        store,
+        instances,
+    )
 
 
 def request(**changes: object) -> StrategyRunRequest:
@@ -241,6 +256,17 @@ async def test_success_persists_run_and_ordered_signals() -> None:
     assert [item.sequence_number for item in result.signals] == [1, 2]
     assert len(store.signals) == 2
     assert instances[0].times == [NOW, NOW, NOW + timedelta(minutes=1), NOW + timedelta(minutes=1)]
+
+
+@pytest.mark.asyncio
+async def test_formal_runner_reads_only_authoritative_miniqmt_bars() -> None:
+    runner, _, _ = setup_runner(
+        bars=[bar()],
+        authoritative_source_code="miniqmt",
+    )
+    result = await runner.run(request())
+    assert result.run.bars_processed == 0
+    assert result.warnings == ("NO_MARKET_DATA",)
 
 
 @pytest.mark.asyncio

@@ -446,7 +446,7 @@ class IntradayOverviewService:
 
     async def coverage(
         self,
-        source_code: str = "D03_FIXTURE",
+        source_code: str = "MINIQMT",
         *,
         instrument_id: UUID | None = None,
         timeframe: MarketTimeframe | None = None,
@@ -582,7 +582,7 @@ class IntradayOverviewService:
                 )
             return values
 
-    async def readiness(self, source_code: str = "D03_FIXTURE") -> list[dict[str, object]]:
+    async def readiness(self, source_code: str = "MINIQMT") -> list[dict[str, object]]:
         coverage = await self.coverage(source_code)
         by_timeframe = {item["timeframe"]: item for item in coverage}
         result = []

@@ -1,80 +1,15 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { healthyCapabilities, healthyStatus, renderRoute } from "./test-utils";
+import { healthyStatus, renderRoute } from "./test-utils";
 
-const runId = "11111111-1111-4111-8111-111111111111";
 const instrumentId = "22222222-2222-4222-8222-222222222222";
-const timestamps = {
-  started_at: "2026-07-19T08:00:00Z",
-  completed_at: "2026-07-19T08:01:00Z",
-};
-const syncRun = {
-  id: runId,
-  source_id: "33333333-3333-4333-8333-333333333333",
-  status: "PARTIALLY_SUCCEEDED",
-  timeframe: "DAY_1",
-  adjustment_type: "NONE",
-  requested_symbols: ["600000", "000001"],
-  requested_start: "2026-07-18T00:00:00Z",
-  requested_end: "2026-07-18T00:00:00Z",
-  ...timestamps,
-  total_received: 1,
-  total_inserted: 1,
-  total_updated: 0,
-  total_rejected: 0,
-  error_summary: "MARKET_DATA_UPDATE_FAILED",
-  correlation_id: "44444444-4444-4444-8444-444444444444",
-  metadata: {
-    operation: "DAILY_UPDATE",
-    up_to_date_instrument_count: 0,
-    completed_instrument_count: 1,
-    failed_instrument_count: 1,
-  },
-};
-const qualityRun = {
-  id: runId,
-  universe_key: "research",
-  provider: "BAOSTOCK",
-  timeframe: "DAY_1",
-  status: "COMPLETED",
-  instruments_checked: 2,
-  bars_checked: 300,
-  issues_found: 1,
-  error_count: 0,
-  warning_count: 1,
-  info_count: 0,
-  ...timestamps,
-  correlation_id: "55555555-5555-4555-8555-555555555555",
-  metadata: { issue_types: { INSUFFICIENT_BARS: 1 } },
-  created_at: "2026-07-19T08:00:00Z",
-  updated_at: "2026-07-19T08:01:00Z",
-};
-const issue = {
-  id: "66666666-6666-4666-8666-666666666666",
-  quality_run_id: runId,
-  instrument_id: instrumentId,
-  issue_type: "INSUFFICIENT_BARS",
-  severity: "WARNING",
-  timeframe: "DAY_1",
-  first_affected_at: "2026-01-01T00:00:00Z",
-  last_affected_at: "2026-07-18T00:00:00Z",
-  observed_value: "150",
-  expected_value: "250",
-  message: "日线数量低于受控研究/回测基线。",
-  required_action: "扩大历史补数起始范围。",
-  metadata: { symbol: "600000" },
-  created_at: "2026-07-19T08:01:00Z",
-};
 
 function response(body: unknown) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
       status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Correlation-ID": "market-data-test",
-      },
+      headers: { "Content-Type": "application/json" },
     }),
   );
 }
@@ -87,28 +22,68 @@ function requestUrl(input: string | URL | Request) {
       : input.url;
 }
 
-function requestBody(init?: RequestInit) {
-  return typeof init?.body === "string" ? init.body : "";
-}
-
 function installFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: string | URL | Request, init?: RequestInit) => {
       const url = requestUrl(input);
       if (url.endsWith("/system/status")) return response(healthyStatus);
-      if (url.endsWith("/system/capabilities"))
-        return response(healthyCapabilities);
+      if (url.endsWith("/miniqmt/market-data/status"))
+        return response({
+          schema_version: 1,
+          data: {
+            configured: true,
+            state: "CONNECTED",
+            agent: {
+              state: "CONNECTED",
+              catalog_instrument_count: 5300,
+              last_catalog_sync_at: "2026-07-23T01:00:00Z",
+            },
+            desired_count: 1,
+            active_count: 1,
+            failed_count: 0,
+            latest_minute_bar_time: "2026-07-23T06:29:00Z",
+            source: "MINIQMT",
+            market_data_capability: "ENABLED",
+            trading_capability: "DISABLED",
+            trading_message: "交易能力关闭",
+          },
+        });
+      if (url.includes("/instruments?"))
+        return response({
+          items: [
+            {
+              id: instrumentId,
+              symbol: "600000",
+              exchange: "SSE",
+              market: "CN_A",
+              name: "浦发银行",
+              asset_type: "STOCK",
+              currency: "CNY",
+              lot_size: "100",
+              price_tick: "0.01",
+              timezone: "Asia/Shanghai",
+              is_active: true,
+              listed_at: "1999-11-10",
+              delisted_at: null,
+              lifecycle_status: "ACTIVE",
+              updated_at: "2026-07-23T00:00:00Z",
+            },
+          ],
+          page: 1,
+          page_size: 50,
+          total: 1,
+        });
       if (url.endsWith("/market-data/overview"))
         return response({
-          instrument_count: 5000,
-          active_a_share_count: 4998,
-          research_universe_count: 300,
-          market_bar_count: 256408,
-          earliest_bar: "2023-01-03T00:00:00Z",
-          latest_bar: "2026-07-18T00:00:00Z",
-          latest_sync_at: "2026-07-19T08:01:00Z",
-          provider: "BAOSTOCK",
+          instrument_count: 5300,
+          active_a_share_count: 5100,
+          research_universe_count: 1,
+          market_bar_count: 1000,
+          earliest_bar: "2020-01-01T00:00:00Z",
+          latest_bar: "2026-07-22T00:00:00Z",
+          latest_sync_at: "2026-07-23T00:00:00Z",
+          provider: "MINIQMT",
           timeframe: "DAY_1",
           adjustment_type: "NONE",
           scanner_ready: true,
@@ -119,220 +94,174 @@ function installFetch() {
       if (url.endsWith("/market-data/coverage"))
         return response({
           universe_key: "research",
-          name: "D01 Research Universe",
-          instrument_count: 300,
-          instruments_with_data: 300,
-          sufficient_instruments: 299,
-          insufficient_instruments: 1,
-          earliest_bar: "2023-01-03T00:00:00Z",
-          latest_bar: "2026-07-18T00:00:00Z",
-          latest_sync_at: "2026-07-19T08:01:00Z",
+          name: "研究股票池",
+          instrument_count: 1,
+          instruments_with_data: 1,
+          sufficient_instruments: 1,
+          insufficient_instruments: 0,
+          earliest_bar: "2020-01-01T00:00:00Z",
+          latest_bar: "2026-07-22T00:00:00Z",
+          latest_sync_at: "2026-07-23T00:00:00Z",
           items: [
             {
               instrument_id: instrumentId,
               symbol: "600000",
               name: "浦发银行",
               exchange: "SSE",
-              bar_count: 150,
-              earliest_bar: "2026-01-01T00:00:00Z",
-              latest_bar: "2026-07-18T00:00:00Z",
+              bar_count: 1000,
+              earliest_bar: "2020-01-01T00:00:00Z",
+              latest_bar: "2026-07-22T00:00:00Z",
               mapping_status: "MAPPED",
-              missing_requirements: ["backtest_daily"],
+              missing_requirements: [],
             },
           ],
         });
       if (url.endsWith("/market-data/readiness"))
         return response([
           {
-            capability_key: "scanner_volume_anomaly",
-            display_name: "放量异常 Scanner",
-            status: "READY",
-            ready_instrument_count: 300,
-            total_instrument_count: 300,
-            minimum_bars_required: 21,
-            latest_data_date: "2026-07-18",
-            blocking_issue_count: 0,
-            warning_count: 0,
-            reason: "全部研究标的满足最低日线数量。",
-            required_action: "无需数据操作。",
-            code_status: "WORKING",
-          },
-          {
             capability_key: "backtest_daily",
             display_name: "日线回测",
-            status: "PARTIAL",
-            ready_instrument_count: 299,
-            total_instrument_count: 300,
+            status: "READY",
+            ready_instrument_count: 1,
+            total_instrument_count: 1,
             minimum_bars_required: 250,
-            latest_data_date: "2026-07-18",
+            latest_data_date: "2026-07-22",
             blocking_issue_count: 0,
-            warning_count: 1,
-            reason: "299/300 个标的满足最低日线数量。",
-            required_action: "先执行日线增量更新, 再运行数据质量检查。",
+            warning_count: 0,
+            reason: "数据可用",
+            required_action: "无需操作",
             code_status: "WORKING",
           },
         ]);
+      if (url.endsWith("/intraday/coverage"))
+        return response({
+          items: [
+            {
+              timeframe: "MINUTE_1",
+              instrument_count: 1,
+              bar_count: 240,
+              earliest_at: "2026-07-22T01:30:00Z",
+              latest_at: "2026-07-22T07:00:00Z",
+              expected_bar_count: 240,
+              missing_bar_count: 0,
+              complete_session_count: 1,
+              missing_session_count: 0,
+              raw_coverage: 240,
+              qfq_coverage: 0,
+              quality_error_count: 0,
+              latest_import_at: "2026-07-22T07:00:00Z",
+              source_code: "MINIQMT",
+            },
+          ],
+        });
+      if (url.endsWith("/intraday/readiness"))
+        return response({
+          items: [
+            {
+              capability_key: "intraday_5m_ready",
+              timeframe: "MINUTE_5",
+              status: "READY",
+              required_action: "无需操作",
+            },
+          ],
+        });
+      if (url.endsWith("/intraday/imports")) return response({ items: [] });
+      if (url.endsWith("/intraday/quality-runs"))
+        return response({ items: [], total: 0 });
+      if (url.includes("/market-data/quality-runs?page="))
+        return response({ items: [], page: 1, page_size: 20, total: 0 });
       if (url.endsWith("/market-reference/status"))
         return response({
-          calendar_provider: "FIXTURE",
-          adjustment_provider: "FIXTURE",
-          suspension_provider: "FIXTURE",
-          provider_configured: true,
-          calendar_sessions: 730,
-          open_sessions: 480,
-          calendar_start: "2025-01-01",
-          calendar_end: "2026-12-31",
-          latest_completed_session: "2026-07-21",
-          adjustment_factors: 30000,
-          adjustment_instruments: 300,
-          latest_factor_date: "2026-07-21",
-          qfq_ready_instruments: 300,
-          trading_statuses: 30000,
-          suspended_sessions: 12,
-          latest_status_date: "2026-07-21",
-          lifecycle_events: 300,
-          lifecycle_instruments: 300,
-          raw_price_ready: true,
-          adjusted_price_ready: true,
-          calendar_ready: true,
-          suspension_ready: true,
-          scanner_ready: true,
-          strategy_ready: true,
-          backtest_ready: true,
-          replay_ready: true,
-          warnings: [],
+          open_sessions: 500,
+          adjustment_factors: 1000,
+          trading_statuses: 1000,
+          lifecycle_events: 5300,
         });
-      if (url.includes("/market-data/sync-runs")) return response([syncRun]);
-      if (url.includes(`/market-data/quality-runs/${runId}`))
+      if (url.includes("/market-data/sync-runs")) return response([]);
+      if (url.includes("/market-data/bars?"))
         return response({
-          run: qualityRun,
-          issues: [issue],
-          issue_page: 1,
-          issue_page_size: 100,
-          issue_total: 1,
-          integrity_mismatches: [],
+          source_code: "MINIQMT",
+          items: [],
+          freshness: {
+            source_code: "MINIQMT",
+            freshness_status: "UNKNOWN",
+            latest_bar_time: null,
+            latest_received_at: null,
+            calculated_at: "2026-07-23T00:00:00Z",
+          },
         });
-      if (url.includes("/market-data/quality-runs?page="))
+      if (url.endsWith("/miniqmt/history/backfill") && init?.method === "POST")
         return response({
-          items: [qualityRun],
-          page: 1,
-          page_size: 20,
-          total: 1,
+          schema_version: 1,
+          data: {
+            request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            status: "QUEUED",
+            provider: "MINIQMT",
+          },
         });
       if (url.endsWith("/market-data/quality-runs") && init?.method === "POST")
         return response({
-          run: qualityRun,
-          issues: [issue],
+          run: {},
+          issues: [],
           issue_page: 1,
-          issue_page_size: 1,
-          issue_total: 1,
+          issue_page_size: 100,
+          issue_total: 0,
           integrity_mismatches: [],
         });
-      if (
-        url.endsWith("/market-data/daily-updates") &&
-        init?.method === "POST"
-      ) {
-        const payload = JSON.parse(requestBody(init)) as { dry_run: boolean };
-        return response({
-          run: payload.dry_run ? null : syncRun,
-          target_date: "2026-07-18",
-          requested: 30,
-          up_to_date: 28,
-          completed: payload.dry_run ? 0 : 1,
-          failed: payload.dry_run ? 0 : 1,
-          unprocessed: payload.dry_run ? 2 : 0,
-          bars_fetched: payload.dry_run ? 0 : 1,
-          bars_inserted: payload.dry_run ? 0 : 1,
-          bars_updated: 0,
-          bars_skipped: 0,
-          invalid_bars: 0,
-          retry_count: 2,
-          failures: payload.dry_run
-            ? []
-            : [{ code: "MARKET_DATA_UPDATE_FAILED" }],
-          plans: [],
-          dry_run: payload.dry_run,
-          idempotent_replay: false,
-        });
-      }
-      return response({});
+      throw new Error(`unhandled ${url}`);
     }),
   );
 }
 
-beforeEach(() => {
-  vi.stubGlobal("WebSocket", undefined);
-  installFetch();
-});
+beforeEach(installFetch);
 afterEach(() => vi.unstubAllGlobals());
 
-test("数据中心展示真实后端五区、覆盖不足和安全边界", async () => {
+test("数据中心只展示 MiniQMT 正式数据并合并日线和分钟线", async () => {
   renderRoute("/market-data-center");
-  expect(await screen.findByText("历史行情数据中心")).toBeInTheDocument();
-  expect(screen.getByText("1. 数据总览")).toBeInTheDocument();
-  expect(screen.getByText("2. 市场参考数据与价格语义")).toBeInTheDocument();
-  expect(screen.getByText("3. 股票池（Universe）覆盖情况")).toBeInTheDocument();
-  expect(screen.getByText("4. 同步运行与每日更新")).toBeInTheDocument();
-  expect(screen.getByText("5. 数据质量")).toBeInTheDocument();
-  expect(screen.getByText("6. 功能可用性")).toBeInTheDocument();
-  expect(await screen.findByText("浦发银行")).toBeInTheDocument();
-  expect(screen.getByText("backtest_daily")).toBeInTheDocument();
-  expect(screen.getByText("BT01 日线回测代码已完成")).toBeInTheDocument();
   expect(
-    screen.getByText(/不提供实时行情，也不连接 MiniQMT/),
+    await screen.findByRole("heading", { name: "数据中心" }),
   ).toBeInTheDocument();
+  expect(screen.getByText("正式行情数据源：MiniQMT")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "日线行情" })).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "分钟行情" })).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /编辑K线|删除K线|补0/ }),
+    screen.queryByText(/BaoStock 历史行情：已启用/),
   ).not.toBeInTheDocument();
-}, 30_000);
+});
 
-test("试运行预览与实际更新提交受保护并准确显示部分失败", async () => {
-  renderRoute("/market-data-center");
-  const dryRun = await screen.findByRole("button", {
-    name: "试运行预览（Dry-run）",
-  });
-  fireEvent.click(dryRun);
-  expect(await screen.findByText("更新预览")).toBeInTheDocument();
-  const calls = vi.mocked(fetch).mock.calls;
-  const dryCall = calls.find(
-    ([input, init]) =>
-      requestUrl(input).includes("daily-updates") &&
-      requestBody(init).includes('"dry_run":true'),
-  );
-  expect(dryCall).toBeDefined();
-
-  fireEvent.click(screen.getByRole("button", { name: /更新到最新日线/ }));
-  expect(await screen.findByText("部分失败")).toBeInTheDocument();
-  expect(screen.getByText(/失败 1，新增 1/)).toBeInTheDocument();
-}, 35_000);
-
-test("质量检查与问题类型筛选请求均由后端驱动", async () => {
+test("数据中心从 MiniQMT 发起历史补数", async () => {
   const user = userEvent.setup();
   renderRoute("/market-data-center");
-  await user.click(
-    await screen.findByRole("button", { name: /执行数据质量检查/ }),
-  );
+  const button = await screen.findByRole("button", {
+    name: /从 MiniQMT 补充历史行情/,
+  });
+  await waitFor(() => expect(button).toBeEnabled());
+  await user.click(button);
   await waitFor(() =>
     expect(
       vi
         .mocked(fetch)
         .mock.calls.some(
-          ([input, init]) =>
-            requestUrl(input).endsWith("/market-data/quality-runs") &&
-            init?.method === "POST",
+          ([request, init]) =>
+            requestUrl(request).endsWith("/miniqmt/history/backfill") &&
+            init?.method === "POST" &&
+            typeof init.body === "string" &&
+            init.body.includes('"timeframe":"DAY_1"'),
         ),
     ).toBe(true),
   );
-  fireEvent.change(screen.getByPlaceholderText("问题类型"), {
-    target: { value: "STALE_DATA" },
-  });
-  await waitFor(() =>
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([input]) =>
-          requestUrl(input).includes("issue_type=STALE_DATA"),
-        ),
-    ).toBe(true),
-  );
-}, 30_000);
+});
+
+test("旧分钟入口跳转到统一数据中心分钟页签", async () => {
+  renderRoute("/intraday-market-data");
+  expect(
+    await screen.findByRole("heading", { name: "数据中心" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("tab", { name: "分钟行情", selected: true }),
+  ).toBeInTheDocument();
+  expect(await screen.findByText("5分钟行情研究")).toBeInTheDocument();
+  expect(screen.getAllByText("5分钟").length).toBeGreaterThan(0);
+  expect(screen.getByText("就绪")).toBeInTheDocument();
+  expect(screen.queryByText("intraday_5m_ready")).not.toBeInTheDocument();
+});

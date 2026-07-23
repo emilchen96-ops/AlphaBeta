@@ -177,7 +177,27 @@ class FakeXtData:
 
     def get_instrument_detail(self, _symbol: str, *, iscomplete: bool) -> dict[str, object]:
         assert iscomplete
-        return {"InstrumentName": "浦发银行"}
+        if _symbol == "510300.SH":
+            return {
+                "InstrumentName": "沪深300ETF",
+                "OpenDate": "20120528",
+                "ExpireDate": "99999999",
+            }
+        return {
+            "InstrumentName": "浦发银行",
+            "OpenDate": "19991110",
+            "ExpireDate": "99999999",
+        }
+
+    def get_sector_list(self) -> list[str]:
+        return ["沪深京A股", "沪市ETF"]
+
+    def get_stock_list_in_sector(self, sector: str) -> list[str]:
+        if sector == "沪深京A股":
+            return ["600000.SH", "810011.BJ"]
+        if sector == "沪市ETF":
+            return ["510300.SH"]
+        return []
 
 
 @pytest.fixture
@@ -198,6 +218,40 @@ def test_miniqmt_provider_connects_and_reads_snapshot(fake_provider) -> None:
         "lastPrice": 9.01,
     }
     assert fake_provider.instrument_detail("600000.SH")["InstrumentName"] == "浦发银行"
+
+
+def test_miniqmt_catalog_treats_qmt_no_expiry_sentinel_as_active(fake_provider) -> None:
+    catalog = fake_provider.instrument_catalog()
+    assert [(item["provider_symbol"], item["asset_type"]) for item in catalog] == [
+        ("510300.SH", "ETF"),
+        ("600000.SH", "STOCK"),
+    ]
+    assert all(item["is_active"] is True for item in catalog)
+    assert all(item["delisted_at"] is None for item in catalog)
+
+
+@pytest.mark.parametrize(
+    ("provider_symbol", "expected"),
+    [
+        ("600000.SH", True),
+        ("688001.SH", True),
+        ("000001.SZ", True),
+        ("300285.SZ", True),
+        ("920001.BJ", True),
+        ("810011.BJ", False),
+        ("900901.SH", False),
+        ("200002.SZ", False),
+    ],
+)
+def test_miniqmt_catalog_recognizes_a_share_code_ranges(
+    provider_symbol: str, expected: bool
+) -> None:
+    assert MiniQMTMarketDataProvider._is_a_share_symbol(provider_symbol) is expected
+
+
+@pytest.mark.parametrize("value", ["99999999", "10111011", "10001011", "not-a-date"])
+def test_miniqmt_catalog_rejects_qmt_invalid_dates(value: str) -> None:
+    assert MiniQMTMarketDataProvider._catalog_date(value) is None
 
 
 def test_miniqmt_provider_normalizes_timezone_decimal_and_order_book(fake_provider) -> None:

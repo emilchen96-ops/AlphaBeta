@@ -7,6 +7,8 @@ export interface MiniQMTStatus {
     last_market_time?: string | null;
     last_received_at?: string | null;
     last_minute_bar_time?: string | null;
+    last_catalog_sync_at?: string | null;
+    catalog_instrument_count?: number;
     error_code?: string | null;
     error_message?: string | null;
   } | null;
@@ -69,4 +71,10 @@ export interface RealtimeQuote {
   trading_status: string;
   source: "MINIQMT";
   is_test_data: false;
+}
+
+export interface HistoryBackfillResult {
+  request_id: string;
+  status: "QUEUED";
+  provider: "MINIQMT";
 }

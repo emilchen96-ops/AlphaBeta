@@ -100,6 +100,7 @@ class InstrumentRepository(Protocol):
         is_active: bool | None,
         offset: int,
         limit: int,
+        source_code: str | None = None,
     ) -> tuple[list[Instrument], int]: ...
     async def upsert_many(self, entities: list[Instrument]) -> list[Instrument]: ...
 

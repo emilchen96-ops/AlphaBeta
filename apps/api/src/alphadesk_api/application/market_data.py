@@ -316,9 +316,15 @@ class MarketDataQueryService:
         uow_factory: UnitOfWorkFactory,
         *,
         minute_stale_seconds: int = 300,
+        authoritative_source_code: str | None = None,
+        allow_non_authoritative_sources: bool = True,
     ) -> None:
         self._uow_factory = uow_factory
         self._minute_stale = timedelta(seconds=minute_stale_seconds)
+        self._authoritative_source_code = (
+            authoritative_source_code.strip().upper() if authoritative_source_code else None
+        )
+        self._allow_non_authoritative_sources = allow_non_authoritative_sources
 
     async def bars(
         self,
@@ -356,15 +362,24 @@ class MarketDataQueryService:
         source_code: str | None,
     ) -> tuple[MarketDataSource, list[tuple[MarketBar, MarketDataFreshness]]]:
         async with self._uow_factory() as uow:
+            requested_code = (
+                source_code.strip().upper() if source_code else self._authoritative_source_code
+            )
+            self._validate_requested_source(requested_code)
             sources = await uow.market_data_sources.list_active()
-            if source_code:
-                source = await uow.market_data_sources.get_by_code(source_code)
+            if requested_code:
+                source = await uow.market_data_sources.get_by_code(requested_code)
                 if source is None:
-                    raise ApplicationError("MARKET_SOURCE_NOT_FOUND", "行情源不存在")
+                    raise ApplicationError(
+                        "MARKET_SOURCE_NOT_FOUND",
+                        "MiniQMT 行情源尚未初始化。请启动 Windows 行情代理",
+                    )
             elif sources:
                 source = sources[0]
             else:
                 raise ApplicationError("MARKET_SOURCE_NOT_FOUND", "没有可用行情源")
+            if source.status is not MarketDataSourceStatus.ACTIVE:
+                raise ApplicationError("MARKET_SOURCE_DISABLED", "MiniQMT 行情源当前不可用")
             bars = await uow.market_bars.get_latest_for_instruments(
                 instrument_ids=instrument_ids,
                 source_id=source.id,
@@ -375,7 +390,12 @@ class MarketDataQueryService:
 
     async def sources(self) -> list[MarketDataSource]:
         async with self._uow_factory() as uow:
-            return await uow.market_data_sources.list_all()
+            values = await uow.market_data_sources.list_all()
+        if self._authoritative_source_code and not self._allow_non_authoritative_sources:
+            return [
+                value for value in values if value.source_code == self._authoritative_source_code
+            ]
+        return values
 
     async def sync_runs(self, limit: int) -> list[MarketSyncRun]:
         async with self._uow_factory() as uow:
@@ -391,10 +411,25 @@ class MarketDataQueryService:
     async def _resolve_source(
         self, uow: UnitOfWork, instrument_id: UUID, source_code: str | None
     ) -> MarketDataSource:
-        if source_code:
-            source = await uow.market_data_sources.get_by_code(source_code)
+        requested_code = (
+            source_code.strip().upper() if source_code else self._authoritative_source_code
+        )
+        self._validate_requested_source(requested_code)
+        if requested_code:
+            source = await uow.market_data_sources.get_by_code(requested_code)
             if source is None:
-                raise ApplicationError("MARKET_SOURCE_NOT_FOUND", "行情源不存在")
+                raise ApplicationError(
+                    "MARKET_SOURCE_NOT_FOUND",
+                    "MiniQMT 行情源尚未初始化。请启动 Windows 行情代理",
+                )
+            if source.status is not MarketDataSourceStatus.ACTIVE:
+                raise ApplicationError("MARKET_SOURCE_DISABLED", "MiniQMT 行情源当前不可用")
+            if requested_code == self._authoritative_source_code:
+                # L2.5-A accepted history by canonical Instrument id. Some
+                # persisted rows therefore predate a MiniQMT mapping; existing
+                # authoritative facts remain readable while the catalog sync
+                # repairs mappings in the background.
+                return source
             mapping = await uow.instrument_mappings.get_by_source_and_instrument(
                 source.id, instrument_id
             )
@@ -407,6 +442,18 @@ class MarketDataQueryService:
             if source.id in mapped_sources:
                 return source
         raise ApplicationError("MARKET_DATA_NOT_FOUND", "该标的没有可用行情源")
+
+    def _validate_requested_source(self, source_code: str | None) -> None:
+        if (
+            source_code
+            and self._authoritative_source_code
+            and source_code != self._authoritative_source_code
+            and not self._allow_non_authoritative_sources
+        ):
+            raise ApplicationError(
+                "MARKET_SOURCE_NOT_AUTHORIZED",
+                "正式行情只允许使用 MiniQMT 数据源",
+            )
 
     def freshness(
         self,

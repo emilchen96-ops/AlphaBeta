@@ -1,6 +1,6 @@
 """HTTP schemas for the MiniQMT read-only market-data boundary."""
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -23,6 +23,8 @@ class AgentStatusRequest(BaseModel):
     last_market_time: datetime | None = None
     last_received_at: datetime | None = None
     last_minute_bar_time: datetime | None = None
+    last_catalog_sync_at: datetime | None = None
+    catalog_instrument_count: int = Field(default=0, ge=0)
     error_code: str | None = Field(default=None, max_length=64)
     error_message: str | None = Field(default=None, max_length=512)
 
@@ -31,7 +33,30 @@ class AgentStatusRequest(BaseModel):
         "last_market_time",
         "last_received_at",
         "last_minute_bar_time",
+        "last_catalog_sync_at",
     )(_aware)
+
+
+class InstrumentCatalogItem(BaseModel):
+    symbol: str = Field(pattern=r"^\d{6}$")
+    exchange: str = Field(pattern=r"^(SSE|SZSE|BSE)$")
+    market: str = Field(default="CN_A", max_length=32)
+    name: str = Field(min_length=1, max_length=256)
+    asset_type: str = Field(pattern=r"^(STOCK|ETF)$")
+    currency: str = "CNY"
+    lot_size: Decimal = Field(gt=0)
+    price_tick: Decimal = Field(gt=0)
+    timezone: str = "Asia/Shanghai"
+    is_active: bool = True
+    listed_at: date | None = None
+    delisted_at: date | None = None
+    provider_symbol: str = Field(pattern=r"^\d{6}\.(SH|SZ|BJ)$")
+
+
+class InstrumentCatalogIngestRequest(BaseModel):
+    sync_token: UUID
+    complete: bool = False
+    items: list[InstrumentCatalogItem] = Field(min_length=1, max_length=500)
 
 
 class QuoteSnapshotIngestRequest(BaseModel):
@@ -97,7 +122,7 @@ class MinuteBarIngestRequest(BaseModel):
 
 
 class HistoryBackfillRequest(BaseModel):
-    instrument_ids: list[UUID] = Field(min_length=1, max_length=10)
+    instrument_ids: list[UUID] = Field(min_length=1, max_length=50)
     timeframe: str
     start_at: datetime
     end_at: datetime

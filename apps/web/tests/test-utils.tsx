@@ -63,7 +63,26 @@ export function mockStatusSuccess() {
       if (url.endsWith("/system/capabilities")) body = healthyCapabilities;
       else if (url.includes("/api/v1/watchlists")) body = [];
       else if (url.includes("/api/v1/market-data/sources")) body = [];
-      else if (url.includes("/api/v1/strategies/catalog")) body = [];
+      else if (url.includes("/api/v1/miniqmt/market-data/status")) {
+        body = {
+          schema_version: 1,
+          data: {
+            configured: false,
+            state: "NOT_CONFIGURED",
+            agent: null,
+            desired_count: 0,
+            active_count: 0,
+            failed_count: 0,
+            latest_minute_bar_time: null,
+            source: "MINIQMT",
+            market_data_capability: "ENABLED",
+            trading_capability: "DISABLED",
+            trading_message: "交易能力关闭",
+          },
+        };
+      } else if (url.includes("/api/v1/market-subscriptions/active")) {
+        body = { schema_version: 1, data: { items: [] } };
+      } else if (url.includes("/api/v1/strategies/catalog")) body = [];
       else if (url.includes("/api/v1/backtests?")) {
         body = { items: [], page: 1, page_size: 20, total: 0 };
       } else if (url.includes("/api/v1/instruments?")) {

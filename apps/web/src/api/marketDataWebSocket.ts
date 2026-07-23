@@ -109,7 +109,7 @@ class MarketDataWebSocketClient {
   }
 
   private send(payload: object) {
-    if (this.socket?.readyState === WebSocket.OPEN)
+    if (this.socket?.readyState === 1)
       this.socket.send(JSON.stringify(payload));
   }
 

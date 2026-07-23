@@ -239,6 +239,25 @@ class ReplayService:
             require_reference_price_for_market_order=limits.require_reference_price_for_market_order,
             kill_switch_enabled=limits.kill_switch_enabled,
         )
+        requested_source = (
+            request.data_source_code.strip().upper()
+            if request.data_source_code is not None
+            else None
+        )
+        if (
+            self._settings.environment != "test"
+            and requested_source is not None
+            and requested_source != self._settings.authoritative_market_source
+        ):
+            raise ApplicationError(
+                "REPLAY_MARKET_SOURCE_NOT_ALLOWED",
+                "正式环境仅允许使用 MiniQMT 行情",
+            )
+        selected_source = (
+            self._settings.authoritative_market_source
+            if self._settings.environment != "test"
+            else requested_source or self._settings.historical_market_provider
+        )
         execution = BacktestConfiguration(
             strategy_key=request.strategy_key,
             strategy_version=metadata.version,
@@ -255,7 +274,7 @@ class ReplayService:
             maximum_volume_participation=request.maximum_volume_participation,
             risk_configuration_reference=request.risk_configuration_reference,
             risk_configuration_snapshot=risk_snapshot,
-            data_source_code=request.data_source_code or self._settings.historical_market_provider,
+            data_source_code=selected_source,
             strategy_price_adjustment_mode=request.strategy_price_adjustment_mode,
         )
         configuration = ReplayConfiguration(execution=execution, speed_mode=request.speed_mode)

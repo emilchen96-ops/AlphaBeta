@@ -5,19 +5,22 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Awaitable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, cast
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphadesk_api.api.v1.market_common import request_correlation_id
+from alphadesk_api.api.v1.market_common import request_correlation_id, uow_factory
+from alphadesk_api.application.intraday import IntradayAggregationService
 from alphadesk_api.application.miniqmt_market_data import (
     AGENT_STATUS_KEY,
     HISTORY_QUEUE_KEY,
+    MiniQMTInstrumentCatalogService,
     MiniQMTMinuteBarService,
     MiniQMTQuoteIngestionService,
     MiniQMTSubscriptionService,
@@ -29,17 +32,20 @@ from alphadesk_api.infrastructure.models import (
     InstrumentModel,
     MarketActiveSubscriptionModel,
     MarketBarModel,
+    MarketDataSourceModel,
     MarketSubscriptionSetModel,
 )
 from alphadesk_api.schemas.miniqmt import (
     AgentStatusRequest,
     GenericResponse,
     HistoryBackfillRequest,
+    InstrumentCatalogIngestRequest,
     MinuteBarIngestRequest,
     QuoteSnapshotIngestRequest,
     SubscriptionSyncReportRequest,
     TemporarySubscriptionRequest,
 )
+from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.miniqmt_market import (
     MiniQMTTradingDisabledError,
     QuoteSnapshot,
@@ -115,12 +121,22 @@ async def market_data_status(request: Request) -> GenericResponse:
             or 0
         )
         latest_bar = await session.scalar(
-            select(func.max(MarketBarModel.bar_time)).where(MarketBarModel.timeframe == "MINUTE_1")
+            select(func.max(MarketBarModel.bar_time))
+            .join(
+                MarketDataSourceModel,
+                MarketDataSourceModel.id == MarketBarModel.source_id,
+            )
+            .where(
+                MarketBarModel.timeframe == "MINUTE_1",
+                MarketDataSourceModel.source_code == "MINIQMT",
+            )
         )
     settings = request.app.state.settings
     return GenericResponse(
         data={
-            "configured": bool(settings.miniqmt_market_data_enabled and settings.miniqmt_data_path),
+            # XtQuant and its data directory belong to the separate Windows Agent.
+            # The containerized API only needs the gateway enabled and an Agent heartbeat.
+            "configured": settings.miniqmt_market_data_enabled,
             "state": (agent or {}).get("state", "NOT_CONFIGURED"),
             "agent": agent,
             "desired_count": desired,
@@ -316,6 +332,21 @@ async def agent_status(
     return GenericResponse(data={"accepted": True})
 
 
+@router.post("/miniqmt/agent/instruments", response_model=GenericResponse)
+async def ingest_agent_instruments(
+    request: Request,
+    payload: InstrumentCatalogIngestRequest,
+    x_alphadesk_agent_token: str | None = Header(default=None),
+) -> GenericResponse:
+    _agent_authorized(request, x_alphadesk_agent_token)
+    result = await MiniQMTInstrumentCatalogService(_sessions(request)).ingest(
+        [item.model_dump(mode="python") for item in payload.items],
+        sync_token=payload.sync_token,
+        complete=payload.complete,
+    )
+    return GenericResponse(data=result)
+
+
 @router.get("/miniqmt/agent/history/next", response_model=GenericResponse)
 async def next_history_request(
     request: Request,
@@ -359,6 +390,33 @@ async def ingest_agent_minute_bars(
     result = await MiniQMTMinuteBarService(_sessions(request)).ingest(
         [item.model_dump(mode="python") for item in payload.items]
     )
+    shanghai = ZoneInfo("Asia/Shanghai")
+    minute_items = [item for item in payload.items if item.timeframe == "MINUTE_1"]
+    touched = {
+        (item.instrument_id, item.bar_time.astimezone(shanghai).date()) for item in minute_items
+    }
+    aggregated = 0
+    incomplete_windows = 0
+    for instrument_id, session_date in sorted(touched, key=lambda value: (str(value[0]), value[1])):
+        start_at = datetime.combine(session_date, time.min, tzinfo=shanghai).astimezone(UTC)
+        end_at = start_at + timedelta(days=1)
+        created, incomplete, _ = await IntradayAggregationService(uow_factory(request)).run(
+            instrument_id=instrument_id,
+            source_code="MINIQMT",
+            start_at=start_at,
+            end_at=end_at,
+            targets=(
+                MarketTimeframe.MINUTE_5,
+                MarketTimeframe.MINUTE_15,
+                MarketTimeframe.MINUTE_30,
+                MarketTimeframe.MINUTE_60,
+            ),
+            dry_run=False,
+        )
+        aggregated += created
+        incomplete_windows += incomplete
+    result["aggregated"] = aggregated
+    result["incomplete_windows"] = incomplete_windows
     await _redis(request).publish(
         "alphadesk:market:v1:events",
         json.dumps(

@@ -265,9 +265,20 @@ def _safe_failure(exc: Exception) -> tuple[str, str]:
 
 
 class StrategyRunner:
-    def __init__(self, uow_factory: UnitOfWorkFactory, registry: StrategyRegistry) -> None:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        registry: StrategyRegistry,
+        *,
+        authoritative_source_code: str | None = None,
+    ) -> None:
         self._uow_factory = uow_factory
         self._registry = registry
+        self._authoritative_source_code = (
+            authoritative_source_code.strip().upper()
+            if authoritative_source_code is not None
+            else None
+        )
 
     async def run(self, request: StrategyRunRequest) -> StrategyRunResult:
         metadata = self._registry.get(request.strategy_key)
@@ -330,13 +341,23 @@ class StrategyRunner:
                     environment=StrategyEnvironment.RESEARCH,
                 )
                 strategy.initialize(context)
-                bars = await uow.historical_bars.list_bars(
-                    instrument_ids=run.instrument_ids,
-                    timeframe=run.timeframe,
-                    start_at=run.start_at,
-                    end_at=run.end_at,
-                    price_adjustment_mode=run.price_adjustment_mode,
-                )
+                if self._authoritative_source_code is None:
+                    bars = await uow.historical_bars.list_bars(
+                        instrument_ids=run.instrument_ids,
+                        timeframe=run.timeframe,
+                        start_at=run.start_at,
+                        end_at=run.end_at,
+                        price_adjustment_mode=run.price_adjustment_mode,
+                    )
+                else:
+                    bars = await uow.historical_bars.list_authoritative_bars(
+                        instrument_ids=run.instrument_ids,
+                        timeframe=run.timeframe,
+                        start_at=run.start_at,
+                        end_at=run.end_at,
+                        source_code=self._authoritative_source_code,
+                        price_adjustment_mode=run.price_adjustment_mode,
+                    )
                 signals: list[Signal] = []
                 for bar in bars:
                     context.advance_time(bar.timestamp)

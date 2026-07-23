@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import type { RouteObject } from "react-router-dom";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { AppLayout } from "../components/AppLayout/AppLayout";
 import { AuditPage } from "../pages/AuditPage";
@@ -10,8 +10,6 @@ import { GettingStartedPage } from "../pages/GettingStartedPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { ReplayRunDetailPage, ReplayRunsPage } from "../pages/ReplayPages";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
-import { IntradayMarketDataPage } from "../pages/IntradayMarketDataPage";
-import { MiniQMTMarketDataPage } from "../pages/MiniQMTMarketDataPage";
 import {
   InformationCenterPage,
   InformationDetailPage,
@@ -74,8 +72,14 @@ export const routes: RouteObject[] = [
         ),
       },
       { path: "market-data-center", element: <MarketDataCenterPage /> },
-      { path: "intraday-market-data", element: <IntradayMarketDataPage /> },
-      { path: "miniqmt-market-data", element: <MiniQMTMarketDataPage /> },
+      {
+        path: "intraday-market-data",
+        element: <Navigate to="/market-data-center?tab=minute" replace />,
+      },
+      {
+        path: "miniqmt-market-data",
+        element: <Navigate to="/market" replace />,
+      },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "scanners", element: <ScannersPage /> },
       { path: "scan-runs", element: <ScanRunsPage /> },

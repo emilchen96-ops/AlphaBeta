@@ -142,6 +142,7 @@ class InstrumentCatalogService:
         is_active: bool | None,
         page: int,
         page_size: int,
+        source_code: str | None = None,
     ) -> tuple[list[Instrument], int]:
         async with self._uow_factory() as uow:
             return await uow.instruments.search(
@@ -152,6 +153,7 @@ class InstrumentCatalogService:
                 is_active=is_active,
                 offset=(page - 1) * page_size,
                 limit=page_size,
+                source_code=source_code,
             )
 
     async def get(self, instrument_id: UUID) -> tuple[Instrument, list[InstrumentMapping]]:

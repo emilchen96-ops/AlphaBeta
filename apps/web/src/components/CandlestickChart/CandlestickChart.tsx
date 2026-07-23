@@ -1,70 +1,164 @@
-import { Empty, Skeleton } from "antd";
+import { Empty, Skeleton, Typography } from "antd";
 
 import type { MarketBar } from "../../types/market";
+
+const WIDTH = 980;
+const HEIGHT = 420;
+const LEFT = 18;
+const RIGHT = 76;
+const TOP = 18;
+const BOTTOM = 38;
+
+function labelTime(value: string, minute: boolean) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    ...(minute ? { hour: "2-digit", minute: "2-digit", hour12: false } : {}),
+  }).format(date);
+}
 
 export function CandlestickChart({
   bars,
   loading,
+  variant = "candlestick",
 }: {
   bars: MarketBar[];
   loading: boolean;
+  variant?: "candlestick" | "line";
 }) {
   if (loading) return <Skeleton active paragraph={{ rows: 8 }} />;
   if (!bars.length)
-    return <Empty description="暂无行情数据，请先前往数据中心下载历史行情" />;
-  const visible = bars.slice(-90);
-  const highs = visible.map((bar) => Number(bar.high));
-  const lows = visible.map((bar) => Number(bar.low));
-  const highest = Math.max(...highs);
-  const lowest = Math.min(...lows);
-  const span = Math.max(highest - lowest, 0.01);
-  const width = 900;
-  const height = 360;
-  const top = 20;
-  const bottom = 30;
-  const plotHeight = height - top - bottom;
-  const step = width / visible.length;
-  const y = (value: number) => top + ((highest - value) / span) * plotHeight;
+    return <Empty description="暂无 MiniQMT 历史行情，可在数据中心发起补数" />;
+
+  const unique = new Map<string, MarketBar>();
+  for (const bar of bars) unique.set(bar.bar_time, bar);
+  const ordered = [...unique.values()].sort(
+    (left, right) =>
+      new Date(left.bar_time).getTime() - new Date(right.bar_time).getTime(),
+  );
+  const visible = ordered.slice(-120);
+  const numeric = visible.filter((bar) =>
+    [bar.open, bar.high, bar.low, bar.close].every((value) =>
+      Number.isFinite(Number(value)),
+    ),
+  );
+  if (!numeric.length) return <Empty description="K 线数据格式无效" />;
+
+  const highest = Math.max(...numeric.map((bar) => Number(bar.high)));
+  const lowest = Math.min(...numeric.map((bar) => Number(bar.low)));
+  const span = Math.max(highest - lowest, Math.abs(highest) * 0.002, 0.01);
+  const plotWidth = WIDTH - LEFT - RIGHT;
+  const plotHeight = HEIGHT - TOP - BOTTOM;
+  const step = plotWidth / numeric.length;
+  const candleWidth = Math.max(Math.min(step * 0.58, 8), 1.5);
+  const y = (value: number) => TOP + ((highest - value) / span) * plotHeight;
+  const minute = numeric[0]?.timeframe !== "DAY_1";
+  const timeTicks = [
+    ...new Set([0, Math.floor((numeric.length - 1) / 2), numeric.length - 1]),
+  ];
+  const closeLine = numeric
+    .map((bar, index) => {
+      const x = LEFT + index * step + step / 2;
+      return `${x},${y(Number(bar.close))}`;
+    })
+    .join(" ");
+
   return (
-    <div className="candle-chart" role="img" aria-label="K线图">
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        {[0, 1, 2, 3, 4].map((line) => (
-          <line
-            key={line}
-            x1="0"
-            x2={width}
-            y1={top + (plotHeight * line) / 4}
-            y2={top + (plotHeight * line) / 4}
-            stroke="#e8edf3"
-          />
-        ))}
-        {visible.map((bar, index) => {
-          const x = index * step + step / 2;
-          const open = Number(bar.open);
-          const close = Number(bar.close);
-          const rising = close >= open;
-          const color = rising ? "#d4380d" : "#08979c";
+    <div className="candle-chart">
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        preserveAspectRatio="xMidYMid meet"
+        role="img"
+        aria-label={`MiniQMT ${variant === "line" ? "分时图" : "K线图"}，共${numeric.length}根`}
+      >
+        {[0, 1, 2, 3, 4].map((line) => {
+          const value = highest - (span * line) / 4;
+          const lineY = TOP + (plotHeight * line) / 4;
           return (
-            <g key={`${bar.bar_time}-${index}`}>
+            <g key={line}>
               <line
-                x1={x}
-                x2={x}
-                y1={y(Number(bar.high))}
-                y2={y(Number(bar.low))}
-                stroke={color}
+                x1={LEFT}
+                x2={WIDTH - RIGHT}
+                y1={lineY}
+                y2={lineY}
+                stroke="#e8edf3"
               />
-              <rect
-                x={x - Math.max(step * 0.28, 1)}
-                y={Math.min(y(open), y(close))}
-                width={Math.max(step * 0.56, 2)}
-                height={Math.max(Math.abs(y(open) - y(close)), 1)}
-                fill={rising ? "#fff" : color}
-                stroke={color}
-              />
+              <text
+                x={WIDTH - RIGHT + 8}
+                y={lineY + 4}
+                fill="#667085"
+                fontSize="12"
+              >
+                {value.toFixed(value >= 100 ? 2 : 3)}
+              </text>
             </g>
           );
         })}
+        {variant === "line" ? (
+          <polyline
+            points={closeLine}
+            fill="none"
+            stroke="#1677ff"
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : (
+          numeric.map((bar, index) => {
+            const x = LEFT + index * step + step / 2;
+            const open = Number(bar.open);
+            const close = Number(bar.close);
+            const rising = close >= open;
+            const color = rising ? "#d4380d" : "#08979c";
+            return (
+              <g key={bar.bar_time}>
+                <line
+                  x1={x}
+                  x2={x}
+                  y1={y(Number(bar.high))}
+                  y2={y(Number(bar.low))}
+                  stroke={color}
+                />
+                <rect
+                  x={x - candleWidth / 2}
+                  y={Math.min(y(open), y(close))}
+                  width={candleWidth}
+                  height={Math.max(Math.abs(y(open) - y(close)), 1)}
+                  fill={rising ? "#fff" : color}
+                  stroke={color}
+                />
+              </g>
+            );
+          })
+        )}
+        {timeTicks.map((index) => {
+          const x = LEFT + index * step + step / 2;
+          return (
+            <text
+              key={numeric[index].bar_time}
+              x={x}
+              y={HEIGHT - 10}
+              textAnchor={
+                index === 0
+                  ? "start"
+                  : index === numeric.length - 1
+                    ? "end"
+                    : "middle"
+              }
+              fill="#667085"
+              fontSize="12"
+            >
+              {labelTime(numeric[index].bar_time, minute)}
+            </text>
+          );
+        })}
       </svg>
+      <Typography.Text type="secondary" className="candle-chart-caption">
+        横轴为北京时间，纵轴为价格；
+        {variant === "line" ? "蓝线为分钟收盘价。" : "红色上涨，青色下跌。"}
+        仅展示最近 {numeric.length} 根。
+      </Typography.Text>
     </div>
   );
 }

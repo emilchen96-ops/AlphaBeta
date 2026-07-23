@@ -72,7 +72,9 @@ class Settings(BaseSettings):
     external_market_data_enabled: bool = False
     free_market_enabled: bool = False
     realtime_market_provider: Literal["disabled"] = "disabled"
-    historical_market_provider: Literal["baostock"] = "baostock"
+    historical_market_provider: Literal["miniqmt", "baostock"] = "miniqmt"
+    authoritative_market_source: Literal["MINIQMT"] = "MINIQMT"
+    allow_test_market_data: bool = False
     tushare_enabled: bool = False
     tushare_token: SecretStr | None = None
     market_calendar_provider: Literal["fixture", "tushare"] = "fixture"
@@ -104,8 +106,8 @@ class Settings(BaseSettings):
     miniqmt_benchmark_symbols: list[str] = Field(
         default_factory=lambda: ["510300.SSE", "510500.SSE"]
     )
-    miniqmt_history_max_instruments: int = Field(default=10, ge=1, le=50)
-    miniqmt_history_max_days: int = Field(default=31, ge=1, le=366)
+    miniqmt_history_max_instruments: int = Field(default=50, ge=1, le=50)
+    miniqmt_history_max_days: int = Field(default=3_650, ge=1, le=3_650)
     miniqmt_quote_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
     backtest_max_instruments: int = Field(default=20, ge=1, le=200)

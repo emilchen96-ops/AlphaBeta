@@ -33,6 +33,9 @@ class InstrumentResponse(BaseModel):
     price_tick: Decimal
     timezone: str
     is_active: bool
+    listed_at: date | None = None
+    delisted_at: date | None = None
+    lifecycle_status: str = "ACTIVE"
     updated_at: datetime
 
 
@@ -181,7 +184,7 @@ class MarketSyncRunResponse(BaseModel):
 
 
 class DailyUpdateRequest(BaseModel):
-    provider: str = Field(default="baostock", max_length=64)
+    provider: str = Field(default="miniqmt", max_length=64)
     universe_key: str = Field(default="research", max_length=64)
     instrument_ids: list[UUID] = Field(default_factory=list, max_length=500)
     target_date: date | None = None
@@ -220,7 +223,7 @@ class DailyUpdateResponse(BaseModel):
 
 class QualityRunRequest(BaseModel):
     universe_key: str = Field(default="research", max_length=64)
-    provider: str = Field(default="baostock", max_length=64)
+    provider: str = Field(default="miniqmt", max_length=64)
     max_instruments: int | None = Field(default=None, ge=1, le=500)
     range_start: datetime | None = None
     range_end: datetime | None = None

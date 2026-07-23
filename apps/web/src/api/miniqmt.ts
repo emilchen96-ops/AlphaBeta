@@ -1,5 +1,6 @@
 import { apiRequest } from "./client";
 import type {
+  HistoryBackfillResult,
   MiniQMTStatus,
   RealtimeQuote,
   SubscriptionItem,
@@ -70,4 +71,22 @@ export function setTemporarySubscription(
       body: JSON.stringify({ instrument_id: instrumentId, enabled }),
     },
   );
+}
+
+export async function requestMiniQMTHistoryBackfill(payload: {
+  instrument_ids: string[];
+  timeframe: "DAY_1" | "MINUTE_1";
+  start_at: string;
+  end_at: string;
+}) {
+  return (
+    await apiRequest<Envelope<HistoryBackfillResult>>(
+      "/api/v1/miniqmt/history/backfill",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    )
+  ).data;
 }

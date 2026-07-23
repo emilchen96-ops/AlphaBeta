@@ -61,7 +61,7 @@ async def test_fixture_import_aggregation_idempotency_and_bounded_query() -> Non
         )
         assert second.bars_inserted == 0
         assert second.bars_skipped == 2_639
-        coverage = await IntradayOverviewService(factory).coverage()
+        coverage = await IntradayOverviewService(factory).coverage("D03_FIXTURE")
         counts = {item["timeframe"]: item["bar_count"] for item in coverage}
         assert counts["MINUTE_1"] >= 2_400
         assert counts["MINUTE_5"] >= 480

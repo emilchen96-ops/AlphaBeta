@@ -31,17 +31,7 @@ const menuItems = [
   { key: "/", icon: <AppstoreOutlined />, label: "总览" },
   { key: "/getting-started", icon: <PlayCircleOutlined />, label: "开始使用" },
   { key: "/market-data-center", icon: <DatabaseOutlined />, label: "数据中心" },
-  {
-    key: "/intraday-market-data",
-    icon: <BarChartOutlined />,
-    label: "分钟数据",
-  },
   { key: "/market", icon: <BarChartOutlined />, label: "行情" },
-  {
-    key: "/miniqmt-market-data",
-    icon: <BarChartOutlined />,
-    label: "实时行情",
-  },
   { key: "/portfolio", icon: <PieChartOutlined />, label: "持仓" },
   { key: "/scanners", icon: <FilterOutlined />, label: "条件扫描" },
   { key: "/scan-runs", icon: <DatabaseOutlined />, label: "扫描运行" },

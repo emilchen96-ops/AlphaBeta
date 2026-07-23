@@ -95,9 +95,20 @@ class ScannerCatalogService:
 
 
 class ScannerRunService:
-    def __init__(self, uow_factory: UnitOfWorkFactory, registry: ScannerRegistry) -> None:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        registry: ScannerRegistry,
+        *,
+        authoritative_source_code: str | None = None,
+    ) -> None:
         self._uow_factory = uow_factory
         self._registry = registry
+        self._authoritative_source_code = (
+            authoritative_source_code.strip().upper()
+            if authoritative_source_code is not None
+            else None
+        )
 
     async def run(self, request: ScannerRunRequest) -> ScannerRunOutcome:
         scanner, validated, instrument_ids, as_of = self._validate_request(request)
@@ -200,13 +211,23 @@ class ScannerRunService:
         instruments: tuple[Instrument, ...],
     ) -> list[ScanResult]:
         async with self._uow_factory() as uow:
-            bars = await uow.historical_bars.list_bars(
-                instrument_ids=run.instrument_ids,
-                timeframe=run.timeframe,
-                start_at=datetime(1970, 1, 1, tzinfo=UTC),
-                end_at=run.as_of + timedelta(microseconds=1),
-                price_adjustment_mode=run.price_adjustment_mode,
-            )
+            if self._authoritative_source_code is None:
+                bars = await uow.historical_bars.list_bars(
+                    instrument_ids=run.instrument_ids,
+                    timeframe=run.timeframe,
+                    start_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    end_at=run.as_of + timedelta(microseconds=1),
+                    price_adjustment_mode=run.price_adjustment_mode,
+                )
+            else:
+                bars = await uow.historical_bars.list_authoritative_bars(
+                    instrument_ids=run.instrument_ids,
+                    timeframe=run.timeframe,
+                    start_at=datetime(1970, 1, 1, tzinfo=UTC),
+                    end_at=run.as_of + timedelta(microseconds=1),
+                    source_code=self._authoritative_source_code,
+                    price_adjustment_mode=run.price_adjustment_mode,
+                )
             grouped: dict[UUID, list[StrategyBar]] = {item.id: [] for item in instruments}
             for bar in bars:
                 if bar.instrument_id in grouped:

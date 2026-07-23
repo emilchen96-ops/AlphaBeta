@@ -47,6 +47,11 @@ def registry(request: Request) -> StrategyRegistry:
     return cast(StrategyRegistry, request.app.state.strategy_registry)
 
 
+def authoritative_source(request: Request) -> str | None:
+    settings = request.app.state.settings
+    return None if settings.environment == "test" else settings.authoritative_market_source
+
+
 def run_detail(item: StrategyRunDto) -> StrategyRunDetailResponse:
     warnings = (
         ["NO_MARKET_DATA"] if item.status.value == "COMPLETED" and item.bars_processed == 0 else []
@@ -183,7 +188,11 @@ async def strategy_catalog_detail(request: Request, strategy_key: str) -> Strate
     "/strategy-runs", response_model=StrategyRunResponse, status_code=status.HTTP_201_CREATED
 )
 async def create_strategy_run(request: Request, body: StrategyRunCreateBody) -> StrategyRunResponse:
-    service = StrategyResearchService(uow_factory(request), registry(request))
+    service = StrategyResearchService(
+        uow_factory(request),
+        registry(request),
+        authoritative_source_code=authoritative_source(request),
+    )
     try:
         if (
             body.start_at.tzinfo is None
@@ -324,7 +333,11 @@ async def list_run_signals(
 async def create_strategy_experiment(
     request: Request, body: StrategyExperimentCreateBody
 ) -> StrategyExperimentResponse:
-    research = StrategyResearchService(uow_factory(request), registry(request))
+    research = StrategyResearchService(
+        uow_factory(request),
+        registry(request),
+        authoritative_source_code=authoritative_source(request),
+    )
     settings = request.app.state.settings
     try:
         try:
@@ -337,6 +350,7 @@ async def create_strategy_experiment(
             uow_factory(request),
             registry(request),
             max_combinations=settings.strategy_experiment_max_combinations,
+            authoritative_source_code=authoritative_source(request),
         ).run(
             StrategyExperimentRequest(
                 idempotency_key=body.idempotency_key,

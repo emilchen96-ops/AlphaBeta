@@ -228,6 +228,25 @@ class BacktestService:
             ),
             kill_switch_enabled=configured_limits.kill_switch_enabled,
         )
+        requested_source = (
+            request.data_source_code.strip().upper()
+            if request.data_source_code is not None
+            else None
+        )
+        if (
+            self._settings.environment != "test"
+            and requested_source is not None
+            and requested_source != self._settings.authoritative_market_source
+        ):
+            raise ApplicationError(
+                "BACKTEST_MARKET_SOURCE_NOT_ALLOWED",
+                "正式环境仅允许使用 MiniQMT 行情",
+            )
+        selected_source = (
+            self._settings.authoritative_market_source
+            if self._settings.environment != "test"
+            else requested_source or self._settings.historical_market_provider
+        )
         configuration = BacktestConfiguration(
             strategy_key=request.strategy_key,
             strategy_version=metadata.version,
@@ -245,9 +264,7 @@ class BacktestService:
             risk_configuration_snapshot=risk_snapshot,
             maximum_volume_participation=request.maximum_volume_participation,
             benchmark_symbol=request.benchmark_symbol,
-            data_source_code=(
-                request.data_source_code or self._settings.historical_market_provider
-            ),
+            data_source_code=selected_source,
             strategy_price_adjustment_mode=request.strategy_price_adjustment_mode,
         )
         if len(configuration.instrument_ids) > self._settings.backtest_max_instruments:

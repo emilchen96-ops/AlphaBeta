@@ -380,7 +380,8 @@ async def test_daily_update_and_quality_api_are_real_database_flows(
         )
         assert detail.status_code == 200 and detail.json()["issue_page_size"] == 1
         for path in ("overview", "coverage", "readiness", "sync-runs"):
-            response = await client.get(f"/api/v1/market-data/{path}")
+            params = {"provider": "baostock"} if path != "sync-runs" else None
+            response = await client.get(f"/api/v1/market-data/{path}", params=params)
             assert response.status_code == 200, response.text
         missing = await client.get(f"/api/v1/market-data/quality-runs/{uuid4()}")
         assert missing.status_code == 404

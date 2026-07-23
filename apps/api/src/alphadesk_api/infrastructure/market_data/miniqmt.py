@@ -6,9 +6,10 @@ This module deliberately imports only ``xtquant.xtdata``.  It never imports
 
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -93,7 +94,7 @@ class MiniQMTMarketDataProvider:
             if normalized not in sys.path:
                 sys.path.insert(0, normalized)
         try:
-            from xtquant import xtdata  # type: ignore[import-not-found]
+            from xtquant import xtdata  # type: ignore[import-untyped]
         except ImportError as exc:
             raise MiniQMTNotAvailableError(
                 "未安装XtQuant行情SDK; 请在Windows行情代理环境安装alphadesk-api[miniqmt]。"
@@ -128,6 +129,123 @@ class MiniQMTMarketDataProvider:
         self._require_connection()
         value = self._xtdata.get_instrument_detail(provider_symbol, iscomplete=True)
         return dict(value or {})
+
+    def instrument_catalog(self) -> list[dict[str, object]]:
+        """Return the active A-share and ETF catalog exposed by MiniQMT."""
+
+        self._require_connection()
+        try:
+            available = set(self._xtdata.get_sector_list() or [])
+        except Exception:
+            available = set()
+        preferred = (
+            "沪深京A股",
+            "沪深A股",
+            "上证A股",
+            "京市A股",
+            "深证A股",
+            "北证A股",
+            "沪深ETF",
+            "沪市ETF",
+            "深市ETF",
+            "ETF基金",
+        )
+        sector_names = [name for name in preferred if not available or name in available]
+        stock_symbols: set[str] = set()
+        etf_symbols: set[str] = set()
+        for sector in sector_names:
+            try:
+                values = set(self._xtdata.get_stock_list_in_sector(sector) or [])
+            except Exception:
+                continue
+            if "ETF" in sector:
+                etf_symbols.update(values)
+            else:
+                stock_symbols.update(values)
+        etf_symbols = {str(value).upper() for value in etf_symbols}
+        stock_symbols = {str(value).upper() for value in stock_symbols}
+        symbols = {
+            value
+            for value in stock_symbols | etf_symbols
+            if re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", value)
+            and (value in etf_symbols or self._is_a_share_symbol(value))
+        }
+        output: list[dict[str, object]] = []
+        for provider_symbol in sorted(symbols):
+            try:
+                detail = self.instrument_detail(provider_symbol)
+            except Exception:
+                continue
+            symbol, suffix = provider_symbol.split(".", 1)
+            exchange = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}[suffix]
+            name = str(
+                detail.get("InstrumentName")
+                or detail.get("instrument_name")
+                or detail.get("Name")
+                or provider_symbol
+            ).strip()
+            listed_at = self._catalog_date(
+                detail.get("OpenDate") or detail.get("open_date") or detail.get("ListDate")
+            )
+            delisted_at = self._catalog_date(
+                detail.get("ExpireDate") or detail.get("expire_date") or detail.get("DelistDate")
+            )
+            if listed_at is not None and delisted_at is not None and delisted_at < listed_at:
+                delisted_at = None
+            is_active = delisted_at is None or date.fromisoformat(delisted_at) >= date.today()
+            asset_type = (
+                "ETF"
+                if provider_symbol in etf_symbols or "ETF" in name.upper() or "交易型开放式" in name
+                else "STOCK"
+            )
+            output.append(
+                {
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "market": "CN_A",
+                    "name": name,
+                    "asset_type": asset_type,
+                    "currency": "CNY",
+                    "lot_size": "100",
+                    "price_tick": "0.001" if asset_type == "ETF" else "0.01",
+                    "timezone": "Asia/Shanghai",
+                    "is_active": is_active,
+                    "listed_at": listed_at,
+                    "delisted_at": delisted_at,
+                    "provider_symbol": provider_symbol,
+                }
+            )
+        return output
+
+    @staticmethod
+    def _is_a_share_symbol(provider_symbol: str) -> bool:
+        symbol, _, suffix = provider_symbol.upper().partition(".")
+        if suffix == "SH":
+            return symbol.startswith(("60", "68"))
+        if suffix == "SZ":
+            return symbol.startswith(("00", "30"))
+        if suffix == "BJ":
+            return symbol.startswith(("43", "83", "87", "88", "92"))
+        return False
+
+    @staticmethod
+    def _catalog_date(value: object) -> str | None:
+        text = str(value or "").strip().replace("-", "")
+        if (
+            text in {"", "0", "None", "nan"}
+            or text.startswith("9999")
+            or not re.fullmatch(r"\d{8}", text)
+        ):
+            return None
+        year = int(text[:4])
+        if year < 1900:
+            return None
+        normalized = f"{text[:4]}-{text[4:6]}-{text[6:]}"
+        try:
+            date.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return normalized
 
     def latest_raw_snapshot(self, provider_symbol: str) -> dict[str, Any] | None:
         self._require_connection()

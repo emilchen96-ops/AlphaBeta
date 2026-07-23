@@ -1,128 +1,73 @@
-import { screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { screen } from "@testing-library/react";
 
-import { healthyCapabilities, healthyStatus, renderRoute } from "./test-utils";
+import { renderRoute } from "./test-utils";
+import { beforeEach, afterEach, vi } from "vitest";
 
-const instrumentId = "22222222-2222-4222-8222-222222222222";
-
-function response(body: unknown) {
-  return Promise.resolve(
+const response = (body: unknown) =>
+  Promise.resolve(
     new Response(JSON.stringify(body), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     }),
   );
-}
 
-function installFetch() {
+beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    vi.fn((input: string | URL | Request) => {
       const url =
         typeof input === "string"
           ? input
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/system/status")) return response(healthyStatus);
-      if (url.endsWith("/system/capabilities"))
-        return response(healthyCapabilities);
-      if (url.endsWith("/intraday/providers"))
+      if (url.endsWith("/system/status"))
         return response({
-          items: [
-            {
-              provider_key: "D03_FIXTURE",
-              health: "AVAILABLE",
-              supported_timeframes: ["MINUTE_1"],
-              input_types: ["fixture"],
-              message: "offline fixture",
-            },
-            {
-              provider_key: "LOCAL_FILE",
-              health: "AVAILABLE_CLI_ONLY",
-              supported_timeframes: ["MINUTE_1"],
-              input_types: ["csv"],
-              message: "CSV CLI only",
-            },
-          ],
-          limits: { http_upload: false },
+          api: "online",
+          postgresql: "online",
+          redis: "online",
+          environment: "development",
         });
-      if (url.endsWith("/intraday/coverage")) return response({ items: [] });
-      if (url.endsWith("/intraday/imports") && init?.method !== "POST")
-        return response({ items: [] });
-      if (url.endsWith("/intraday/quality-runs") && init?.method !== "POST")
-        return response({ items: [], total: 0 });
-      if (url.endsWith("/intraday/readiness"))
+      if (url.endsWith("/miniqmt/market-data/status"))
         return response({
-          items: [
-            {
-              capability_key: "bt02_5m_ready",
-              timeframe: "MINUTE_5",
-              data_status: "READY",
-              implementation_status: "NOT_IMPLEMENTED",
-              ready_instrument_count: 2,
-              required_action: "代码尚未开发",
-            },
-          ],
+          schema_version: 1,
+          data: {
+            configured: true,
+            state: "CONNECTED",
+            agent: null,
+            desired_count: 0,
+            active_count: 0,
+            failed_count: 0,
+            latest_minute_bar_time: null,
+          },
         });
       if (url.includes("/instruments?"))
-        return response({
-          items: [
-            {
-              id: instrumentId,
-              symbol: "600000",
-              name: "D03 Fixture SSE",
-              exchange: "SSE",
-            },
-          ],
-          page: 1,
-          page_size: 50,
-          total: 1,
-        });
-      if (url.includes("/intraday/bars?"))
-        return response({ items: [], historical: true, realtime: false });
-      if (url.endsWith("/intraday/imports") && init?.method === "POST")
-        return response({
-          run: null,
-          rows_read: 2400,
-          rows_valid: 2400,
-          rows_invalid: 0,
-          bars_inserted: 2400,
-          bars_updated: 0,
-          bars_skipped: 0,
-          conflicts: 0,
-          aggregated_bars_created: 760,
-          incomplete_windows: 0,
-          duration_seconds: 1,
-          errors: [],
-        });
+        return response({ items: [], page: 1, page_size: 50, total: 0 });
+      if (url.endsWith("/market-data/overview")) return response({});
+      if (url.endsWith("/market-data/coverage")) return response({ items: [] });
+      if (url.endsWith("/market-data/readiness")) return response([]);
+      if (url.endsWith("/intraday/coverage")) return response({ items: [] });
+      if (url.endsWith("/intraday/readiness")) return response({ items: [] });
+      if (url.endsWith("/intraday/imports")) return response({ items: [] });
+      if (url.endsWith("/intraday/quality-runs"))
+        return response({ items: [], total: 0 });
+      if (url.includes("/market-data/quality-runs?page="))
+        return response({ items: [], page: 1, page_size: 20, total: 0 });
+      if (url.endsWith("/market-reference/status")) return response({});
+      if (url.includes("/market-data/sync-runs")) return response([]);
       throw new Error(`unhandled ${url}`);
     }),
   );
-}
-
-beforeEach(installFetch);
+});
 afterEach(() => vi.unstubAllGlobals());
 
-test("shows offline provider boundary, CLI import guidance and BT02 code status", async () => {
-  const user = userEvent.setup();
+test("分钟数据旧路由跳转到统一数据中心", async () => {
   renderRoute("/intraday-market-data");
-  expect(await screen.findByText("分钟行情数据中心")).toBeInTheDocument();
-  expect(await screen.findByText("D03_FIXTURE")).toBeInTheDocument();
-  expect(screen.getByText(/不连接实时 WebSocket/)).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: "导入任务" }));
   expect(
-    await screen.findByText(/本地文件通过命令行（CLI）安全导入/),
+    await screen.findByRole("heading", { name: "数据中心" }),
   ).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /上传/ }),
-  ).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: /导入2只股票/ }));
-  await waitFor(() =>
-    expect(screen.getByText(/导入 2400 根/)).toBeInTheDocument(),
-  );
-  await user.click(screen.getByRole("tab", { name: "Readiness" }));
-  expect((await screen.findAllByText("代码尚未开发")).length).toBeGreaterThan(
-    0,
-  );
+    screen.getByRole("tab", { name: "分钟行情", selected: true }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("D03_FIXTURE")).not.toBeInTheDocument();
 });

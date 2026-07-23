@@ -12,12 +12,13 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from redis.asyncio import Redis
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, literal_column, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphadesk_api.infrastructure.free_market_cache import QuoteCache, write_json
 from alphadesk_api.infrastructure.models import (
+    InstrumentMappingModel,
     InstrumentModel,
     MarketActiveSubscriptionModel,
     MarketBarModel,
@@ -54,6 +55,183 @@ EVENT_CHANNEL = "alphadesk:market:v1:events"
 def _version(values: list[dict[str, object]]) -> str:
     canonical = json.dumps(values, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+class MiniQMTInstrumentCatalogService:
+    """Idempotently persist the MiniQMT A-share/ETF catalog and mappings."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = session_factory
+
+    async def ingest(
+        self,
+        items: list[dict[str, object]],
+        *,
+        sync_token: UUID,
+        complete: bool,
+    ) -> dict[str, int]:
+        now = datetime.now(UTC)
+        async with self._sessions() as session:
+            source = await session.scalar(
+                select(MarketDataSourceModel).where(MarketDataSourceModel.source_code == "MINIQMT")
+            )
+            if source is None:
+                source = MarketDataSourceModel(
+                    id=uuid4(),
+                    source_code="MINIQMT",
+                    name="MiniQMT只读行情",
+                    status="ACTIVE",
+                    priority=0,
+                    supports_realtime=True,
+                    provider_tier="FREE_BEST_EFFORT",
+                    supports_quotes=True,
+                    supports_recent_minute_bars=True,
+                    supported_timeframes=[
+                        "DAY_1",
+                        "MINUTE_1",
+                        "MINUTE_5",
+                        "MINUTE_15",
+                        "MINUTE_30",
+                        "MINUTE_60",
+                    ],
+                    metadata_json={
+                        "authoritative": True,
+                        "trading_capability": "DISABLED",
+                    },
+                )
+                session.add(source)
+                await session.flush()
+            else:
+                source.status = "ACTIVE"
+                source.priority = 0
+                source.supported_timeframes = [
+                    "DAY_1",
+                    "MINUTE_1",
+                    "MINUTE_5",
+                    "MINUTE_15",
+                    "MINUTE_30",
+                    "MINUTE_60",
+                ]
+                source.updated_at = now
+
+            instrument_values = [
+                {
+                    "id": uuid4(),
+                    "symbol": str(item["symbol"]).upper(),
+                    "exchange": str(item["exchange"]).upper(),
+                    "market": str(item.get("market", "CN_A")).upper(),
+                    "name": str(item["name"]).strip(),
+                    "asset_type": str(item["asset_type"]).upper(),
+                    "currency": str(item.get("currency", "CNY")).upper(),
+                    "lot_size": Decimal(str(item.get("lot_size", "100"))),
+                    "price_tick": Decimal(str(item.get("price_tick", "0.01"))),
+                    "timezone": str(item.get("timezone", "Asia/Shanghai")),
+                    "is_active": bool(item.get("is_active", True)),
+                    "listed_at": item.get("listed_at"),
+                    "delisted_at": item.get("delisted_at"),
+                    "metadata_json": {
+                        "source": "MINIQMT",
+                        "provider_symbol": str(item["provider_symbol"]),
+                    },
+                    "updated_at": now,
+                }
+                for item in items
+            ]
+            if instrument_values:
+                statement = pg_insert(InstrumentModel).values(instrument_values)
+                excluded = statement.excluded
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        constraint="uq_instruments_exchange_symbol",
+                        set_={
+                            "market": excluded.market,
+                            "name": excluded.name,
+                            "asset_type": excluded.asset_type,
+                            "currency": excluded.currency,
+                            "lot_size": excluded.lot_size,
+                            "price_tick": excluded.price_tick,
+                            "timezone": excluded.timezone,
+                            "is_active": excluded.is_active,
+                            "listed_at": func.coalesce(
+                                excluded.listed_at, InstrumentModel.listed_at
+                            ),
+                            "delisted_at": excluded.delisted_at,
+                            "metadata": excluded.metadata,
+                            "updated_at": excluded.updated_at,
+                        },
+                    )
+                )
+            keys = [(str(item["exchange"]).upper(), str(item["symbol"]).upper()) for item in items]
+            instruments = list(
+                await session.scalars(
+                    select(InstrumentModel).where(
+                        tuple_(
+                            InstrumentModel.exchange,
+                            InstrumentModel.symbol,
+                        ).in_(keys)
+                    )
+                )
+            )
+            by_key = {(item.exchange, item.symbol): item for item in instruments}
+            mapping_values = [
+                {
+                    "id": uuid4(),
+                    "instrument_id": by_key[
+                        (
+                            str(item["exchange"]).upper(),
+                            str(item["symbol"]).upper(),
+                        )
+                    ].id,
+                    "source_id": source.id,
+                    "external_symbol": str(item["provider_symbol"]),
+                    "external_exchange": str(item["exchange"]).upper(),
+                    "is_primary": True,
+                    "metadata_json": {
+                        "source": "MINIQMT",
+                        "catalog_sync_token": str(sync_token),
+                    },
+                    "updated_at": now,
+                }
+                for item in items
+            ]
+            if mapping_values:
+                statement = pg_insert(InstrumentMappingModel).values(mapping_values)
+                excluded = statement.excluded
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        constraint="uq_instrument_mappings_source_instrument",
+                        set_={
+                            "external_symbol": excluded.external_symbol,
+                            "external_exchange": excluded.external_exchange,
+                            "is_primary": excluded.is_primary,
+                            "metadata": excluded.metadata,
+                            "updated_at": excluded.updated_at,
+                        },
+                    )
+                )
+            removed_mappings = 0
+            if complete:
+                stale = await session.execute(
+                    delete(InstrumentMappingModel)
+                    .where(
+                        InstrumentMappingModel.source_id == source.id,
+                        or_(
+                            InstrumentMappingModel.metadata_json["catalog_sync_token"].astext.is_(
+                                None
+                            ),
+                            InstrumentMappingModel.metadata_json["catalog_sync_token"].astext
+                            != str(sync_token),
+                        ),
+                    )
+                    .returning(InstrumentMappingModel.id)
+                )
+                removed_mappings = len(stale.scalars().all())
+            await session.commit()
+        return {
+            "instruments": len(instruments),
+            "mappings": len(mapping_values),
+            "removed_mappings": removed_mappings,
+        }
 
 
 class MiniQMTSubscriptionService:
@@ -597,16 +775,29 @@ class MiniQMTMinuteBarService:
                     source_code="MINIQMT",
                     name="MiniQMT只读行情",
                     status="ACTIVE",
-                    priority=1,
+                    priority=0,
                     supports_realtime=True,
                     provider_tier="FREE_BEST_EFFORT",
                     supports_quotes=True,
                     supports_recent_minute_bars=True,
-                    supported_timeframes=["MINUTE_1", "DAY_1"],
-                    metadata_json={"trading_capability": "DISABLED"},
+                    supported_timeframes=[
+                        "DAY_1",
+                        "MINUTE_1",
+                        "MINUTE_5",
+                        "MINUTE_15",
+                        "MINUTE_30",
+                        "MINUTE_60",
+                    ],
+                    metadata_json={
+                        "authoritative": True,
+                        "trading_capability": "DISABLED",
+                    },
                 )
                 session.add(source)
                 await session.flush()
+            else:
+                source.status = "ACTIVE"
+                source.priority = 0
             for item in items:
                 bar_time = datetime.fromisoformat(str(item["bar_time"]))
                 timeframe = MarketTimeframe(str(item.get("timeframe", "MINUTE_1")))
@@ -619,8 +810,42 @@ class MiniQMTMinuteBarService:
                 if timeframe is MarketTimeframe.DAY_1:
                     local_date = bar_time.astimezone(UTC).date()
                     bar_time = datetime.combine(local_date, datetime.min.time(), tzinfo=UTC)
+                instrument_id = UUID(str(item["instrument_id"]))
+                instrument = await session.get(InstrumentModel, instrument_id)
+                if instrument is None:
+                    raise ValueError("MINIQMT_INSTRUMENT_NOT_FOUND")
+                provider_suffix = {
+                    "SSE": "SH",
+                    "SZSE": "SZ",
+                    "BSE": "BJ",
+                }.get(instrument.exchange)
+                if provider_suffix is None:
+                    raise ValueError("MINIQMT_EXCHANGE_NOT_SUPPORTED")
+                mapping_statement = pg_insert(InstrumentMappingModel).values(
+                    id=uuid4(),
+                    instrument_id=instrument_id,
+                    source_id=source.id,
+                    external_symbol=f"{instrument.symbol}.{provider_suffix}",
+                    external_exchange=instrument.exchange,
+                    is_primary=True,
+                    metadata_json={"source": "MINIQMT"},
+                    updated_at=datetime.now(UTC),
+                )
+                mapping_excluded = mapping_statement.excluded
+                await session.execute(
+                    mapping_statement.on_conflict_do_update(
+                        constraint="uq_instrument_mappings_source_instrument",
+                        set_={
+                            "external_symbol": mapping_excluded.external_symbol,
+                            "external_exchange": mapping_excluded.external_exchange,
+                            "is_primary": mapping_excluded.is_primary,
+                            "metadata": mapping_excluded.metadata,
+                            "updated_at": mapping_excluded.updated_at,
+                        },
+                    )
+                )
                 values = {
-                    "instrument_id": UUID(str(item["instrument_id"])),
+                    "instrument_id": instrument_id,
                     "source_id": source.id,
                     "timeframe": timeframe.value,
                     "adjustment_type": "NONE",
@@ -643,15 +868,42 @@ class MiniQMTMinuteBarService:
                     "updated_at": datetime.now(UTC),
                 }
                 statement = pg_insert(MarketBarModel).values(**values)
-                result = await session.execute(
-                    statement.on_conflict_do_nothing(
-                        constraint="uq_market_bars_identity"
-                    ).returning(MarketBarModel.id)
+                excluded = statement.excluded
+                changed = or_(
+                    excluded.open.is_distinct_from(MarketBarModel.open),
+                    excluded.high.is_distinct_from(MarketBarModel.high),
+                    excluded.low.is_distinct_from(MarketBarModel.low),
+                    excluded.close.is_distinct_from(MarketBarModel.close),
+                    excluded.volume.is_distinct_from(MarketBarModel.volume),
+                    excluded.amount.is_distinct_from(MarketBarModel.amount),
+                    excluded.source_updated_at.is_distinct_from(MarketBarModel.source_updated_at),
                 )
-                if result.scalar_one_or_none() is None:
+                result: Any = await session.execute(
+                    statement.on_conflict_do_update(
+                        constraint="uq_market_bars_identity",
+                        set_={
+                            "open": excluded.open,
+                            "high": excluded.high,
+                            "low": excluded.low,
+                            "close": excluded.close,
+                            "volume": excluded.volume,
+                            "amount": excluded.amount,
+                            "received_at": excluded.received_at,
+                            "source_updated_at": excluded.source_updated_at,
+                            "quality_status": excluded.quality_status,
+                            "quality_flags": excluded.quality_flags,
+                            "updated_at": excluded.updated_at,
+                        },
+                        where=changed,
+                    ).returning(literal_column("xmax = 0").label("inserted"))
+                )
+                inserted_flag = result.scalar_one_or_none()
+                if inserted_flag is None:
                     unchanged += 1
-                else:
+                elif bool(inserted_flag):
                     inserted += 1
+                else:
+                    updated += 1
             await session.commit()
         return {"inserted": inserted, "updated": updated, "unchanged": unchanged}
 
@@ -664,6 +916,8 @@ async def update_agent_status(redis: Redis, payload: dict[str, object]) -> None:
         "last_market_time": payload.get("last_market_time"),
         "last_received_at": payload.get("last_received_at"),
         "last_minute_bar_time": payload.get("last_minute_bar_time"),
+        "last_catalog_sync_at": payload.get("last_catalog_sync_at"),
+        "catalog_instrument_count": payload.get("catalog_instrument_count", 0),
         "error_code": payload.get("error_code"),
         "error_message": payload.get("error_message"),
         "market_data_capability": "ENABLED",

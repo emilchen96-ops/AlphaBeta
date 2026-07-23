@@ -926,8 +926,19 @@ class SqlAlchemyInstrumentRepository(SqlAlchemyRepository[Instrument, Instrument
         is_active: bool | None,
         offset: int,
         limit: int,
+        source_code: str | None = None,
     ) -> tuple[list[Instrument], int]:
-        filters = []
+        filters: list[Any] = []
+        if source_code:
+            source_instruments = (
+                select(InstrumentMappingModel.instrument_id)
+                .join(
+                    MarketDataSourceModel,
+                    MarketDataSourceModel.id == InstrumentMappingModel.source_id,
+                )
+                .where(MarketDataSourceModel.source_code == source_code)
+            )
+            filters.append(InstrumentModel.id.in_(source_instruments))
         if keyword:
             escaped = keyword.replace("%", "\\%").replace("_", "\\_")
             pattern = f"%{escaped}%"
@@ -3512,10 +3523,10 @@ class SqlAlchemyMarketBarRepository(SqlAlchemyRepository[MarketBar, MarketBarMod
                 MarketBarModel.bar_time >= start,
                 MarketBarModel.bar_time <= end,
             )
-            .order_by(MarketBarModel.bar_time)
+            .order_by(MarketBarModel.bar_time.desc())
             .limit(limit)
         )
-        return [entity_from_model(MarketBar, row) for row in rows]
+        return [entity_from_model(MarketBar, row) for row in reversed(list(rows))]
 
     async def get_latest_bar(
         self,

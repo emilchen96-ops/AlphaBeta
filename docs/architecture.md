@@ -1,19 +1,21 @@
 # 架构总览
 
-> D03 增量：离线 Fixture/本地 CSV 经 `IntradayMarketDataProvider` 规范化为 RAW 1分钟
-> `MarketBar`，再由纯领域 Session 聚合器生成 5/15/30/60 分钟 Bar。PostgreSQL 仍是唯一
-> 事实来源；D03 不读取实时 WebSocket/Redis Quote，不调用 Strategy、订单、Broker、MiniQMT。
-> 详见 [intraday_market_data.md](intraday_market_data.md)。
+> MD01 增量：MiniQMT 是唯一正式行情源。Windows 只读 Agent 只导入 `xtquant.xtdata`，
+> 同步 A 股/ETF 目录、实时快照、日线和 1 分钟线；Redis/WebSocket 承载实时展示，
+> PostgreSQL 保存历史事实，1 分钟线按交易时段聚合为 5/15/30/60 分钟线。历史兼容
+> Provider 仅在测试环境显式启用，不参与正式查询或故障回退。详见
+> [md01_market_data.md](md01_market_data.md)。
 
 ```mermaid
 flowchart LR
-  File[Fixture / Local CSV] --> Normalize[UTC Bar-start normalization]
-  Normalize --> Raw[(RAW 1m MarketBar)]
-  Raw --> Aggregate[Session-anchored 5/15/30/60m]
-  Aggregate --> PG[(PostgreSQL MarketBar)]
-  PG --> Quality[Quality / Readiness]
-  PG --> UI[API / CLI / Historical preview]
-  UI -.禁止.-> Trading[Signal / Order / Fill / MiniQMT]
+  QMT[MiniQMT] --> Agent[Windows 只读行情 Agent]
+  Agent --> Redis[(Redis 最新快照)]
+  Redis --> WS[WebSocket 实时展示]
+  Agent --> Raw[(PostgreSQL RAW 日线 / 1分钟线)]
+  Raw --> Aggregate[交易时段锚定 5/15/30/60分钟聚合]
+  Raw --> Research[扫描 / 策略 / 回测]
+  Aggregate --> Research
+  Agent -.禁止.-> Trading[账户 / 订单 / 成交 / 券商交易]
 ```
 
 > RT01 增量：API 保存控制动作，独立 `replay_worker` 用 PostgreSQL lease 逐 Session 推进；
@@ -93,7 +95,8 @@ flowchart LR
 
 > M05 状态：Web/FastAPI 已具备本地手工订单事实管道。确认事务只写 PostgreSQL 的 Action、Transition、Command、Event、Audit 与 PENDING Outbox；没有 Publisher、Redis 订单流、执行器、Broker、Fill 或实盘。QUEUED 不等于已发送。
 
-> The real-time market provider is currently `disabled`; historical prices cannot act as real-time prices. MiniQMT can only arrive through a Windows Agent after M06. There is no real-trading capability and this system must not be publicly deployed.
+> MiniQMT 实时行情通过 Windows 只读 Agent 接入；历史 K 线和实时快照保持不同的持久化语义。
+> 该 Agent 没有交易能力，系统仍不得部署到公网。
 
 > M04.1A 新增独立 `market_worker`：PostgreSQL 保存来源、K 线和运行审计；Redis 保存可重建的最新 quote、leader 租约、状态及 UI Pub/Sub；FastAPI 只运行共享 Redis listener 和只读 HTTP/WebSocket 接口，不在 lifespan 抓取外部行情。
 
@@ -115,10 +118,12 @@ flowchart LR
   API --> Redis[(Redis\n缓存、Streams、短期状态)]
   Worker[后台 Worker] --> PG
   Worker --> Redis
-  Redis <-->|可靠命令与回执 Streams| Agent[Windows 本地交易执行器]
+  QMT[MiniQMT / XtData] --> MarketAgent[Windows 只读行情 Agent]
+  MarketAgent --> Redis
+  MarketAgent --> API
+  Redis <-->|可靠命令与回执 Streams| Agent[未来 Windows 交易执行器]
   Agent --> Sim[模拟 Broker]
-  Agent -.未来、受控.-> QMT[MiniQMT/XtQuant Adapter]
-  QMT -.-> Broker[券商账户]
+  Agent -.未接入.-> Broker[券商账户]
 ```
 
 ## 前端、后端、数据与执行器关系

@@ -23,7 +23,6 @@ from alphadesk_api.application.intraday import (
     fixture_rows,
 )
 from alphadesk_api.infrastructure.intraday_provider import (
-    DisabledExternalIntradayProvider,
     FixtureIntradayMarketDataProvider,
 )
 from alphadesk_domain.enums import (
@@ -52,7 +51,7 @@ class FixtureImportRequest(BaseModel):
 
 class AggregationRequest(BaseModel):
     instrument_id: UUID
-    source_code: str = Field(default="D03_FIXTURE", min_length=1, max_length=64)
+    source_code: str = Field(default="MINIQMT", min_length=1, max_length=64)
     start_at: datetime
     end_at: datetime
     targets: list[MarketTimeframe] = Field(min_length=1, max_length=4)
@@ -61,7 +60,7 @@ class AggregationRequest(BaseModel):
 
 class QualityRequest(BaseModel):
     instrument_id: UUID
-    source_code: str = Field(default="D03_FIXTURE", min_length=1, max_length=64)
+    source_code: str = Field(default="MINIQMT", min_length=1, max_length=64)
     timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
     start_at: datetime
     end_at: datetime
@@ -86,20 +85,20 @@ def run_dict(run: MarketSyncRun) -> dict[str, object]:
 
 
 @router.get("/providers")
-async def providers() -> dict[str, object]:
-    values = [
-        await FixtureIntradayMarketDataProvider(()).health_status(),
-        await DisabledExternalIntradayProvider().health_status(),
-    ]
+async def providers(request: Request) -> dict[str, object]:
+    enabled = request.app.state.settings.miniqmt_market_data_enabled
     return {
-        "items": [serializable(asdict(item)) for item in values]
-        + [
+        "items": [
             {
-                "provider_key": "LOCAL_FILE",
-                "health": "AVAILABLE_CLI_ONLY",
+                "provider_key": "MINIQMT",
+                "health": "AVAILABLE" if enabled else "DISABLED",
                 "supported_timeframes": [item.value for item in INTRADAY_TIMEFRAMES],
-                "input_types": ["csv"],
-                "message": "CSV通过CLI流式导入; Parquet因未安装pyarrow而明确禁用",
+                "input_types": ["miniqmt"],
+                "message": (
+                    "MiniQMT 是唯一正式分钟行情来源"
+                    if enabled
+                    else "请启动并配置 MiniQMT 只读行情代理"
+                ),
             }
         ],
         "limits": {
@@ -113,6 +112,12 @@ async def providers() -> dict[str, object]:
 @router.post("/imports")
 async def create_import(request: Request, payload: FixtureImportRequest) -> dict[str, object]:
     try:
+        settings = request.app.state.settings
+        if settings.environment != "test" and not settings.allow_test_market_data:
+            raise ApplicationError(
+                "TEST_MARKET_DATA_DISABLED",
+                "正式环境已禁用测试分钟数据导入",
+            )
         if not payload.dry_run:
             await ensure_fixture_catalog(uow_factory(request))
         result = await IntradayMarketDataImportService(
@@ -275,7 +280,7 @@ async def quality_detail(request: Request, run_id: UUID) -> dict[str, object]:
 @router.get("/coverage")
 async def coverage(
     request: Request,
-    source_code: str = "D03_FIXTURE",
+    source_code: str = "MINIQMT",
     instrument_id: UUID | None = None,
     timeframe: MarketTimeframe | None = None,
     start_at: datetime | None = None,
@@ -303,7 +308,7 @@ async def coverage(
 
 
 @router.get("/readiness")
-async def readiness(request: Request, source_code: str = "D03_FIXTURE") -> dict[str, object]:
+async def readiness(request: Request, source_code: str = "MINIQMT") -> dict[str, object]:
     return {"items": await IntradayOverviewService(uow_factory(request)).readiness(source_code)}
 
 
@@ -314,7 +319,7 @@ async def bars(
     timeframe: MarketTimeframe,
     start_at: datetime,
     end_at: datetime,
-    source_code: str = "D03_FIXTURE",
+    source_code: str = "MINIQMT",
     adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW,
     limit: Annotated[int, Query(ge=1, le=5_000)] = 2_000,
     cursor: datetime | None = None,

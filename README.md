@@ -1,57 +1,32 @@
 # AlphaDesk
 
-> **2026-07-22：D03 A股历史分钟行情数据中心完成。** 系统支持离线 CSV/Fixture、RAW
-> 1分钟入库、按 A 股上午/下午 Session 确定性聚合 5/15/30/60 分钟、质量与 Readiness、
-> API/CLI 和 `/intraday-market-data` 页面。Bar 时间表示区间开始，数据库为 UTC；QFQ 仅在
-> 查询时按 D02 因子派生。当前不是实时行情，BT02、分钟回放和 MiniQMT 均未实现。详见
-> [D03 文档](docs/intraday_market_data.md)。
+> **2026-07-23：MD01 MiniQMT 单一行情源完成。** 正式环境的 A 股/ETF 目录、实时快照、
+> 历史日线和历史分钟线均来自 MiniQMT。Windows 只读 Agent 负责连接 XtQuant，Redis 与
+> WebSocket 承载实时展示，PostgreSQL 保存可追溯的历史 K 线。BaoStock、AKShare、东方财富、
+> 本地文件和测试数据只保留为显式测试能力，不会进入正式查询，也不会作为故障回退源。
 
-> **2026-07-21：RT01 日线历史回放完成。** 系统可从 D01 日线逐 Session 回放并执行
-> `ReplayClock → Strategy → Risk → Order → Fill → M04`，支持启动、暂停、恢复、单步、倍速、
-> Worker 崩溃恢复、WebSocket Timeline、权益与完整性检查。回放与 BT01 共用时间和指标口径，
-> 不连接实时行情、MiniQMT 或券商。入口：<http://127.0.0.1:5173/replays>；详见
-> [RT01 文档](docs/historical_replay.md)。下一阶段仅为 D02。
+> 行情相关页面现统一为“行情”和“数据中心”。旧 `/miniqmt-market-data` 会跳转到“行情”，
+> 旧 `/intraday-market-data` 会跳转到“数据中心/分钟行情”。完整启动、数据流、页面操作与
+> 故障排查见 [MD01 行情使用说明](docs/md01_market_data.md)。
 
-> **2026-07-21：U01 一键研究初始化与系统可用性收口。** 首次使用请打开
-> <http://127.0.0.1:5173/getting-started>，或阅读 [快速开始](docs/quick_start.md)。
-> `fixture` 模式不访问外部网络、不连接真实券商；真实实时行情与 MiniQMT 仍不可用。
-
-> **2026-07-20：BT01-R 日线回测完成。** 系统可从 D01 本地 A 股日线运行确定性的 `BacktestClock → Strategy → Signal → RiskDecision → Order → B01 → Fill → M04` 闭环，并提供独立账户、T+1 开盘执行、绩效、Integrity、API、CLI 和 `/backtest` 页面。它不连接实时行情、Redis 订单发布、MiniQMT、券商或真实账户；分钟回测尚未实现。下一阶段仅为 **U01：一键初始化与系统可用性收口**。详见 [日线回测](docs/daily_backtest.md)。
-
-> **2026-07-19：D01-A/B/C/D/E 已完成。** BaoStock A 股 Instrument、研究 Watchlist、未复权历史日线、每日增量、质量检查和 Readiness 均可通过受控 API/CLI 与数据中心页面操作；详见 [D01 历史行情](docs/historical_market_data.md)。系统仍不接交易级实时行情、MiniQMT 或真实券商。
-
-> **2026-07-19：I01 V0.1 集成基线已完成。** 功能、按钮、API、数据和配置状态以 [I01 集成说明](docs/integration_v0_1.md)、[功能盘点](docs/feature_inventory.md)、[UI 动作盘点](docs/ui_action_inventory.md)、[API 契约盘点](docs/api_contract_inventory.md) 与 [数据就绪度](docs/data_readiness.md) 为准；这些盘点已随 D01 和 BT01-R 更新。
-
-> SC01、N01、A01、D01 与 BT01-R 已完成。旧 BT01 独立提交没有合并；可复用实现被选择性移植到 `0014_d01 → 0015_bt01` 的单一迁移链。系统仍无 Windows 执行器、MiniQMT、外部 Broker 或实盘能力。
-
-> A01 文档：[AI 研究助手](docs/ai_research_assistant.md)；N01 文档：[资讯事件中心](docs/information_event_center.md)；SC01 文档：[历史条件扫描器](docs/scanners.md)。
-
-> N01 已实现 AI 之前的资讯事实层：手工文本、RSS/Atom Adapter、RawDocument 原文保留、Hash/external ID 去重、InformationItem、MarketEvent、Instrument/主题关联、API、CLI 和资讯页面。系统尚未进行 AI 分析，不验证全部外部事实，也不会创建订单。详见 [N01 资讯事件中心](docs/information_center.md)。
-
-> SC01 已实现 A 股历史日线条件扫描器：统一纯 Python Scanner 契约、成交量异常与涨停后回踩近似规则、ScanRun/ScanResult 持久化、API、CLI 和 `/scanners`、`/scan-runs` 页面。扫描结果仅是历史规则筛选，不代表投资建议，不是实时扫描，也不会创建 Signal 或订单。详见 [SC01 扫描器](docs/scanners.md)。
-
-> M05 已完成本地订单事实管道：模拟账户手工创建、人工确认、取消、过期、查询/Timeline、`SUBMIT_ORDER/PENDING` 与 Transactional Outbox 原子写入，以及 `/orders` 网页。QUEUED 不是已发送，Outbox PENDING 不是已发布；没有 Broker、Executor、Fill、资金/组合风控或实盘。详见 [订单](docs/orders.md)、[人工确认](docs/order_confirmation.md) 与 [Outbox](docs/transactional_outbox.md)。
-
-> M04.1A 已加入默认禁用的免费真实行情基础设施：BaoStock 历史行情、AKShare/EastMoney 快照与近期 1 分钟线、独立单 Leader Worker、Redis 最新报价、版本化 WebSocket 和只读盘中估值。全部免费数据仅供研究、非交易级；没有新增下单、撮合、Broker 或实盘能力。
-
-> M04 已加入本地模拟账户、资金/持仓只追加账本、成交记账、行情估值、账本核对与 `/portfolio` 网页。它不包含公开订单/成交写 API、撮合、Broker 或实盘。详见 [账本](docs/accounting.md)、[估值](docs/account_valuation.md) 和 [核对](docs/account_reconciliation.md)。
-
-当前封板里程碑为 RT01；M03 的离线 Demo 行情、CSV 导入、标的目录和自选股能力继续保留。详见 [M03 行情文档](docs/market_data.md)、[自选股规则](docs/watchlists.md)、[日线回测](docs/daily_backtest.md) 与 [历史回放](docs/historical_replay.md)。
+> **安全边界：** 当前 MiniQMT 接入只导入 `xtquant.xtdata`。它不读取券商账户、资金、持仓、
+> 委托或成交，不导入交易 SDK，也不能下单或撤单。AlphaDesk 中已有的订单、回测和模拟账本
+> 能力不会通过该行情 Agent 发送到券商。
 
 AlphaDesk 是一个面向个人使用的本地量化交易系统。项目以可审计、可恢复和安全边界清晰为首要目标，当前采用 React + TypeScript 前端、FastAPI 模块化单体后端、PostgreSQL 与 Redis 基础设施。
 
-## D01 历史行情日常操作
+## MiniQMT 行情日常操作
 
-完成首次 Instrument/研究池同步和历史补数后，日常可执行：
+先启动并登录 MiniQMT 行情入口，再启动 AlphaDesk 基础服务和 Windows 只读 Agent：
 
 ```powershell
-python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research --dry-run
-python -m alphadesk_api.cli.market_data update-daily --provider baostock --universe research
-python -m alphadesk_api.cli.market_data verify-quality --universe research --timeframe DAY
-python -m alphadesk_api.cli.market_data show-readiness --universe research
+docker compose up --build -d postgres redis api web
+.\apps\api\.venv\Scripts\python.exe -m alphadesk_api.cli.miniqmt run-agent
 ```
 
-启动 Web/API 后打开 `http://127.0.0.1:5173/market-data-center`。该页面只维护 BaoStock 历史日线，不提供实时行情、不连接 MiniQMT，也不会自动创建 Signal、订单、成交或回测。
+打开 <http://127.0.0.1:5173/market> 搜索、自选、查看实时报价和 K 线；打开
+<http://127.0.0.1:5173/market-data-center> 查看目录、日线、分钟线、覆盖度和质量。
+历史数据缺失时只会明确提示并提供 MiniQMT 补数操作，不会显示演示 K 线。
 
 ## BT01 日线回测
 
@@ -87,7 +62,8 @@ M00 架构规则、M01 项目骨架和 M02 领域持久化已经完成，并作�
 - PostgreSQL、Redis、API、Web 的本地 Docker Compose 编排；
 - 后端与前端自动化测试、静态检查、依赖锁文件和基础 CI。
 
-M04.1A market infrastructure is sealed: BaoStock historical data is available, while the real-time provider is disabled after AKShare validation failed. Redis, WebSocket, and UI plumbing remain for a later Windows Agent/MiniQMT integration. Historical closes are not real-time prices; the system has no real-trading capability and must not be publicly deployed.
+MD01 已将 MiniQMT 设为唯一正式行情源。历史兼容适配器仍可用于测试，但正式查询不会读取或
+回退到这些来源。MiniQMT 行情连接不等于交易连接，系统仍无 MiniQMT 实盘下单能力。
 
 > 该系统目前只能用于本地开发，禁止部署到公网。
 
@@ -181,7 +157,8 @@ docker compose exec api alembic current
 - 只有 `VITE_` 前缀的非敏感值可进入前端；
 - 前端不持有数据库、Redis 或未来券商凭据；
 - 当前没有认证能力，不得暴露在不可信网络；
-- 当前仅有 PostgreSQL 中的模拟账户和本地确定性模拟成交；没有真实券商接入、MiniQMT 或实盘交易能力。
+- 当前仅有 PostgreSQL 中的模拟账户和本地确定性模拟成交；MiniQMT 仅提供只读行情，
+  没有真实券商交易接入或实盘交易能力。
 
 ## B01 本地模拟 Broker
 
@@ -189,18 +166,17 @@ docker compose exec api alembic current
 
 第一次使用请阅读图文版 [AlphaDesk 使用指南](docs/user_guide.md)；完整开发文档从 [docs/index.md](docs/index.md) 开始，开发任务必须遵守 [AGENTS.md](AGENTS.md)。
 
-## D01 历史日线
+## 历史行情
 
-以下命令必须在 API 可连接 PostgreSQL 且用户明确允许 BaoStock 外部连接时运行：
+正式环境只通过 MiniQMT Agent 补充历史日线和 1 分钟线。推荐在“行情”或“数据中心”选择
+明确股票和日期范围，也可使用只读 CLI：
 
 ```text
-python -m alphadesk_api.cli.market_data sync-instruments --provider baostock
-python -m alphadesk_api.cli.market_data create-research-universe --limit 300
-python -m alphadesk_api.cli.market_data backfill --provider baostock --universe research --timeframe DAY --start 2023-01-01
-python -m alphadesk_api.cli.market_data list-sync-runs
+python -m alphadesk_api.cli.miniqmt backfill-history --instrument <UUID> --timeframe DAY_1 --start <含时区时间> --end <含时区时间>
 ```
 
-先使用 `--dry-run` 和较小 `--limit` 预览。单次补数默认最多 500 只，串行请求，不会启动后台任务，也不会创建 Signal、订单、成交或账本事实。
+BaoStock、AKShare、东方财富和 Fixture 适配器仅保留给显式测试环境，不应作为日常补数命令，
+也不会在 MiniQMT 断开时自动启用。所有补数都不会创建 Signal、订单、成交或账本事实。
 
 ## SC01 历史日线条件扫描
 

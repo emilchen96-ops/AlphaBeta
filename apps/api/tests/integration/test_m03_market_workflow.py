@@ -18,6 +18,7 @@ from alphadesk_api.infrastructure.models import (
     AuditLogModel,
     DomainEventModel,
     MarketBarModel,
+    MarketDataSourceModel,
     OutboxMessageModel,
 )
 from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
@@ -106,7 +107,13 @@ async def test_demo_ingestion_is_idempotent_audited_and_has_no_outbox_publicatio
     assert second.total_inserted == 0
     assert second.total_updated == 0
     async with session_factory() as session:
-        assert await session.scalar(select(func.count()).select_from(MarketBarModel)) == 540
+        demo_bar_count = await session.scalar(
+            select(func.count())
+            .select_from(MarketBarModel)
+            .join(MarketDataSourceModel, MarketDataSourceModel.id == MarketBarModel.source_id)
+            .where(MarketDataSourceModel.source_code == "DEMO")
+        )
+        assert demo_bar_count == 540
         assert await session.scalar(select(func.count()).select_from(DomainEventModel)) >= 7
         assert await session.scalar(select(func.count()).select_from(AuditLogModel)) >= 7
         outbox_after = await session.scalar(select(func.count()).select_from(OutboxMessageModel))

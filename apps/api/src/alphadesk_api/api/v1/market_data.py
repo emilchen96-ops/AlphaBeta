@@ -71,9 +71,15 @@ router = APIRouter(prefix="/market-data", tags=["market-data"])
 
 
 def query_service(request: Request) -> MarketDataQueryService:
+    settings = request.app.state.settings
+    is_test_environment = settings.environment == "test"
     return MarketDataQueryService(
         uow_factory(request),
-        minute_stale_seconds=request.app.state.settings.market_minute_stale_seconds,
+        minute_stale_seconds=settings.market_minute_stale_seconds,
+        authoritative_source_code=(
+            None if is_test_environment else settings.authoritative_market_source
+        ),
+        allow_non_authoritative_sources=(is_test_environment or settings.allow_test_market_data),
     )
 
 
@@ -271,6 +277,12 @@ async def get_sync_run(request: Request, run_id: UUID) -> MarketSyncRunResponse:
 )
 async def create_daily_update(request: Request, payload: DailyUpdateRequest) -> DailyUpdateResponse:
     try:
+        settings = request.app.state.settings
+        if settings.environment != "test" and payload.provider.strip().upper() != "BAOSTOCK":
+            raise ApplicationError(
+                "MINIQMT_HISTORY_ASYNC_ONLY",
+                "MiniQMT 历史行情由 Windows 行情代理异步补充。请使用 MiniQMT 历史补数接口",
+            )
         instruments = await _operations_instruments(
             request,
             universe_key=payload.universe_key,
@@ -279,7 +291,6 @@ async def create_daily_update(request: Request, payload: DailyUpdateRequest) -> 
         )
         factory = getattr(request.app.state, "historical_market_adapter_factory", None)
         adapter = factory() if callable(factory) else BaoStockHistoricalMarketDataAdapter()
-        settings = request.app.state.settings
         value = await DailyMarketDataUpdateService(
             uow_factory(request),
             default_start_date=settings.market_daily_default_start_date,
@@ -410,7 +421,7 @@ async def get_quality_run(
 async def get_coverage(
     request: Request,
     universe_key: str = Query(default="research", max_length=64),
-    provider: str = Query(default="baostock", max_length=64),
+    provider: str = Query(default="miniqmt", max_length=64),
     max_instruments: int | None = Query(default=None, ge=1, le=500),
 ) -> UniverseCoverageResponse:
     try:
@@ -429,7 +440,7 @@ async def get_coverage(
 async def get_readiness(
     request: Request,
     universe_key: str = Query(default="research", max_length=64),
-    provider: str = Query(default="baostock", max_length=64),
+    provider: str = Query(default="miniqmt", max_length=64),
     max_instruments: int | None = Query(default=None, ge=1, le=500),
 ) -> list[ReadinessCapabilityResponse]:
     try:
@@ -448,7 +459,7 @@ async def get_readiness(
 async def get_market_data_overview(
     request: Request,
     universe_key: str = Query(default="research", max_length=64),
-    provider: str = Query(default="baostock", max_length=64),
+    provider: str = Query(default="miniqmt", max_length=64),
     max_instruments: int | None = Query(default=None, ge=1, le=500),
 ) -> MarketDataOverviewResponse:
     try:
@@ -477,7 +488,7 @@ async def get_latest_quotes(
 ) -> LatestQuotesResponse:
     now = datetime.now(UTC)
     snapshots = await QuoteCache(
-        _redis_client(request), request.app.state.settings.free_market_quote_ttl_seconds
+        _redis_client(request), request.app.state.settings.miniqmt_quote_ttl_seconds
     ).get_many(instrument_ids)
     found = {item.quote.instrument_id for item in snapshots}
     items = []
@@ -486,7 +497,7 @@ async def get_latest_quotes(
         age = max(0, int((now - quote.received_at).total_seconds()))
         freshness = (
             QuoteFreshnessStatus.FRESH
-            if age <= request.app.state.settings.free_market_stale_seconds
+            if age <= request.app.state.settings.market_minute_stale_seconds
             else QuoteFreshnessStatus.STALE
         )
         items.append(

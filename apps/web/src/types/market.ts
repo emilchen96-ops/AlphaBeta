@@ -17,6 +17,9 @@ export interface Instrument {
   price_tick: string;
   timezone: string;
   is_active: boolean;
+  listed_at: string | null;
+  delisted_at: string | null;
+  lifecycle_status: "ACTIVE" | "DELISTED";
   updated_at: string;
 }
 

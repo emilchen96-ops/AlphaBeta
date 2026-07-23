@@ -32,13 +32,15 @@ test("K线加载时显示骨架", () => {
 test("空行情显示明确提示", () => {
   render(<CandlestickChart bars={[]} loading={false} />);
   expect(
-    screen.getByText("暂无行情数据，请先前往数据中心下载历史行情"),
+    screen.getByText("暂无 MiniQMT 历史行情，可在数据中心发起补数"),
   ).toBeInTheDocument();
 });
 
 test("有效行情渲染可访问 K 线图", () => {
   render(<CandlestickChart bars={[base]} loading={false} />);
-  expect(screen.getByRole("img", { name: "K线图" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("img", { name: /MiniQMT K线图，共1根/ }),
+  ).toBeInTheDocument();
 });
 
 test("上涨和下跌行情都渲染蜡烛实体", () => {
@@ -52,4 +54,15 @@ test("上涨和下跌行情都渲染蜡烛实体", () => {
     <CandlestickChart bars={[base, falling]} loading={false} />,
   );
   expect(container.querySelectorAll("rect")).toHaveLength(2);
+});
+
+test("分时模式使用分钟收盘价折线且不渲染蜡烛实体", () => {
+  const { container } = render(
+    <CandlestickChart bars={[base]} loading={false} variant="line" />,
+  );
+  expect(
+    screen.getByRole("img", { name: /MiniQMT 分时图，共1根/ }),
+  ).toBeInTheDocument();
+  expect(container.querySelector("polyline")).toBeInTheDocument();
+  expect(container.querySelectorAll("rect")).toHaveLength(0);
 });

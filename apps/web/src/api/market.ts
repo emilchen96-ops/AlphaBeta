@@ -1,11 +1,11 @@
 import { apiRequest } from "./client";
 import type {
-  AdjustmentType,
   InstrumentPage,
   Instrument,
   MarketBarsResponse,
   MarketDataSource,
   MarketTimeframe,
+  PriceAdjustmentMode,
   LatestQuotesResponse,
   RealtimeMarketStatus,
   DailyUpdateResult,
@@ -24,9 +24,10 @@ import type {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
-export function getInstruments(keyword: string) {
+export function getInstruments(keyword: string, inactive = false) {
   const query = new URLSearchParams({ page: "1", page_size: "50" });
   if (keyword.trim()) query.set("keyword", keyword.trim());
+  if (inactive) query.set("is_active", "false");
   return apiRequest<InstrumentPage>(`/api/v1/instruments?${query}`);
 }
 
@@ -134,16 +135,36 @@ export function getMarketSources() {
   return apiRequest<MarketDataSource[]>("/api/v1/market-data/sources");
 }
 
+function rangeFor(timeframe: MarketTimeframe) {
+  const end = new Date();
+  const start = new Date(end);
+  const days =
+    timeframe === "DAY_1"
+      ? 3650
+      : timeframe === "MINUTE_1"
+        ? 10
+        : timeframe === "MINUTE_5"
+          ? 45
+          : 120;
+  start.setUTCDate(start.getUTCDate() - days);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 export function getBars(
   instrumentId: string,
   timeframe: MarketTimeframe,
-  adjustment: AdjustmentType,
+  adjustmentMode: PriceAdjustmentMode,
 ) {
+  const range = rangeFor(timeframe);
   const query = new URLSearchParams({
     instrument_id: instrumentId,
     timeframe,
-    adjustment_type: adjustment,
-    limit: "600",
+    adjustment_type: "NONE",
+    adjustment_mode: adjustmentMode,
+    source_code: "MINIQMT",
+    start: range.start,
+    end: range.end,
+    limit: "2000",
   });
   return apiRequest<MarketBarsResponse>(`/api/v1/market-data/bars?${query}`);
 }
@@ -200,7 +221,7 @@ export function updateDailyMarketData(payload: {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({
-        provider: "baostock",
+        provider: "miniqmt",
         universe_key: "research",
         ...payload,
       }),
@@ -234,7 +255,7 @@ export function verifyMarketDataQuality() {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({
-        provider: "baostock",
+        provider: "miniqmt",
         universe_key: "research",
       }),
     },

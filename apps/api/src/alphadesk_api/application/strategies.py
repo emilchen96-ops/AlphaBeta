@@ -61,8 +61,18 @@ class StrategyCatalogService:
 
 
 class StrategyResearchService:
-    def __init__(self, uow_factory: UnitOfWorkFactory, registry: StrategyRegistry) -> None:
-        self._runner = StrategyRunner(uow_factory, registry)
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        registry: StrategyRegistry,
+        *,
+        authoritative_source_code: str | None = None,
+    ) -> None:
+        self._runner = StrategyRunner(
+            uow_factory,
+            registry,
+            authoritative_source_code=authoritative_source_code,
+        )
         self._registry = registry
 
     def parameters(

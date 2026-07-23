@@ -26,18 +26,18 @@ docker compose exec api alembic upgrade head
 打开前端 <http://127.0.0.1:5173/>、“开始使用”
 <http://127.0.0.1:5173/getting-started> 或 API 文档 <http://127.0.0.1:8000/docs>。
 
-### 可选：启动 MiniQMT 只读实时行情
+### 启动 MiniQMT 只读行情
 
 先启动并登录 Windows MiniQMT 的行情入口，再按
-[MiniQMT 只读行情](miniqmt_readonly_market_data.md) 配置未跟踪的 `.env`。API 和 Migration
+[MD01 行情使用说明](md01_market_data.md)配置未跟踪的 `.env`。API 和 Migration
 就绪后，在 Windows 主机运行：
 
 ```powershell
 .\apps\api\.venv\Scripts\python.exe -m alphadesk_api.cli.miniqmt run-agent
 ```
 
-打开 <http://127.0.0.1:5173/miniqmt-market-data> 查看连接、实时行情和订阅状态。自选股分组
-只有开启“盘中监控”才会驱动期望订阅；页面上的期望状态不等于 MiniQMT 已经实际订阅。
+打开 <http://127.0.0.1:5173/market> 查看连接、搜索、自选、实时行情和 K 线。自选股分组
+只有开启行情订阅才会驱动期望订阅；页面上的等待状态不等于 MiniQMT 已经实际订阅。
 MiniQMT 客户端与行情代理都需要保持运行。本能力只读，交易功能未启用。
 
 ## 2. 一键准备研究环境
@@ -104,13 +104,12 @@ healthy；再访问 <http://127.0.0.1:8000/health/ready>。若页面仍旧，执
 `docker compose up --build -d` 后刷新。Correlation ID 可用于定位受控错误，但不要粘贴密码、
 Token 或连接串。
 
-MiniQMT 只读行情代码已具备，但默认关闭，只有本机配置并启动 Windows 行情代理后才可用；
-它不是真实交易。AI 默认为 Disabled（U01 fixture 可显式使用 Fake）。A01-P 是否可用取决于
+MiniQMT 是唯一正式行情源，只有本机配置并启动 Windows 行情代理后才可用；断开时不会回退
+到免费源或测试数据。它不是真实交易。AI 默认为 Disabled（U01 fixture 可显式使用 Fake）。A01-P 是否可用取决于
 本地凭据与兼容服务。
 
 ## 5. 第一次使用历史分钟数据
 
-打开 <http://127.0.0.1:5173/intraday-market-data>，在“导入任务”运行 D03 Fixture；随后查看
-覆盖度、质量、Readiness 和分钟K线预览。本地 CSV 使用页面给出的 CLI 命令并显式设置
-`Asia/Shanghai`。页面内容是历史数据，不连接实时 WebSocket。即使数据 READY，BT02 与分钟
-回放仍显示“代码尚未开发”。
+打开 <http://127.0.0.1:5173/market-data-center?tab=minute>，选择股票后查看 1/5/15/30/60
+分钟覆盖、质量和 K 线预览。缺少历史数据时，从 MiniQMT 发起 1 分钟补数；5/15/30/60
+分钟线由系统按 A 股交易时段聚合。旧分钟页面地址会自动跳转到该页签。

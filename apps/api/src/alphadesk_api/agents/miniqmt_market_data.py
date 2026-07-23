@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -66,34 +66,133 @@ class MiniQMTReadOnlyAgent:
         self._last_market_time: str | None = None
         self._last_received_at: str | None = None
         self._last_minute_bar_time: str | None = None
+        self._last_catalog_sync_at: str | None = None
+        self._catalog_instrument_count = 0
         self._session_template = IntradaySessionTemplate()
+        self._startup_repair_pending = True
+        self._last_daily_maintenance_date: date | None = None
 
     def run(self, *, once: bool = False) -> None:
-        try:
-            self._provider.connect()
-            self._report_status("CONNECTED")
-            while True:
-                self._reconcile()
-                deadline = time.monotonic() + (1 if once else 5)
-                while time.monotonic() < deadline:
-                    self._flush()
-                    time.sleep(0.1)
-                self._process_history()
+        while True:
+            try:
+                self._provider.connect()
+                self._startup_repair_pending = True
                 self._report_status("CONNECTED")
+                self._sync_catalog()
+                while True:
+                    self._reconcile()
+                    self._automatic_maintenance()
+                    deadline = time.monotonic() + (1 if once else 5)
+                    while time.monotonic() < deadline:
+                        self._flush()
+                        time.sleep(0.1)
+                    self._process_history()
+                    self._report_status("CONNECTED")
+                    if once:
+                        return
+            except KeyboardInterrupt:
+                self._report_status("DISCONNECTED")
+                self._http.close()
+                return
+            except Exception as exc:
+                LOGGER.exception("MiniQMT read-only agent connection cycle stopped")
+                self._report_status(
+                    "DISCONNECTED",
+                    error_code=getattr(exc, "code", type(exc).__name__),
+                    error_message=str(exc)[:512],
+                )
                 if once:
-                    return
-        except KeyboardInterrupt:
-            self._report_status("DISCONNECTED")
-        except Exception as exc:
-            LOGGER.exception("MiniQMT read-only agent stopped")
-            self._report_status(
-                "DISCONNECTED",
-                error_code=getattr(exc, "code", type(exc).__name__),
-                error_message=str(exc)[:512],
+                    raise
+                self._subscriptions.clear()
+                self._items.clear()
+                time.sleep(5)
+            finally:
+                if once:
+                    self._http.close()
+
+    def _automatic_maintenance(self) -> None:
+        if not self._items:
+            return
+        now = datetime.now(SHANGHAI)
+        selected = list(self._items.values())[: self._settings.miniqmt_history_max_instruments]
+        if self._startup_repair_pending:
+            self._persist_history(
+                selected,
+                timeframe="DAY_1",
+                start_at=now - timedelta(days=14),
+                end_at=now + timedelta(days=1),
             )
-            raise
-        finally:
-            self._http.close()
+            self._persist_history(
+                selected,
+                timeframe="MINUTE_1",
+                start_at=now - timedelta(days=3),
+                end_at=now + timedelta(days=1),
+            )
+            self._startup_repair_pending = False
+            if now.hour > 15 or (now.hour == 15 and now.minute >= 10):
+                self._last_daily_maintenance_date = now.date()
+            return
+        after_close = now.hour > 15 or (now.hour == 15 and now.minute >= 10)
+        if after_close and self._last_daily_maintenance_date != now.date():
+            self._persist_history(
+                selected,
+                timeframe="DAY_1",
+                start_at=now - timedelta(days=7),
+                end_at=now + timedelta(days=1),
+            )
+            self._last_daily_maintenance_date = now.date()
+
+    def _persist_history(
+        self,
+        selected: list[dict[str, Any]],
+        *,
+        timeframe: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> None:
+        period = "1m" if timeframe == "MINUTE_1" else "1d"
+        rows = self._provider.history(
+            tuple(item["provider_symbol"] for item in selected),
+            period=period,
+            start_time=self._qmt_time(start_at.isoformat()),
+            end_time=self._qmt_time(end_at.isoformat()),
+        )
+        by_symbol = {item["provider_symbol"]: item for item in selected}
+        items = [
+            {
+                "instrument_id": by_symbol[row["provider_symbol"]]["instrument_id"],
+                "timeframe": timeframe,
+                **self._json_values(
+                    {key: value for key, value in row.items() if key != "provider_symbol"}
+                ),
+            }
+            for row in rows
+            if row["provider_symbol"] in by_symbol
+        ]
+        for offset in range(0, len(items), 1000):
+            response = self._http.post(
+                "/api/v1/miniqmt/agent/minute-bars",
+                json={"items": items[offset : offset + 1000]},
+            )
+            response.raise_for_status()
+
+    def _sync_catalog(self) -> None:
+        catalog = self._provider.instrument_catalog()
+        sync_token = uuid4()
+        for offset in range(0, len(catalog), 500):
+            items = catalog[offset : offset + 500]
+            response = self._http.post(
+                "/api/v1/miniqmt/agent/instruments",
+                json={
+                    "sync_token": str(sync_token),
+                    "complete": offset + len(items) >= len(catalog),
+                    "items": items,
+                },
+            )
+            response.raise_for_status()
+        self._catalog_instrument_count = len(catalog)
+        self._last_catalog_sync_at = datetime.now(UTC).isoformat()
+        self._report_status("CONNECTED")
 
     def _reconcile(self) -> None:
         self._http.post("/api/v1/market-subscriptions/rebuild").raise_for_status()
@@ -290,31 +389,12 @@ class MiniQMTReadOnlyAgent:
         if not selected:
             LOGGER.warning("History request has no currently planned instruments")
             return
-        period = "1m" if request["timeframe"] == "MINUTE_1" else "1d"
-        rows = self._provider.history(
-            tuple(item["provider_symbol"] for item in selected),
-            period=period,
-            start_time=self._qmt_time(request["start_at"]),
-            end_time=self._qmt_time(request["end_at"]),
+        self._persist_history(
+            selected,
+            timeframe=request["timeframe"],
+            start_at=datetime.fromisoformat(request["start_at"]),
+            end_at=datetime.fromisoformat(request["end_at"]),
         )
-        by_symbol = {item["provider_symbol"]: item for item in selected}
-        items = [
-            {
-                "instrument_id": by_symbol[row["provider_symbol"]]["instrument_id"],
-                "timeframe": request["timeframe"],
-                **self._json_values(
-                    {key: value for key, value in row.items() if key != "provider_symbol"}
-                ),
-            }
-            for row in rows
-            if row["provider_symbol"] in by_symbol
-        ]
-        for offset in range(0, len(items), 1000):
-            response = self._http.post(
-                "/api/v1/miniqmt/agent/minute-bars",
-                json={"items": items[offset : offset + 1000]},
-            )
-            response.raise_for_status()
 
     def _report_status(
         self,
@@ -333,6 +413,8 @@ class MiniQMTReadOnlyAgent:
                     "last_market_time": self._last_market_time,
                     "last_received_at": self._last_received_at,
                     "last_minute_bar_time": self._last_minute_bar_time,
+                    "last_catalog_sync_at": self._last_catalog_sync_at,
+                    "catalog_instrument_count": self._catalog_instrument_count,
                     "error_code": error_code,
                     "error_message": error_message,
                 },

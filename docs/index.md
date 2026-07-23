@@ -1,10 +1,11 @@
 # AlphaDesk 文档索引
 
-> 当前行情里程碑为 **L2.5-A MiniQMT 只读行情**：能力边界与数据链路见
+> 当前行情里程碑为 **MD01 MiniQMT 单一正式行情源**：日常启动、统一行情页面、数据中心和
+> 故障排查见 [MD01 行情使用说明](md01_market_data.md)。底层能力边界与数据链路见
 > [MiniQMT 只读行情](miniqmt_readonly_market_data.md)，期望/实际订阅见
 > [行情订阅模型](market_subscription_model.md)，Windows 进程与启动方式见
 > [MiniQMT 行情代理](miniqmt_market_data_agent.md)。该能力不读取账户、资金、持仓、委托或
-> 成交，不提供下单和撤单。下一阶段仅为 L2.5-B。
+> 成交，不提供下单和撤单。
 
 > UX01 前端中文化、业务可读性、内部编号降噪和关键交互规范见
 > [前端可读性规范](ux_conventions.md)。该整改不改变 API、数据库或交易安全边界。

@@ -91,7 +91,7 @@ export const verifyIntradayQuality = (
       headers: jsonHeaders,
       body: JSON.stringify({
         instrument_id: instrumentId,
-        source_code: "D03_FIXTURE",
+        source_code: "MINIQMT",
         timeframe,
         start_at: startAt,
         end_at: endAt,
@@ -105,11 +105,14 @@ export const getIntradayBars = (
   timeframe: MarketTimeframe,
   adjustmentMode: "RAW" | "QFQ",
 ) => {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 10);
   const query = new URLSearchParams({
     instrument_id: instrumentId,
     timeframe,
-    start_at: "2026-07-06T09:30:00+08:00",
-    end_at: "2026-07-06T15:00:00+08:00",
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
     adjustment_mode: adjustmentMode,
     limit: "2000",
   });

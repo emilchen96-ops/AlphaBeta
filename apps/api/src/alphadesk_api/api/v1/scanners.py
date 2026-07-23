@@ -111,7 +111,14 @@ async def create_scan_run(request: Request, body: ScanRunCreateBody) -> ScanRunR
             raise ApplicationError(
                 "SCANNER_TIMEFRAME_NOT_SUPPORTED", "timeframe is invalid"
             ) from exc
-        outcome = await ScannerRunService(uow_factory(request), registry(request)).run(
+        settings = request.app.state.settings
+        outcome = await ScannerRunService(
+            uow_factory(request),
+            registry(request),
+            authoritative_source_code=(
+                None if settings.environment == "test" else settings.authoritative_market_source
+            ),
+        ).run(
             ScannerRunRequest(
                 scanner_key=body.scanner_key,
                 parameters=body.parameters,

@@ -179,6 +179,11 @@ body {
   margin-bottom: 16px;
 }
 
+.market-page > .ant-alert,
+.market-data-center-page > .ant-alert {
+  margin-bottom: 16px;
+}
+
 .page-header > :first-child {
   min-width: 280px;
   flex: 1 1 auto;
@@ -209,7 +214,9 @@ body {
 }
 
 .market-list {
+  max-height: 620px;
   margin-top: 10px;
+  overflow-y: auto;
 }
 
 .market-list-copy {
@@ -248,7 +255,13 @@ body {
 .candle-chart svg {
   display: block;
   width: 100%;
-  height: 360px;
+  height: auto;
+  min-height: 360px;
+}
+
+.candle-chart-caption {
+  display: block;
+  padding: 0 12px 10px;
 }
 .overlap-matrix {
   border-collapse: collapse;
