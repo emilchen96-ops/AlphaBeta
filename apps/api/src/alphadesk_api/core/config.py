@@ -95,6 +95,18 @@ class Settings(BaseSettings):
     free_market_worker_lock_ttl_seconds: int = Field(default=45, ge=15, le=300)
     free_market_websocket_queue_size: int = Field(default=100, ge=10, le=1000)
     free_market_max_subscriptions_per_client: int = Field(default=200, ge=1, le=2000)
+    miniqmt_market_data_enabled: bool = False
+    miniqmt_data_path: str | None = None
+    miniqmt_xtquant_path: str | None = None
+    miniqmt_agent_api_url: str = "http://127.0.0.1:8000"
+    miniqmt_agent_token: SecretStr | None = None
+    miniqmt_max_subscriptions: int = Field(default=200, ge=1, le=2000)
+    miniqmt_benchmark_symbols: list[str] = Field(
+        default_factory=lambda: ["510300.SSE", "510500.SSE"]
+    )
+    miniqmt_history_max_instruments: int = Field(default=10, ge=1, le=50)
+    miniqmt_history_max_days: int = Field(default=31, ge=1, le=366)
+    miniqmt_quote_ttl_seconds: int = Field(default=300, ge=30, le=3600)
     strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
     backtest_max_instruments: int = Field(default=20, ge=1, le=200)
     backtest_max_bars: int = Field(default=100_000, ge=1, le=2_000_000)
@@ -173,12 +185,19 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("ai_api_key", "tushare_token", mode="before")
+    @field_validator("ai_api_key", "tushare_token", "miniqmt_agent_token", mode="before")
     @classmethod
     def normalize_optional_ai_api_key(cls, value: object) -> object | None:
         if value is None or (isinstance(value, str) and not value.strip()):
             return None
         return value
+
+    @field_validator("miniqmt_data_path", "miniqmt_xtquant_path")
+    @classmethod
+    def normalize_optional_local_path(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return value.strip()
 
     @field_validator("ai_model")
     @classmethod

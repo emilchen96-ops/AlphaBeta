@@ -12,7 +12,7 @@ export interface SystemStatus {
 }
 
 export type CapabilityImplementationStatus =
-  "WORKING" | "PARTIAL" | "PLACEHOLDER" | "NOT_IMPLEMENTED";
+  "WORKING" | "PARTIAL" | "PLACEHOLDER" | "NOT_IMPLEMENTED" | "DISABLED";
 export type CapabilityReadinessStatus =
   "READY" | "MISSING" | "DISABLED" | "NOT_REQUIRED" | "UNKNOWN";
 export type CapabilityConfigurationStatus =

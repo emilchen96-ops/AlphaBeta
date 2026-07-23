@@ -6,7 +6,7 @@ from typing import Literal, Protocol
 
 from alphadesk_api.core.config import Settings
 
-ImplementationStatus = Literal["WORKING", "PARTIAL", "PLACEHOLDER", "NOT_IMPLEMENTED"]
+ImplementationStatus = Literal["WORKING", "PARTIAL", "PLACEHOLDER", "NOT_IMPLEMENTED", "DISABLED"]
 ReadinessStatus = Literal["READY", "MISSING", "DISABLED", "NOT_REQUIRED", "UNKNOWN"]
 ConfigurationStatus = Literal[
     "READY",
@@ -85,6 +85,7 @@ def assess_system_capabilities(
     ai_provider_available: bool | None = None,
     ai_provider_mode: str = "DISABLED",
     replay_worker_available: bool = False,
+    miniqmt_agent_connected: bool = False,
 ) -> tuple[SystemCapability, ...]:
     """Assess what can be used now without mutating business facts."""
 
@@ -393,24 +394,84 @@ def assess_system_capabilities(
         ),
         SystemCapability(
             module_key="realtime_market_data",
-            implementation_status="PARTIAL",
-            data_status="UNKNOWN",
-            configuration_status="DISABLED",
-            available=False,
-            reason=(
-                "Redis/WebSocket 管道保留, 但实时 Provider "
-                f"{settings.realtime_market_provider} 按安全基线禁用。"
+            implementation_status="WORKING",
+            data_status="READY" if miniqmt_agent_connected else "UNKNOWN",
+            configuration_status=(
+                "READY"
+                if miniqmt_agent_connected
+                else ("MISSING" if settings.miniqmt_market_data_enabled else "DISABLED")
             ),
-            required_actions=("后续通过受控行情适配器提供交易级实时数据",),
+            available=miniqmt_agent_connected,
+            reason=(
+                "MiniQMT只读实时行情、Redis和WebSocket链路已连接。"
+                if miniqmt_agent_connected
+                else "实时行情链路已实现, 当前MiniQMT只读行情代理未连接。"
+            ),
+            required_actions=(
+                () if miniqmt_agent_connected else ("启动MiniQMT客户端和Windows行情代理",)
+            ),
         ),
         SystemCapability(
-            module_key="miniqmt",
-            implementation_status="NOT_IMPLEMENTED",
+            module_key="miniqmt_market_data",
+            implementation_status="WORKING",
+            data_status="READY" if miniqmt_agent_connected else "UNKNOWN",
+            configuration_status=(
+                "READY"
+                if miniqmt_agent_connected
+                else ("MISSING" if settings.miniqmt_market_data_enabled else "DISABLED")
+            ),
+            available=miniqmt_agent_connected,
+            reason=(
+                "MiniQMT只读行情代理已连接。"
+                if miniqmt_agent_connected
+                else "MiniQMT只读行情代码已完成, 当前Windows行情代理未连接。"
+            ),
+            required_actions=(
+                () if miniqmt_agent_connected else ("启动MiniQMT客户端和Windows行情代理",)
+            ),
+            worker_status="ONLINE" if miniqmt_agent_connected else "OFFLINE",
+        ),
+        SystemCapability(
+            module_key="realtime_quotes",
+            implementation_status="WORKING",
+            data_status="READY" if miniqmt_agent_connected else "UNKNOWN",
+            configuration_status="READY" if miniqmt_agent_connected else "MISSING",
+            available=miniqmt_agent_connected,
+            reason=(
+                "MiniQMT行情快照正在写入Redis并通过WebSocket推送。"
+                if miniqmt_agent_connected
+                else "实时快照链路已实现, 等待MiniQMT行情代理连接。"
+            ),
+            required_actions=(() if miniqmt_agent_connected else ("连接MiniQMT只读行情代理",)),
+        ),
+        SystemCapability(
+            module_key="market_subscription",
+            implementation_status="WORKING",
+            data_status="READY" if miniqmt_agent_connected else "UNKNOWN",
+            configuration_status="READY" if miniqmt_agent_connected else "MISSING",
+            available=miniqmt_agent_connected,
+            reason="期望订阅、实际订阅和失败事实已分离保存。",
+            required_actions=(
+                () if miniqmt_agent_connected else ("启用自选列表盘中监控并启动行情代理",)
+            ),
+        ),
+        SystemCapability(
+            module_key="intraday_persistence",
+            implementation_status="WORKING",
+            data_status="READY" if intraday_ready else "MISSING",
+            configuration_status=("READY" if settings.miniqmt_market_data_enabled else "DISABLED"),
+            available=intraday_ready,
+            reason="MiniQMT 1分钟Bar接入D03 PostgreSQL MarketBar。",
+            required_actions=(() if intraday_ready else ("启动行情代理并等待分钟Bar封板",)),
+        ),
+        SystemCapability(
+            module_key="miniqmt_trading",
+            implementation_status="DISABLED",
             data_status="NOT_REQUIRED",
             configuration_status="DISABLED",
             available=False,
-            reason="Windows Agent、XtQuant Adapter 与真实券商链路尚未实现。",
-            required_actions=("完成 Windows Agent、安全命令回执、最终风控与对账后再接入",),
+            reason="当前系统仅启用MiniQMT只读行情能力",
+            required_actions=(),
         ),
         SystemCapability(
             module_key="audit",

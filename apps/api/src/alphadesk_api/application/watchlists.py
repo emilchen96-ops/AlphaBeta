@@ -34,12 +34,21 @@ class WatchlistService:
             return watchlist, [(item, by_id[item.instrument_id]) for item in items]
 
     async def create(
-        self, *, name: str, description: str | None, correlation_id: UUID
+        self,
+        *,
+        name: str,
+        description: str | None,
+        realtime_enabled: bool = False,
+        correlation_id: UUID,
     ) -> Watchlist:
         async with self._uow_factory() as uow:
             if await uow.watchlists.get_by_name(name.strip()) is not None:
                 raise ApplicationError("WATCHLIST_NAME_CONFLICT", "自选列表名称已存在")
-            entity = Watchlist(name=name, description=description)
+            entity = Watchlist(
+                name=name,
+                description=description,
+                realtime_enabled=realtime_enabled,
+            )
             await uow.watchlists.add(entity)
             await append_event_and_audit(
                 uow,
@@ -58,6 +67,7 @@ class WatchlistService:
         *,
         name: str,
         description: str | None,
+        realtime_enabled: bool = False,
         correlation_id: UUID,
     ) -> Watchlist:
         async with self._uow_factory() as uow:
@@ -71,6 +81,7 @@ class WatchlistService:
                 current,
                 name=name,
                 description=description,
+                realtime_enabled=realtime_enabled,
                 updated_at=datetime.now(UTC),
             )
             await uow.watchlists.update(updated)

@@ -32,6 +32,7 @@ def watchlist_response(entity: Watchlist) -> WatchlistResponse:
         id=entity.id,
         name=entity.name,
         description=entity.description,
+        realtime_enabled=entity.realtime_enabled,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )
@@ -54,6 +55,7 @@ async def create_watchlist(request: Request, payload: WatchlistCreateRequest) ->
         entity = await service(request).create(
             name=payload.name,
             description=payload.description,
+            realtime_enabled=payload.realtime_enabled,
             correlation_id=request_correlation_id(request),
         )
     except ApplicationError as exc:
@@ -93,6 +95,7 @@ async def update_watchlist(
             watchlist_id,
             name=payload.name,
             description=payload.description,
+            realtime_enabled=payload.realtime_enabled,
             correlation_id=request_correlation_id(request),
         )
     except ApplicationError as exc:

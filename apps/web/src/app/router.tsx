@@ -11,6 +11,7 @@ import { NotFoundPage } from "../pages/NotFoundPage";
 import { ReplayRunDetailPage, ReplayRunsPage } from "../pages/ReplayPages";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
 import { IntradayMarketDataPage } from "../pages/IntradayMarketDataPage";
+import { MiniQMTMarketDataPage } from "../pages/MiniQMTMarketDataPage";
 import {
   InformationCenterPage,
   InformationDetailPage,
@@ -74,6 +75,7 @@ export const routes: RouteObject[] = [
       },
       { path: "market-data-center", element: <MarketDataCenterPage /> },
       { path: "intraday-market-data", element: <IntradayMarketDataPage /> },
+      { path: "miniqmt-market-data", element: <MiniQMTMarketDataPage /> },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "scanners", element: <ScannersPage /> },
       { path: "scan-runs", element: <ScanRunsPage /> },

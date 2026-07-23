@@ -23,7 +23,11 @@ test("应用主布局可以渲染", async () => {
 
 test("导航菜单可以切换页面并高亮当前项", async () => {
   renderRoute("/");
-  const marketMenuItem = screen.getByRole("menuitem", { name: /行情/ });
+  const marketMenuItem = screen.getByText("行情").closest("[role=menuitem]");
+  expect(marketMenuItem).not.toBeNull();
+  if (marketMenuItem === null) {
+    throw new Error("行情菜单项不存在");
+  }
   await userEvent.click(marketMenuItem);
   expect(
     await screen.findByRole("heading", { name: "行情" }),

@@ -43,6 +43,7 @@ import {
   updateWatchlist,
   updateWatchlistItem,
 } from "../api/market";
+import { setTemporarySubscription } from "../api/miniqmt";
 import { CandlestickChart } from "../components/CandlestickChart/CandlestickChart";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import { useMarketQuotes } from "../hooks/useMarketQuotes";
@@ -75,6 +76,7 @@ export function MarketPage() {
   >(null);
   const [watchlistName, setWatchlistName] = useState("");
   const [watchlistDescription, setWatchlistDescription] = useState("");
+  const [watchlistRealtime, setWatchlistRealtime] = useState(false);
   const [noteItem, setNoteItem] = useState<WatchlistItem>();
   const [note, setNote] = useState("");
   const [showTestData, setShowTestData] = useState(false);
@@ -127,6 +129,17 @@ export function MarketPage() {
       getBars(effectiveInstrument?.id ?? "", timeframe, adjustment),
     enabled: Boolean(effectiveInstrument),
   });
+  useEffect(() => {
+    if (!effectiveInstrument) return;
+    void setTemporarySubscription(effectiveInstrument.id, true).catch(
+      () => undefined,
+    );
+    return () => {
+      void setTemporarySubscription(effectiveInstrument.id, false).catch(
+        () => undefined,
+      );
+    };
+  }, [effectiveInstrument]);
   const subscribedIds = (detail.data?.items ?? []).map(
     (item) => item.instrument.id,
   );
@@ -168,6 +181,9 @@ export function MarketPage() {
     setWatchlistDescription(
       mode === "edit" ? (currentWatchlist?.description ?? "") : "",
     );
+    setWatchlistRealtime(
+      mode === "edit" ? (currentWatchlist?.realtime_enabled ?? false) : false,
+    );
   }
 
   function saveWatchlist() {
@@ -179,8 +195,13 @@ export function MarketPage() {
             effectiveWatchlist,
             name,
             watchlistDescription || null,
+            watchlistRealtime,
           )
-        : createWatchlist(name, watchlistDescription || null),
+        : createWatchlist(
+            name,
+            watchlistDescription || null,
+            watchlistRealtime,
+          ),
     );
     setWatchlistDialog(null);
   }
@@ -225,7 +246,7 @@ export function MarketPage() {
                 {displayEnum(source.status)}
               </Tag>
             ))}
-            <Tag color="default">MiniQMT 行情：尚未配置</Tag>
+            <Tag color="blue">MiniQMT只读行情：请在“实时行情”页查看</Tag>
             <Tag
               color={
                 realtimeStatus.data?.enabled &&
@@ -563,6 +584,14 @@ export function MarketPage() {
             placeholder="描述（可选）"
             onChange={(event) => setWatchlistDescription(event.target.value)}
           />
+          <Space>
+            <Switch
+              aria-label="启用盘中监控"
+              checked={watchlistRealtime}
+              onChange={setWatchlistRealtime}
+            />
+            <Typography.Text>盘中监控（驱动MiniQMT实时订阅）</Typography.Text>
+          </Space>
         </Space>
       </Modal>
       <Modal

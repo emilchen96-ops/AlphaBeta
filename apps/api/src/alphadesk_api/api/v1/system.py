@@ -1,6 +1,7 @@
 """System status HTTP and WebSocket endpoints."""
 
 import asyncio
+import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -63,12 +64,21 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
     selected_provider = request.app.state.ai_research_provider
     ai_snapshot = describe_ai_provider(selected_provider)
     replay_worker_available = False
+    miniqmt_agent_connected = False
     try:
         replay_worker_available = bool(
             await request.app.state.redis.client.get("alphadesk:replays:v1:worker:heartbeat")
         )
     except Exception:
         replay_worker_available = False
+    try:
+        miniqmt_status = await request.app.state.redis.client.get(
+            "alphadesk:miniqmt:v1:agent:status"
+        )
+        if miniqmt_status:
+            miniqmt_agent_connected = json.loads(str(miniqmt_status)).get("state") == "CONNECTED"
+    except Exception:
+        miniqmt_agent_connected = False
     items = assess_system_capabilities(
         request.app.state.settings,
         data,
@@ -77,6 +87,7 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
         ai_provider_available=ai_snapshot.available,
         ai_provider_mode=ai_snapshot.mode,
         replay_worker_available=replay_worker_available,
+        miniqmt_agent_connected=miniqmt_agent_connected,
     )
     count_fields = {name: getattr(data, name) for name in CapabilityDataCountsResponse.model_fields}
 
@@ -114,6 +125,10 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
             provider = provider_by_module[module_key]
             availability = "READY" if raw["available"] else "NEEDS_DATA"
             mode = "LOCAL_REFERENCE"
+        elif module_key == "miniqmt_trading":
+            availability = "NOT_AVAILABLE"
+            provider = "MINIQMT"
+            mode = "READ_ONLY"
         elif raw["implementation_status"] == "NOT_IMPLEMENTED":
             availability = "NOT_IMPLEMENTED"
             provider = None
@@ -126,6 +141,16 @@ async def system_capabilities(request: Request) -> SystemCapabilitiesResponse:
             availability = "DISABLED"
             provider = request.app.state.settings.realtime_market_provider
             mode = "DISABLED"
+        elif module_key in {
+            "realtime_market_data",
+            "miniqmt_market_data",
+            "realtime_quotes",
+            "market_subscription",
+            "intraday_persistence",
+        }:
+            availability = "AVAILABLE" if raw["available"] else "DEGRADED"
+            provider = "MINIQMT"
+            mode = "READ_ONLY"
         elif raw["available"]:
             availability = "READY"
             provider = "postgresql"

@@ -91,7 +91,7 @@ class QuoteCache:
 
     @staticmethod
     def key(instrument_id: UUID) -> str:
-        return f"alphadesk:market:v1:quote:{instrument_id}"
+        return f"market:quote:{instrument_id}"
 
     async def upsert(self, quote: MarketQuote) -> tuple[MarketQuoteSnapshot, bool, str]:
         payload = quote_payload(quote)
@@ -125,7 +125,16 @@ class QuoteCache:
             ),
         )
         if changed:
-            event = {"schema_version": 1, "type": "quote_update", **payload, "revision": revision}
+            event = {
+                "schema_version": 1,
+                "type": "quote_update",
+                "event_type": "quote_updated",
+                "instrument_id": str(quote.instrument_id),
+                "market_time": quote.quote_time,
+                "occurred_at": datetime.now(UTC),
+                **payload,
+                "revision": revision,
+            }
             await self._client.publish(QUOTE_CHANNEL, json.dumps(event, default=_json_default))
         return snapshot, bool(changed), reason
 

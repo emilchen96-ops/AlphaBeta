@@ -23,6 +23,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+miniqmt = [
+  "numpy>=2,<3",
+  "pandas>=2.2,<4",
+  "xtquant==250807.1.2; platform_system == 'Windows'",
+]
 dev = [
   "mypy>=1.15,<2",
   "pytest>=8.3,<9",

@@ -26,6 +26,20 @@ docker compose exec api alembic upgrade head
 打开前端 <http://127.0.0.1:5173/>、“开始使用”
 <http://127.0.0.1:5173/getting-started> 或 API 文档 <http://127.0.0.1:8000/docs>。
 
+### 可选：启动 MiniQMT 只读实时行情
+
+先启动并登录 Windows MiniQMT 的行情入口，再按
+[MiniQMT 只读行情](miniqmt_readonly_market_data.md) 配置未跟踪的 `.env`。API 和 Migration
+就绪后，在 Windows 主机运行：
+
+```powershell
+.\apps\api\.venv\Scripts\python.exe -m alphadesk_api.cli.miniqmt run-agent
+```
+
+打开 <http://127.0.0.1:5173/miniqmt-market-data> 查看连接、实时行情和订阅状态。自选股分组
+只有开启“盘中监控”才会驱动期望订阅；页面上的期望状态不等于 MiniQMT 已经实际订阅。
+MiniQMT 客户端与行情代理都需要保持运行。本能力只读，交易功能未启用。
+
 ## 2. 一键准备研究环境
 
 首次体验建议使用明确标记的本地 fixture：
@@ -82,16 +96,17 @@ Signal，不会创建订单。结果在“研究运行”和“研究 Signal”�
 - `NEEDS_DATA` / `NOT_READY`：前往数据中心补数，或运行 fixture 初始化。
 - `NEEDS_CONFIG`：需要启用受支持 Provider；页面不会展示 Secret。
 - `DEMO_ONLY`：仅 Fake AI 或明确演示数据，不代表生产可用。
-- `DISABLED`：按安全基线关闭，例如实时行情。
-- `NOT_IMPLEMENTED`：尚未开发，例如 MiniQMT。
+- `DISABLED`：按安全基线关闭，例如 MiniQMT 交易。
+- `NOT_IMPLEMENTED`：尚未开发的规划能力。
 
 若显示“无法连接 API”，先运行 `docker compose ps`，确认 API、PostgreSQL、Redis 均为
 healthy；再访问 <http://127.0.0.1:8000/health/ready>。若页面仍旧，执行
 `docker compose up --build -d` 后刷新。Correlation ID 可用于定位受控错误，但不要粘贴密码、
 Token 或连接串。
 
-当前不连接 MiniQMT，不是真实交易；AI 默认为 Disabled（U01 fixture 可显式使用 Fake），实时
-行情默认为 Disabled。A01-P 已具备真实 AI Adapter，但是否可用取决于本地凭据与兼容服务。
+MiniQMT 只读行情代码已具备，但默认关闭，只有本机配置并启动 Windows 行情代理后才可用；
+它不是真实交易。AI 默认为 Disabled（U01 fixture 可显式使用 Fake）。A01-P 是否可用取决于
+本地凭据与兼容服务。
 
 ## 5. 第一次使用历史分钟数据
 

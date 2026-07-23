@@ -31,7 +31,11 @@ EXPECTED_MODULES = {
     "daily_backtest",
     "historical_replay",
     "realtime_market_data",
-    "miniqmt",
+    "miniqmt_market_data",
+    "realtime_quotes",
+    "market_subscription",
+    "intraday_persistence",
+    "miniqmt_trading",
     "audit",
     "settings",
 }
@@ -87,7 +91,10 @@ def test_capability_assessment_separates_data_config_and_implementation() -> Non
     assert items["simulated_broker"].available is True
     assert items["daily_backtest"].implementation_status == "WORKING"
     assert items["daily_backtest"].available is True
-    assert items["miniqmt"].implementation_status == "NOT_IMPLEMENTED"
+    assert items["miniqmt_market_data"].implementation_status == "WORKING"
+    assert items["miniqmt_market_data"].available is False
+    assert items["miniqmt_trading"].implementation_status == "DISABLED"
+    assert items["miniqmt_trading"].available is False
 
 
 def test_disabled_ai_and_missing_market_data_are_not_reported_available() -> None:

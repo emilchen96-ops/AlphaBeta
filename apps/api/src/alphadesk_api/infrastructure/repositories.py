@@ -1029,7 +1029,12 @@ class SqlAlchemyWatchlistRepository(SqlAlchemyRepository[Watchlist, WatchlistMod
         await self._session.execute(
             update(WatchlistModel)
             .where(WatchlistModel.id == entity.id)
-            .values(name=entity.name, description=entity.description, updated_at=entity.updated_at)
+            .values(
+                name=entity.name,
+                description=entity.description,
+                realtime_enabled=entity.realtime_enabled,
+                updated_at=entity.updated_at,
+            )
         )
         await self._session.flush()
 

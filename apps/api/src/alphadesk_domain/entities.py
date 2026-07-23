@@ -72,6 +72,7 @@ class Watchlist:
     name: str
     id: UUID = field(default_factory=uuid4)
     description: str | None = None
+    realtime_enabled: bool = False
     items: tuple["WatchlistItem", ...] = ()
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

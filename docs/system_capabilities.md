@@ -12,8 +12,14 @@ D02 在 `/api/v1/system/capabilities` 增加 `trading_calendar`、`adjustment_fa
 - `last_success_at`、`provider`、`mode`：最近数据时间与当前运行边界。
 
 “代码已实现”不等于“现在可用”。例如历史行情代码完成但数据库为空时显示
-`NEEDS_DATA`；实时行情安全关闭时显示 `DISABLED`；MiniQMT 尚未开发时显示
-`NOT_IMPLEMENTED`；Fake AI 显示 `DEMO_ONLY`。
+`NEEDS_DATA`；MiniQMT 只读行情未配置或代理未连接时显示不可用；Fake AI 显示
+`DEMO_ONLY`。
+
+L2.5-A 新增 `miniqmt_market_data`、`realtime_quotes`、`market_subscription`、
+`intraday_persistence` 和 `miniqmt_trading`。前三项分别区分代码、代理连接/行情新鲜度和
+期望/实际/失败订阅；分钟落库沿用 PostgreSQL MarketBar。`miniqmt_trading` 永远报告
+`implementation_status=DISABLED`、`availability=NOT_AVAILABLE`，原因是系统仅启用 MiniQMT
+只读行情。行情连接成功不得解释成交易可用。
 
 A01-P 后，`ai_research.configuration_status` 区分 `DISABLED`、`FAKE`、
 `REAL_CONFIGURED`、`REAL_AVAILABLE`、`REAL_UNAVAILABLE`；面向用户的 availability 分别映射为

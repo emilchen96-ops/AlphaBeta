@@ -128,5 +128,6 @@ def create_app(
     # WebSocket stays outside the versioned HTTP prefix and is display-only.
     app.add_api_websocket_route("/ws/system", system_websocket)
     app.add_api_websocket_route("/ws/v1/market-data", market_data_websocket)
+    app.add_api_websocket_route("/ws/market-data", market_data_websocket)
     app.add_api_websocket_route("/ws/replays/{replay_id}", replay_websocket)
     return app

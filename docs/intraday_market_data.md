@@ -2,6 +2,10 @@
 
 D03 为 BT02 和未来分钟历史回放准备离线历史分钟数据，不是实时行情，也不连接 Redis Quote、Windows Agent、MiniQMT 或券商。
 
+> L2.5-A 在 D03 之后新增 MiniQMT 只读实时入口。该入口可把 MiniQMT 的 RAW 1 分钟 Bar
+> 按本页时间和会话规则幂等写入相同的 `market_bars`，但没有改变 D03 的历史语义。
+> Redis 仅保存最新 Quote，不是历史权威来源；研究和回测仍以 PostgreSQL MarketBar 为准。
+
 数据链路固定为 `Fixture/本地CSV → 规范化 RAW 1分钟 → Session聚合 → MarketBar → 质量/Readiness → API/CLI/页面`。权威事实仍是 PostgreSQL `market_bars`，唯一键沿用 `instrument_id + source_id + timeframe + adjustment_type + bar_time`。重复导入幂等，默认冲突策略 `keep_existing` 不覆盖既有权威事实。
 
 Provider：

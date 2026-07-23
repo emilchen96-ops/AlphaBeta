@@ -56,11 +56,19 @@ export function getWatchlist(id: string) {
   return apiRequest<WatchlistDetail>(`/api/v1/watchlists/${id}`);
 }
 
-export function createWatchlist(name: string, description: string | null) {
+export function createWatchlist(
+  name: string,
+  description: string | null,
+  realtimeEnabled = false,
+) {
   return apiRequest<Watchlist>("/api/v1/watchlists", {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({
+      name,
+      description,
+      realtime_enabled: realtimeEnabled,
+    }),
   });
 }
 
@@ -68,11 +76,16 @@ export function updateWatchlist(
   id: string,
   name: string,
   description: string | null,
+  realtimeEnabled = false,
 ) {
   return apiRequest<Watchlist>(`/api/v1/watchlists/${id}`, {
     method: "PATCH",
     headers: jsonHeaders,
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({
+      name,
+      description,
+      realtime_enabled: realtimeEnabled,
+    }),
   });
 }
 

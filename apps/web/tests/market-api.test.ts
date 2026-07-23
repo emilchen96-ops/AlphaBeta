@@ -35,7 +35,11 @@ test("创建自选列表发送 JSON", async () => {
   await createWatchlist("核心", "说明");
   expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "POST" });
   expect(fetchMock.mock.calls[0][1]?.body).toBe(
-    JSON.stringify({ name: "核心", description: "说明" }),
+    JSON.stringify({
+      name: "核心",
+      description: "说明",
+      realtime_enabled: false,
+    }),
   );
 });
 

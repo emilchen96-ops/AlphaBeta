@@ -1,5 +1,11 @@
 # AlphaDesk 文档索引
 
+> 当前行情里程碑为 **L2.5-A MiniQMT 只读行情**：能力边界与数据链路见
+> [MiniQMT 只读行情](miniqmt_readonly_market_data.md)，期望/实际订阅见
+> [行情订阅模型](market_subscription_model.md)，Windows 进程与启动方式见
+> [MiniQMT 行情代理](miniqmt_market_data_agent.md)。该能力不读取账户、资金、持仓、委托或
+> 成交，不提供下单和撤单。下一阶段仅为 L2.5-B。
+
 > UX01 前端中文化、业务可读性、内部编号降噪和关键交互规范见
 > [前端可读性规范](ux_conventions.md)。该整改不改变 API、数据库或交易安全边界。
 
@@ -93,6 +99,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |
+| L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md` |
 | SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |

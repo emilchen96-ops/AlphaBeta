@@ -13,6 +13,7 @@ from alphadesk_api.api.v1 import (
     intraday,
     market_data,
     market_reference,
+    miniqmt,
     orders,
     replays,
     risk,
@@ -30,6 +31,7 @@ api_router.include_router(watchlists.router)
 api_router.include_router(market_data.router)
 api_router.include_router(market_reference.router)
 api_router.include_router(intraday.router)
+api_router.include_router(miniqmt.router)
 api_router.include_router(accounts.router)
 api_router.include_router(orders.router)
 api_router.include_router(simulated_executions.router)

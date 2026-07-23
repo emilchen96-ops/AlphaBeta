@@ -155,6 +155,9 @@ class WatchlistModel(MutableTimestampedModel, Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    realtime_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class WatchlistItemModel(TimestampedModel, Base):
@@ -1740,6 +1743,109 @@ class MarketRealtimeRunModel(MutableTimestampedModel, Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
     )
+
+
+class MarketSubscriptionSetModel(TimestampedModel, Base):
+    __tablename__ = "market_subscription_sets"
+    __table_args__ = (
+        UniqueConstraint("version", name="uq_market_subscription_sets_version"),
+        CheckConstraint("desired_count >= 0", name="desired_count_non_negative"),
+        Index("ix_market_subscription_sets_created", "created_at"),
+        Index("ix_market_subscription_sets_activated", "activated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    desired_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    activated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=UTC_NOW
+    )
+
+
+class MarketSubscriptionItemModel(TimestampedModel, Base):
+    __tablename__ = "market_subscription_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_set_id",
+            "instrument_id",
+            name="uq_market_subscription_items_set_instrument",
+        ),
+        Index("ix_market_subscription_items_instrument", "instrument_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    subscription_set_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("market_subscription_sets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    subscription_reason: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    desired_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class MarketActiveSubscriptionModel(MutableTimestampedModel, Base):
+    __tablename__ = "market_active_subscriptions"
+    __table_args__ = (Index("ix_market_active_subscriptions_status", "status"),)
+
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_subscription_id: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    last_market_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    last_error_message: Mapped[str | None] = mapped_column(String(512))
+    is_test_data: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+
+class MarketSubscriptionSyncRunModel(TimestampedModel, Base):
+    __tablename__ = "market_subscription_sync_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_set_id",
+            "operation_fingerprint",
+            name="uq_market_subscription_sync_runs_operation",
+        ),
+        CheckConstraint(
+            "desired_count >= 0 AND attempted_subscribe_count >= 0 "
+            "AND subscribed_count >= 0 AND attempted_unsubscribe_count >= 0 "
+            "AND unsubscribed_count >= 0 AND failed_count >= 0",
+            name="market_subscription_sync_counts_non_negative",
+        ),
+        Index("ix_market_subscription_sync_runs_started", "started_at"),
+        Index("ix_market_subscription_sync_runs_correlation", "correlation_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    subscription_set_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("market_subscription_sets.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    operation_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    desired_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempted_subscribe_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    subscribed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempted_unsubscribe_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unsubscribed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_summary: Mapped[str | None] = mapped_column(String(1000))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
 
 
 class ScanRunModel(MutableTimestampedModel, Base):

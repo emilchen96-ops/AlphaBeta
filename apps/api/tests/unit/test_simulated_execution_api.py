@@ -51,7 +51,27 @@ def test_b01_c_openapi_is_read_only_for_fills_and_has_no_real_broker_route() -> 
     assert "post" in paths["/api/v1/orders/{order_id}/simulated-executions"]
     assert set(paths["/api/v1/fills"]) == {"get"}
     assert set(paths["/api/v1/fills/{fill_id}"]) == {"get"}
-    assert not any("miniqmt" in path.lower() or "real-broker" in path.lower() for path in paths)
+    assert not any("real-broker" in path.lower() for path in paths)
+    miniqmt_paths = [path.lower() for path in paths if "miniqmt" in path.lower()]
+    assert miniqmt_paths
+    assert not any(
+        forbidden in set(path.replace("{", "/").replace("}", "/").split("/"))
+        for path in miniqmt_paths
+        if path != "/api/v1/miniqmt/agent/trading"
+        for forbidden in (
+            "account",
+            "accounts",
+            "asset",
+            "assets",
+            "position",
+            "positions",
+            "order",
+            "orders",
+            "fill",
+            "fills",
+            "cancel",
+        )
+    )
 
 
 @pytest.mark.parametrize(
