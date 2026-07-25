@@ -312,6 +312,15 @@ body {
   border-radius: 8px;
   background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
 }
+
+.research-primary-card {
+  border-color: #91caff;
+  background: linear-gradient(135deg, #f0f7ff 0%, #fff 72%);
+}
+
+.research-primary-card .ant-card-body {
+  padding: 28px;
+}
 .form-grid,
 .dashboard-grid {
   display: grid;

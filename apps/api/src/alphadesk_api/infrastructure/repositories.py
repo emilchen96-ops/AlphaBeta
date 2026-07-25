@@ -1,6 +1,7 @@
 """SQLAlchemy asynchronous repository adapters for domain ports."""
 
 import builtins
+import logging
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
@@ -108,6 +109,7 @@ from alphadesk_domain.backtest import (
     BacktestTradeSummary,
     backtest_configuration_from_dict,
     backtest_configuration_to_dict,
+    backtest_request_fingerprint,
 )
 from alphadesk_domain.entities import (
     AuditLog,
@@ -215,12 +217,32 @@ class SqlAlchemyRepository[EntityT, OrmT: DeclarativeBase]:
         return None if row is None else entity_from_model(self.entity_type, row)
 
 
-def _backtest_run_from_model(model: BacktestRunModel) -> BacktestRun:
+LOGGER = logging.getLogger(__name__)
+
+
+def _backtest_run_from_model(
+    model: BacktestRunModel,
+    *,
+    tolerate_fingerprint_mismatch: bool = False,
+) -> BacktestRun:
+    configuration = backtest_configuration_from_dict(model.configuration)
+    request_fingerprint = model.request_fingerprint
+    expected_fingerprint = backtest_request_fingerprint(configuration)
+    if tolerate_fingerprint_mismatch and request_fingerprint != expected_fingerprint:
+        LOGGER.error(
+            "Recovered a backtest list item with a mismatched persisted fingerprint",
+            extra={
+                "backtest_run_id": str(model.id),
+                "persisted_request_fingerprint": request_fingerprint,
+                "expected_request_fingerprint": expected_fingerprint,
+            },
+        )
+        request_fingerprint = expected_fingerprint
     return BacktestRun(
         id=model.id,
         idempotency_key=model.idempotency_key,
-        request_fingerprint=model.request_fingerprint,
-        configuration=backtest_configuration_from_dict(model.configuration),
+        request_fingerprint=request_fingerprint,
+        configuration=configuration,
         strategy_run_id=model.strategy_run_id,
         account_id=model.account_id,
         status=BacktestRunStatus(model.status),
@@ -329,7 +351,9 @@ class SqlAlchemyBacktestRunRepository:
             .offset(offset)
             .limit(limit)
         )
-        return [_backtest_run_from_model(row) for row in rows], total
+        return [
+            _backtest_run_from_model(row, tolerate_fingerprint_mismatch=True) for row in rows
+        ], total
 
 
 class SqlAlchemyTradingCalendarRepository:

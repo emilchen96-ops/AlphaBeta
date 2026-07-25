@@ -50,6 +50,7 @@ async def system_status(request: Request) -> SystemStatusResponse:
         postgresql="online" if database_ok else "offline",
         redis="online" if redis_ok else "offline",
         environment=settings.environment,
+        product_mode=settings.product_mode,
         version=settings.app_version,
         server_time=datetime.now(UTC),
         correlation_id=request.state.correlation_id,

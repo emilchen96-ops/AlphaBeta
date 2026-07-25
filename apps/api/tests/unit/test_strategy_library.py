@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
@@ -16,6 +17,7 @@ from alphadesk_domain.strategy import (
 from alphadesk_domain.strategy_examples import register_builtin_strategies
 from alphadesk_domain.strategy_library import (
     AtrChannelStrategy,
+    PriceVolumeBreakoutSmaExitStrategy,
     TrendPullbackStrategy,
     VolumeBreakoutStrategy,
 )
@@ -88,6 +90,7 @@ def test_registry_catalog_contains_all_s02_strategies_and_instances_are_isolated
     registry = StrategyRegistry()
     register_builtin_strategies(registry)
     assert {item.strategy_key for item in registry.list_metadata()} >= {
+        "price_volume_breakout_sma_exit",
         "volume_breakout",
         "trend_pullback",
         "atr_channel",
@@ -144,6 +147,39 @@ def test_volume_breakout_can_reenter_after_exit() -> None:
         OrderSide.SELL,
         OrderSide.BUY,
     ]
+
+
+PRICE_VOLUME_SMA_PARAMS = {
+    "breakout_window": 3,
+    "volume_window": 2,
+    "volume_multiplier": Decimal("1.5"),
+    "exit_sma_window": 3,
+    "quantity": Decimal("100"),
+}
+
+
+def test_price_volume_breakout_sma_exit_uses_prior_entry_windows_and_current_sma() -> None:
+    bars = [
+        make_bar("10", 0, high="10", volume="100"),
+        make_bar("10", 1, high="10", volume="100"),
+        make_bar("10", 2, high="10", volume="100"),
+        make_bar("12", 3, high="12", volume="200"),
+        make_bar("12", 4, high="12", volume="100"),
+        make_bar("9", 5, high="9", volume="100"),
+    ]
+
+    signals = run("price_volume_breakout_sma_exit", PRICE_VOLUME_SMA_PARAMS, bars)
+
+    assert [item.side for item in signals] == [OrderSide.BUY, OrderSide.SELL]
+    assert "prior_high=10" in signals[0].reason
+    assert "exit_sma=11" in signals[1].reason
+
+
+def test_price_volume_breakout_sma_exit_requires_daily_bars() -> None:
+    bar = replace(make_bar("10", 0), timeframe=MarketTimeframe.MINUTE_1)
+
+    with pytest.raises(StrategyError, match="not supported"):
+        run("price_volume_breakout_sma_exit", PRICE_VOLUME_SMA_PARAMS, [bar])
 
 
 TREND_PARAMS = {
@@ -208,6 +244,7 @@ def test_atr_channel_current_bar_order_emits_one_buy_then_sell_deterministically
     ("strategy_type", "parameters"),
     [
         (VolumeBreakoutStrategy, VOLUME_PARAMS),
+        (PriceVolumeBreakoutSmaExitStrategy, PRICE_VOLUME_SMA_PARAMS),
         (TrendPullbackStrategy, TREND_PARAMS),
         (AtrChannelStrategy, ATR_PARAMS),
     ],

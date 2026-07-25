@@ -171,7 +171,7 @@ export interface BacktestIntegrity {
 
 export interface CreateBacktestRequest {
   strategy_key: string;
-  data_source_code: "BAOSTOCK" | "BT01_DEMO";
+  data_source_code: "MINIQMT" | "BT01_DEMO";
   parameters: Record<string, string | number | boolean>;
   instrument_ids: string[];
   timeframe: "DAY_1";

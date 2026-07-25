@@ -92,6 +92,7 @@ const enumLabels: Record<string, string> = {
 const strategyLabels: Record<string, string> = {
   sma_crossover: "均线交叉策略（SMA Crossover）",
   volume_breakout: "成交量突破策略（Volume Breakout）",
+  price_volume_breakout_sma_exit: "价量突破均线退出策略",
   rsi_reversion: "RSI 均值回归策略（RSI Reversion）",
 };
 
@@ -143,6 +144,7 @@ const parameterLabels: Record<string, string> = {
   breakout_window: "价格突破观察周期",
   volume_multiplier: "放量倍数",
   exit_window: "退出观察周期",
+  exit_sma_window: "退出均线周期",
   quantity: "每次交易数量",
   enabled: "是否启用",
   mode: "运行模式",

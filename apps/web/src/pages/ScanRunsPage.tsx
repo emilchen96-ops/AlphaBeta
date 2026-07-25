@@ -63,6 +63,23 @@ const terminalStatuses = new Set([
   "CANCELED",
 ]);
 
+function displayMetric(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value) || "—";
+  } catch {
+    return "—";
+  }
+}
+
 export function ScanRunsPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
@@ -143,7 +160,8 @@ export function ScanRunsPage() {
                     {displayScanner(item.scanner_key)}
                   </Typography.Text>
                   <Typography.Text type="secondary">
-                    {formatDateTime(item.created_at)} · {shortId(item.scan_run_id)}
+                    {formatDateTime(item.created_at)} ·{" "}
+                    {shortId(item.scan_run_id)}
                   </Typography.Text>
                 </Space>
               ),
@@ -241,7 +259,9 @@ export function ScanRunDetailPage() {
         description="查看全A股范围解析、MiniQMT数据准备、扫描进度和匹配结果。"
       />
       <Space wrap>
-        <Button onClick={() => void navigate("/scan-runs")}>返回扫描运行</Button>
+        <Button onClick={() => void navigate("/scan-runs")}>
+          返回扫描运行
+        </Button>
         <Button onClick={() => void navigate("/market")}>查看行情</Button>
         {item && !terminalStatuses.has(item.status) ? (
           <Button
@@ -306,9 +326,7 @@ export function ScanRunDetailPage() {
                 key: "source",
                 label: "数据来源",
                 children:
-                  item.source_code === "MINIQMT"
-                    ? "MiniQMT"
-                    : item.source_code,
+                  item.source_code === "MINIQMT" ? "MiniQMT" : item.source_code,
               },
               {
                 key: "scope-count",
@@ -407,7 +425,7 @@ export function ScanRunDetailPage() {
                   <Space orientation="vertical" size={0}>
                     {Object.entries(value.metrics).map(([name, metric]) => (
                       <Typography.Text key={name}>
-                        {displayParameter(name)}：{String(metric ?? "—")}
+                        {displayParameter(name)}：{displayMetric(metric)}
                       </Typography.Text>
                     ))}
                   </Space>

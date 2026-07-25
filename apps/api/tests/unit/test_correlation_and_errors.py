@@ -1,7 +1,7 @@
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from alphadesk_api.app_factory import create_app
+from alphadesk_api.app_factory import create_app, wrap_with_cors
 from alphadesk_api.core.config import Settings
 from tests.conftest import FakeProbe
 
@@ -38,3 +38,20 @@ def test_unhandled_error_has_safe_shape_and_correlation_id(settings: Settings) -
     assert body["code"] == "INTERNAL_SERVER_ERROR"
     assert body["correlation_id"] == "error-test"
     assert "internal detail" not in response.text
+
+
+def test_unhandled_error_keeps_cors_headers_for_browser_clients(settings: Settings) -> None:
+    inner = create_app(settings, database=FakeProbe(), redis_service=FakeProbe())
+
+    async def boom(_request: Request) -> None:
+        raise RuntimeError("internal detail must not be returned")
+
+    inner.add_api_route("/test/cors-boom", boom)
+    app = wrap_with_cors(inner, settings)
+    origin = settings.cors_origins[0]
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/test/cors-boom", headers={"Origin": origin})
+
+    assert response.status_code == 500
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.json()["error"]["code"] == "INTERNAL_SERVER_ERROR"

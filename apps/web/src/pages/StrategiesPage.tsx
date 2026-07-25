@@ -1,305 +1,121 @@
-import { ExperimentOutlined } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  Alert,
-  App,
-  Button,
-  Card,
-  Form,
-  Input,
-  InputNumber,
-  Select,
-  Space,
-  Switch,
-  Tag,
-  Typography,
-} from "antd";
-import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Alert, Button, Card, Collapse, Empty, Space, Tag, Typography } from "antd";
 import { useNavigate } from "react-router-dom";
 
-import { getInstruments } from "../api/market";
-import { createStrategyRun, getStrategyCatalog } from "../api/strategies";
+import { getStrategyCatalog } from "../api/strategies";
 import { systemCapabilitiesQueryOptions } from "../api/system";
-import { PageHeader } from "../components/PageHeader/PageHeader";
-import type { StrategyParameterDefinition } from "../types/strategies";
-import {
-  displayEnum,
-  displayParameter,
-  displayStrategy,
-  formatInstrument,
-} from "../utils/display";
+import { displayEnum, displayParameter, displayStrategy } from "../utils/display";
 
-interface RunFormValues {
-  strategy_key: string;
-  instrument_ids: string[];
-  timeframe: string;
-  start_at: string;
-  end_at: string;
-  parameters: Record<string, string | number | boolean>;
-  idempotency_key: string;
-  price_adjustment_mode: "RAW" | "QFQ";
-}
+const descriptions: Record<string, string> = {
+  price_volume_breakout_sma_exit:
+    "价格突破近期高点并出现成交量放大时买入，跌破短期均线时退出。",
+  volume_breakout:
+    "价格突破近期高点并由成交量确认，跌破近期低点时退出。",
+  sma_crossover: "短期均线上穿长期均线时进入，下穿时退出。",
+  trend_pullback: "在趋势保持向上时等待价格回踩并重新转强。",
+  atr_channel: "使用均线和平均真实波幅构造动态趋势通道。",
+};
 
-function ParameterInput({
-  definition,
-}: {
-  definition: StrategyParameterDefinition;
-}) {
-  if (definition.type === "boolean") return <Switch />;
-  if (definition.type === "enum")
-    return <Select options={definition.choices.map((value) => ({ value }))} />;
-  if (definition.type === "integer")
-    return (
-      <InputNumber
-        precision={0}
-        min={Number(definition.min_value ?? undefined)}
-        max={Number(definition.max_value ?? undefined)}
-        style={{ width: "100%" }}
-      />
-    );
-  return (
-    <Input inputMode={definition.type === "decimal" ? "decimal" : "text"} />
-  );
-}
+const category: Record<string, string> = {
+  price_volume_breakout_sma_exit: "突破",
+  volume_breakout: "突破",
+  sma_crossover: "趋势",
+  trend_pullback: "趋势",
+  atr_channel: "波动率",
+};
 
 export function StrategiesPage() {
-  const { message } = App.useApp();
   const navigate = useNavigate();
-  const [form] = Form.useForm();
-  const [selectedKey, setSelectedKey] = useState<string>();
-  const [instrumentSearch, setInstrumentSearch] = useState("");
   const capabilities = useQuery(systemCapabilitiesQueryOptions);
-  const unavailable =
-    capabilities.data?.items?.find(
-      (item) => item.module_key === "strategy_research",
-    )?.available === false;
-  const unavailableReason = capabilities.data?.items?.find(
-    (item) => item.module_key === "strategy_research",
-  )?.reason;
-  const qfqReady =
-    capabilities.data?.items?.find(
-      (item) => item.module_key === "adjusted_strategy_data",
-    )?.available === true;
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
     queryFn: getStrategyCatalog,
   });
-  const instruments = useQuery({
-    queryKey: ["strategy-instruments", instrumentSearch],
-    queryFn: () => getInstruments(instrumentSearch),
-  });
-  const selected = useMemo(
-    () => catalog.data?.find((item) => item.strategy_key === selectedKey),
-    [catalog.data, selectedKey],
-  );
-  const mutation = useMutation({
-    mutationFn: createStrategyRun,
-    onSuccess: (run) => {
-      void message.success(
-        run.replayed ? "已返回原研究运行" : "历史研究运行已完成",
-      );
-      void navigate(`/strategy-runs/${run.run_id}`);
-    },
-    onError: (error: Error) => void message.error(error.message),
-  });
+  const unavailable =
+    capabilities.data?.items?.find(
+      (item) => item.module_key === "strategy_research",
+    )?.available === false;
 
-  const openRun = (key: string) => {
-    const strategy = catalog.data?.find((item) => item.strategy_key === key);
-    setSelectedKey(key);
-    const parameters = Object.fromEntries(
-      strategy?.parameters
-        .filter((item) => item.default !== null)
-        .map((item) => [item.name, item.default]) ?? [],
+  if (catalog.isError) {
+    return (
+      <Alert
+        showIcon
+        type="error"
+        title="无法读取策略模板"
+        description="请确认 AlphaDesk API 已启动后重试。"
+      />
     );
-    form.setFieldsValue({
-      strategy_key: key,
-      timeframe: strategy?.supported_timeframes[0],
-      parameters,
-      idempotency_key: `research:${crypto.randomUUID()}`,
-      price_adjustment_mode: "RAW",
-    });
-  };
-  const submit = async () => {
-    const values = (await form.validateFields()) as RunFormValues;
-    mutation.mutate({
-      strategy_key: values.strategy_key,
-      instrument_ids: values.instrument_ids,
-      timeframe: values.timeframe,
-      parameters: values.parameters,
-      idempotency_key: values.idempotency_key,
-      price_adjustment_mode: values.price_adjustment_mode,
-      start_at: new Date(values.start_at).toISOString(),
-      end_at: new Date(values.end_at).toISOString(),
-    });
-  };
+  }
 
   return (
     <section>
-      <PageHeader
-        title="策略目录"
-        description="选择受信任策略与历史数据，生成可审计的研究信号（Signal）。"
-      />
-      <Alert
-        showIcon
-        type="warning"
-        title="研究信号（Signal）是研究输出，不是订单"
-        description="不会创建订单、调用风控或券商接口（Broker），也不会修改资金和持仓。参考价格（reference_price）仅供研究；当前不是绩效回测，也没有实时策略调度。"
-      />
-      {unavailable ? (
-        <Alert
-          showIcon
-          type="info"
-          title="当前缺少可研究的历史行情"
-          description={unavailableReason}
-          style={{ marginTop: 16 }}
-        />
-      ) : null}
-      <Space
-        orientation="vertical"
-        size="middle"
-        style={{ display: "flex", marginTop: 16 }}
-      >
-        {catalog.data?.map((item) => (
+      <Typography.Title level={2}>策略模板</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        从一个容易理解的模板开始。模板只用于历史研究，不会发送真实交易。
+      </Typography.Paragraph>
+      <Space orientation="vertical" size="middle" style={{ display: "flex" }}>
+        {(catalog.data ?? []).map((item) => (
           <Card
             key={item.strategy_key}
             title={displayStrategy(item.strategy_key)}
             extra={
-              <Space wrap>
-                <Button
-                  icon={<ExperimentOutlined />}
-                  disabled={unavailable}
-                  onClick={() =>
-                    void navigate(
-                      `/strategy-experiments?strategy_key=${encodeURIComponent(item.strategy_key)}`,
-                    )
-                  }
-                >
-                  批量研究
-                </Button>
-                <Button
-                  icon={<ExperimentOutlined />}
-                  disabled={unavailable}
-                  onClick={() => openRun(item.strategy_key)}
-                >
-                  创建研究运行
-                </Button>
-              </Space>
+              <Button
+                type="primary"
+                disabled={unavailable}
+                onClick={() =>
+                  void navigate(
+                    `/research/backtest?template=${encodeURIComponent(item.strategy_key)}`,
+                  )
+                }
+              >
+                使用此策略
+              </Button>
             }
           >
-            <Typography.Paragraph>{item.description}</Typography.Paragraph>
+            <Typography.Paragraph>
+              {descriptions[item.strategy_key] || item.description}
+            </Typography.Paragraph>
             <Space wrap>
-              <Tag>{displayStrategy(item.strategy_key)}</Tag>
-              <Tag color="blue">v{item.version}</Tag>
-              {item.supported_timeframes.map((value) => (
-                <Tag key={value}>{displayEnum(value)}</Tag>
+              <Tag color="blue">{category[item.strategy_key] ?? "研究策略"}</Tag>
+              {item.supported_timeframes.map((timeframe) => (
+                <Tag key={timeframe}>{displayEnum(timeframe)}</Tag>
               ))}
             </Space>
-            <Typography.Title level={5}>参数定义</Typography.Title>
-            {item.parameters.map((parameter) => (
-              <Typography.Paragraph key={parameter.name}>
-                <strong>{displayParameter(parameter.name)}</strong> ·{" "}
-                {displayEnum(parameter.type)} · {parameter.description}
-              </Typography.Paragraph>
-            ))}
+            <Collapse
+              ghost
+              style={{ marginTop: 12 }}
+              items={[
+                {
+                  key: "technical",
+                  label: "查看技术详情",
+                  children: (
+                    <Space orientation="vertical" size={4}>
+                      <Typography.Text type="secondary">
+                        英文策略键：{item.strategy_key}
+                      </Typography.Text>
+                      <Typography.Text type="secondary">
+                        版本：{item.version}
+                      </Typography.Text>
+                      {item.parameters.map((parameter) => (
+                        <Typography.Text
+                          type="secondary"
+                          key={parameter.name}
+                        >
+                          {displayParameter(parameter.name)}：默认值{" "}
+                          {String(parameter.default ?? "必填")}
+                        </Typography.Text>
+                      ))}
+                    </Space>
+                  ),
+                },
+              ]}
+            />
           </Card>
         ))}
+        {!catalog.isLoading && !catalog.data?.length ? (
+          <Empty description="暂无可用策略模板" />
+        ) : null}
       </Space>
-      {selected ? (
-        <Card
-          title={`创建${displayStrategy(selected.strategy_key)}历史研究运行`}
-          style={{ marginTop: 16 }}
-        >
-          <Form form={form} layout="vertical">
-            <Form.Item name="strategy_key" label="策略">
-              <Input disabled />
-            </Form.Item>
-            <Form.Item
-              name="instrument_ids"
-              label="标的"
-              rules={[{ required: true }]}
-            >
-              <Select
-                mode="multiple"
-                showSearch
-                filterOption={false}
-                onSearch={setInstrumentSearch}
-                options={instruments.data?.items.map((item) => ({
-                  value: item.id,
-                  label: formatInstrument(item),
-                }))}
-              />
-            </Form.Item>
-            <Form.Item
-              name="timeframe"
-              label="周期"
-              rules={[{ required: true }]}
-            >
-              <Select
-                options={selected.supported_timeframes.map((value) => ({
-                  value,
-                }))}
-              />
-            </Form.Item>
-            <Form.Item
-              name="price_adjustment_mode"
-              label="策略价格模式"
-              tooltip="前复权（QFQ）只用于指标和研究信号参考价；不会作为成交或账本价格。"
-              rules={[{ required: true }]}
-            >
-              <Select
-                options={[
-                  { value: "RAW", label: "不复权（RAW，兼容模式）" },
-                  {
-                    value: "QFQ",
-                    label: qfqReady
-                      ? "前复权（QFQ）"
-                      : "前复权（QFQ，数据未就绪）",
-                    disabled: !qfqReady,
-                  },
-                ]}
-              />
-            </Form.Item>
-            <Space wrap>
-              <Form.Item
-                name="start_at"
-                label="开始时间"
-                rules={[{ required: true }]}
-              >
-                <Input type="datetime-local" />
-              </Form.Item>
-              <Form.Item
-                name="end_at"
-                label="结束时间"
-                rules={[{ required: true }]}
-              >
-                <Input type="datetime-local" />
-              </Form.Item>
-            </Space>
-            {selected.parameters.map((definition) => (
-              <Form.Item
-                key={definition.name}
-                name={["parameters", definition.name]}
-                label={displayParameter(definition.name)}
-                tooltip={definition.description}
-                valuePropName={
-                  definition.type === "boolean" ? "checked" : "value"
-                }
-                rules={[{ required: definition.required }]}
-              >
-                <ParameterInput definition={definition} />
-              </Form.Item>
-            ))}
-            <Button
-              type="primary"
-              loading={mutation.isPending}
-              disabled={unavailable || mutation.isPending}
-              onClick={() => void submit()}
-            >
-              开始研究
-            </Button>
-          </Form>
-        </Card>
-      ) : null}
     </section>
   );
 }

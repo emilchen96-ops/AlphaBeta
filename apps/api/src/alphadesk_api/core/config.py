@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     app_name: str = "alphadesk-api"
     app_version: str = "0.1.0"
     environment: Literal["development", "test", "staging", "production"] = "development"
+    product_mode: Literal["RESEARCH_ONLY", "FULL_SIMULATION"] = "RESEARCH_ONLY"
     debug: bool = False
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = Field(

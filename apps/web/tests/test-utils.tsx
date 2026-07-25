@@ -9,6 +9,7 @@ export const healthyStatus = {
   postgresql: "online",
   redis: "online",
   environment: "development",
+  product_mode: "RESEARCH_ONLY",
   version: "0.1.0",
   server_time: "2026-07-15T08:00:00+00:00",
   correlation_id: "test-correlation-id",

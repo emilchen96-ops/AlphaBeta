@@ -1,11 +1,13 @@
 export type ServiceState = "online" | "offline";
 export type WebSocketState = "connected" | "connecting" | "disconnected";
+export type ProductMode = "RESEARCH_ONLY" | "FULL_SIMULATION";
 
 export interface SystemStatus {
   api: "online";
   postgresql: ServiceState;
   redis: ServiceState;
   environment: string;
+  product_mode: ProductMode;
   version: string;
   server_time: string;
   correlation_id: string;

@@ -99,7 +99,15 @@ class RiskSnapshotService:
             raise ApplicationError("RISK_INSTRUMENT_NOT_FOUND", "instrument was not found")
         balances = await uow.cash_balances.list_for_account(account.id)
         cash = next((item for item in balances if item.currency == account.base_currency), None)
-        positions = await uow.positions.list_for_account(account.id)
+        # M04 keeps a zero-quantity position projection after a position is
+        # closed so the accounting history remains auditable.  It is not an
+        # open risk exposure and may intentionally have no current valuation.
+        # Including it here would make every later order require confirmation.
+        positions = [
+            item
+            for item in await uow.positions.list_for_account(account.id)
+            if item.total_quantity > Decimal("0")
+        ]
         latest = await uow.account_snapshots.latest(account.id)
         account_payload: dict[str, object] = {
             "account_id": str(account.id),

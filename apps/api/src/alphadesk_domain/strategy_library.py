@@ -14,6 +14,7 @@ from alphadesk_domain.indicators import (
     RollingAverageVolume,
     RollingHighest,
     RollingLowest,
+    SimpleMovingAverage,
 )
 from alphadesk_domain.strategy import (
     SignalDraft,
@@ -204,6 +205,134 @@ class VolumeBreakoutStrategy:
             f"volume breakout: prior_high={prior_high}, prior_low={prior_low}, "
             f"prior_average_volume={prior_volume}, volume_multiplier={self._volume_multiplier}, "
             f"close={bar.close}, volume={bar.volume}"
+        )
+        return [_signal(self.metadata, context, bar, side, self._quantity, reason)]
+
+    def finalize(self, context: StrategyContext) -> None:
+        del context
+
+
+PRICE_VOLUME_BREAKOUT_SMA_EXIT_METADATA = StrategyMetadata(
+    strategy_key="price_volume_breakout_sma_exit",
+    display_name="Price-Volume Breakout with SMA Exit",
+    description=(
+        "Enters on a prior-window price breakout confirmed by relative volume "
+        "and exits when the close falls below its simple moving average."
+    ),
+    version="1.0.0",
+    supported_timeframes=(MarketTimeframe.DAY_1,),
+)
+PRICE_VOLUME_BREAKOUT_SMA_EXIT_PARAMETERS = (
+    StrategyParameterDefinition(
+        name="breakout_window",
+        parameter_type=StrategyParameterType.INTEGER,
+        required=False,
+        default=10,
+        min_value=2,
+        description="Prior high lookback.",
+    ),
+    StrategyParameterDefinition(
+        name="volume_window",
+        parameter_type=StrategyParameterType.INTEGER,
+        required=False,
+        default=10,
+        min_value=2,
+        description="Prior average-volume lookback.",
+    ),
+    StrategyParameterDefinition(
+        name="volume_multiplier",
+        parameter_type=StrategyParameterType.DECIMAL,
+        required=False,
+        default=Decimal("1.2"),
+        min_value=Decimal("0.00000001"),
+        description="Minimum multiple of prior average volume.",
+    ),
+    StrategyParameterDefinition(
+        name="exit_sma_window",
+        parameter_type=StrategyParameterType.INTEGER,
+        required=False,
+        default=5,
+        min_value=2,
+        description="Simple moving-average exit window.",
+    ),
+    StrategyParameterDefinition(
+        name="quantity",
+        parameter_type=StrategyParameterType.DECIMAL,
+        required=False,
+        default=Decimal("100"),
+        min_value=Decimal("0.00000001"),
+        description="Reference signal quantity.",
+    ),
+)
+
+
+@dataclass(slots=True)
+class _PriceVolumeSmaExitState:
+    highs: RollingHighest
+    volumes: RollingAverageVolume
+    exit_sma: SimpleMovingAverage
+    last_timestamp: datetime | None = None
+    is_long: bool = False
+
+
+class PriceVolumeBreakoutSmaExitStrategy:
+    """Daily price-volume breakout with an inclusive-current-bar SMA exit."""
+
+    metadata = PRICE_VOLUME_BREAKOUT_SMA_EXIT_METADATA
+
+    def __init__(self, parameters: Mapping[str, StrategyParameterValue]) -> None:
+        values = validate_strategy_parameters(PRICE_VOLUME_BREAKOUT_SMA_EXIT_PARAMETERS, parameters)
+        self._breakout_window = _integer(values, "breakout_window")
+        self._volume_window = _integer(values, "volume_window")
+        self._volume_multiplier = _decimal(values, "volume_multiplier")
+        self._exit_sma_window = _integer(values, "exit_sma_window")
+        self._quantity = _decimal(values, "quantity")
+
+    def initialize(self, context: StrategyContext) -> None:
+        context.set_state(self.metadata.strategy_key, {})
+
+    def on_bar(self, context: StrategyContext, bar: StrategyBar) -> list[SignalDraft]:
+        states = context.get_state(self.metadata.strategy_key)
+        if not isinstance(states, dict):
+            raise StrategyError("STRATEGY_INVALID_CONTEXT", "strategy must be initialized first")
+        state = states.setdefault(
+            str(bar.instrument_id),
+            _PriceVolumeSmaExitState(
+                RollingHighest(self._breakout_window),
+                RollingAverageVolume(self._volume_window),
+                SimpleMovingAverage(self._exit_sma_window),
+            ),
+        )
+        if not isinstance(state, _PriceVolumeSmaExitState):
+            raise StrategyError("STRATEGY_INVALID_CONTEXT", "strategy state is invalid")
+        _check_bar(self.metadata, state.last_timestamp, bar)
+
+        prior_high = state.highs.value
+        prior_volume = state.volumes.value
+        exit_sma = state.exit_sma.update(bar.close)
+        side: OrderSide | None = None
+        if (
+            not state.is_long
+            and prior_high is not None
+            and prior_volume is not None
+            and bar.close > prior_high
+            and bar.volume >= prior_volume * self._volume_multiplier
+        ):
+            side = OrderSide.BUY
+            state.is_long = True
+        elif state.is_long and exit_sma is not None and bar.close < exit_sma:
+            side = OrderSide.SELL
+            state.is_long = False
+
+        state.highs.update(bar.high)
+        state.volumes.update(bar.volume)
+        state.last_timestamp = bar.timestamp
+        if side is None:
+            return []
+        reason = (
+            f"price-volume breakout with SMA exit: prior_high={prior_high}, "
+            f"prior_average_volume={prior_volume}, volume_multiplier={self._volume_multiplier}, "
+            f"exit_sma={exit_sma}, close={bar.close}, volume={bar.volume}"
         )
         return [_signal(self.metadata, context, bar, side, self._quantity, reason)]
 
@@ -460,5 +589,10 @@ def register_strategy_library(registry: StrategyRegistry) -> None:
     """Register S02-A built-ins explicitly and without global instances."""
 
     registry.register(VOLUME_BREAKOUT_METADATA, VOLUME_BREAKOUT_PARAMETERS, VolumeBreakoutStrategy)
+    registry.register(
+        PRICE_VOLUME_BREAKOUT_SMA_EXIT_METADATA,
+        PRICE_VOLUME_BREAKOUT_SMA_EXIT_PARAMETERS,
+        PriceVolumeBreakoutSmaExitStrategy,
+    )
     registry.register(TREND_PULLBACK_METADATA, TREND_PULLBACK_PARAMETERS, TrendPullbackStrategy)
     registry.register(ATR_CHANNEL_METADATA, ATR_CHANNEL_PARAMETERS, AtrChannelStrategy)

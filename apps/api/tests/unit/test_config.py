@@ -29,6 +29,11 @@ def test_local_cors_accepts_both_loopback_hostnames() -> None:
     ]
 
 
+def test_product_mode_defaults_to_research_and_accepts_full_simulation() -> None:
+    assert Settings().product_mode == "RESEARCH_ONLY"
+    assert Settings(product_mode="FULL_SIMULATION").product_mode == "FULL_SIMULATION"
+
+
 def test_ai_provider_defaults_fake_and_incomplete_real_configuration() -> None:
     assert Settings().ai_research_provider == "disabled"
     assert Settings(ai_research_provider="fake").ai_research_provider == "fake"

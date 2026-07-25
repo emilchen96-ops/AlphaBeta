@@ -18,6 +18,18 @@ export class ApiError extends Error {
   }
 }
 
+function responseErrorMessage(
+  envelope: ApiErrorEnvelope | null,
+  status: number,
+): string {
+  if (envelope?.error.code === "INTERNAL_SERVER_ERROR") {
+    return "AlphaDesk 服务内部错误，请稍后重试";
+  }
+  if (envelope?.error.message) return envelope.error.message;
+  if (status >= 500) return "AlphaDesk 服务暂时不可用，请稍后重试";
+  return "请求失败";
+}
+
 export async function apiRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -49,7 +61,7 @@ export async function apiRequest<T>(
         }
       }
       throw new ApiError(
-        envelope?.error.message ?? "服务暂时不可用",
+        responseErrorMessage(envelope, response.status),
         response.status,
         envelope?.error.code ?? "HTTP_ERROR",
         envelope?.error.correlation_id ?? correlationId,

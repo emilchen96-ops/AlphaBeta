@@ -23,7 +23,6 @@ import {
   Space,
   Spin,
   Statistic,
-  Switch,
   Table,
   Tabs,
   Tag,
@@ -181,7 +180,6 @@ function parameterInput(definition: StrategyParameterDefinition) {
 
 interface BacktestFormValues {
   strategy_key: string;
-  data_source_code: "BAOSTOCK" | "BT01_DEMO";
   instrument_ids: string[];
   start_at: string;
   end_at: string;
@@ -207,7 +205,6 @@ export function BacktestPage() {
   const [form] = Form.useForm<BacktestFormValues>();
   const [page, setPage] = useState(1);
   const [instrumentSearch, setInstrumentSearch] = useState("");
-  const [showTestData, setShowTestData] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const selectedKey = Form.useWatch("strategy_key", form);
@@ -247,7 +244,7 @@ export function BacktestPage() {
     );
     const body: CreateBacktestRequest = {
       strategy_key: values.strategy_key,
-      data_source_code: values.data_source_code,
+      data_source_code: "MINIQMT",
       parameters,
       instrument_ids: values.instrument_ids,
       timeframe: "DAY_1",
@@ -305,11 +302,11 @@ export function BacktestPage() {
   return (
     <section className="backtest-page">
       <PageHeader
-        title="A 股日线回测"
-        description="使用本地历史日线，依次完成策略、风控、订单、模拟成交和账本记账。"
+        title="快速回测"
+        description="选择策略、股票和时间范围，查看收益、回撤与完整模拟交易记录。"
       />
       <BoundaryNotice />
-      <Card title="创建回测" className="backtest-section">
+      <Card title="设置回测条件" className="backtest-section">
         <Form
           form={form}
           layout="vertical"
@@ -317,7 +314,6 @@ export function BacktestPage() {
             initial_cash: "100000",
             order_type: "LIMIT",
             time_in_force: "DAY",
-            data_source_code: "BAOSTOCK",
             commission_rate: "0.03",
             minimum_commission: "5",
             stamp_duty_rate: "0.05",
@@ -329,7 +325,7 @@ export function BacktestPage() {
           }}
         >
           <Row gutter={16}>
-            <Col xs={24} md={6}>
+            <Col xs={24} md={8}>
               <Form.Item
                 name="strategy_key"
                 label="策略"
@@ -344,7 +340,7 @@ export function BacktestPage() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} md={6}>
+            <Col xs={24} md={8}>
               <Form.Item
                 name="strategy_price_adjustment_mode"
                 label="策略价格复权模式"
@@ -359,31 +355,13 @@ export function BacktestPage() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} md={6}>
-              <Form.Item
-                name="data_source_code"
-                label="本地历史数据源"
-                tooltip="BaoStock 为 D01 权威历史日线；BT01 Demo 只用于本地确定性验收。"
-                rules={[{ required: true }]}
-              >
-                <Select
-                  options={[
-                    { value: "BAOSTOCK", label: "BaoStock（D01 本地日线）" },
-                    {
-                      value: "BT01_DEMO",
-                      label: "BT01 测试数据（本地 Fixture）",
-                    },
-                  ].filter(
-                    (option) => showTestData || option.value !== "BT01_DEMO",
-                  )}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={6}>
-              <Form.Item label="测试数据">
-                <Space>
-                  <Switch checked={showTestData} onChange={setShowTestData} />
-                  <Typography.Text>显示测试数据</Typography.Text>
+            <Col xs={24} md={8}>
+              <Form.Item label="历史行情来源">
+                <Space orientation="vertical" size={2}>
+                  <Tag color="green">MiniQMT（只读行情）</Tag>
+                  <Typography.Text type="secondary">
+                    使用已同步到本地数据库的正式历史日线
+                  </Typography.Text>
                 </Space>
               </Form.Item>
             </Col>
@@ -400,7 +378,7 @@ export function BacktestPage() {
                   onSearch={setInstrumentSearch}
                   loading={instruments.isLoading}
                   options={instruments.data?.items
-                    .filter((item) => showTestData || !isTestData(item))
+                    .filter((item) => !isTestData(item))
                     .map((item) => ({
                       value: item.id,
                       label: formatInstrument(item),
@@ -530,7 +508,7 @@ export function BacktestPage() {
           <ErrorNotice error={mutation.error} />
         </Form>
       </Card>
-      <Card title="回测记录" className="backtest-section">
+      <Card title="我的回测记录" className="backtest-section">
         <ErrorNotice error={runs.error} />
         <Table
           rowKey="id"

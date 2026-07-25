@@ -40,6 +40,19 @@ class ManagedProbe(Protocol):
     async def close(self) -> None: ...
 
 
+def wrap_with_cors(app: FastAPI, settings: Settings) -> CORSMiddleware:
+    """Keep CORS headers on responses produced by Starlette's outer error middleware."""
+
+    return CORSMiddleware(
+        app=app,
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type", settings.correlation_id_header],
+        expose_headers=[settings.correlation_id_header],
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     *,

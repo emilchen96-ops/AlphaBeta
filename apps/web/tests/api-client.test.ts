@@ -52,3 +52,30 @@ test("统一客户端在超时后中止请求", async () => {
   await vi.advanceTimersByTimeAsync(5_000);
   await assertion;
 });
+
+test("统一客户端将服务端500与网络断开明确区分", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "INTERNAL_SERVER_ERROR",
+            message: "An unexpected error occurred",
+            details: null,
+            correlation_id: "server-error-id",
+            timestamp: "2026-07-25T00:00:00Z",
+          },
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      ),
+    ),
+  );
+
+  await expect(apiRequest("/broken")).rejects.toMatchObject({
+    message: "AlphaDesk 服务内部错误，请稍后重试",
+    code: "INTERNAL_SERVER_ERROR",
+    correlationId: "server-error-id",
+    status: 500,
+  } satisfies Partial<ApiError>);
+});

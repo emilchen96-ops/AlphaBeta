@@ -17,7 +17,9 @@ BT01 提供同步、确定性、可审计的本地日线回测。链路复用现
 - 权益曲线、回撤、费用、成交和闭合交易绩效。
 - 同步 API、CLI 和只读结果页面。
 
-不支持分钟线、Tick、实时行情、外部网络补数、Redis 任务队列、Windows Agent、MiniQMT 或真实券商账户。target_weight 信号不会被猜测换算为数量。
+不支持分钟线、Tick、实时成交驱动、外部网络补数、Redis 任务队列或真实券商账户。
+浏览器正式回测固定使用已由 MiniQMT 同步到 PostgreSQL 的历史日线；回测过程本身不会连接
+MiniQMT 实时接口，也不会读取或写入券商账户。target_weight 信号不会被猜测换算为数量。
 
 ## 运行与幂等
 
@@ -39,6 +41,9 @@ python -m alphadesk_api.cli.backtests run-demo
 ```
 
 `run-demo` 仅可在 development/test 环境使用；它会幂等建立带 `BT01_DEMO` 来源标识的确定性本地 Fixture，再从 PostgreSQL 读取运行，不联网。
+
+浏览器页面不提供测试数据源开关，统一提交 `data_source_code=MINIQMT`。`BT01_DEMO` 仅用于
+CLI、自动化测试和确定性开发验收。
 
 ## 风险提示
 

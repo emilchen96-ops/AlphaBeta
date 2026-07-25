@@ -25,6 +25,7 @@ class SystemStatusResponse(BaseModel):
     postgresql: Literal["online", "offline"]
     redis: Literal["online", "offline"]
     environment: str
+    product_mode: Literal["RESEARCH_ONLY", "FULL_SIMULATION"]
     version: str
     server_time: datetime
     correlation_id: str

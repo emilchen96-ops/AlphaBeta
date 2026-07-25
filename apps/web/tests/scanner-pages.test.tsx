@@ -115,7 +115,7 @@ let createPayload: Record<string, unknown> | undefined;
 function installFetch() {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    vi.fn((input: string | URL | Request, init?: RequestInit) => {
       const url =
         typeof input === "string"
           ? input
@@ -143,7 +143,10 @@ function installFetch() {
       else if (url.includes("/scan-runs?"))
         body = { items: [run], page: 1, page_size: 20, total: 1 };
       else if (url.endsWith("/scan-runs") && init?.method === "POST") {
-        createPayload = JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (typeof init.body !== "string") {
+          throw new Error("expected JSON request body");
+        }
+        createPayload = JSON.parse(init.body) as Record<string, unknown>;
         body = { ...run, status: "QUEUED", current_phase: "QUEUED" };
         status = 201;
       } else if (url.includes("/instruments?"))
@@ -178,20 +181,20 @@ afterEach(() => vi.unstubAllGlobals());
 test("全市场扫描窗口不再要求研究股票池并自动填入中文默认值", async () => {
   renderRoute("/scanners");
   expect(await screen.findByText(/成交量异常筛选/)).toBeInTheDocument();
-  expect(screen.queryByText(/扫描结果仅为规则筛选结果/)).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByRole("button", { name: /开始全市场扫描/ }),
-  );
+  expect(
+    screen.queryByText(/扫描结果仅为规则筛选结果/),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /开始全市场扫描/ }));
   const dialog = screen.getByRole("dialog");
   expect(within(dialog).getByText("全部正常上市A股")).toBeInTheDocument();
   expect(within(dialog).getByText("MiniQMT")).toBeInTheDocument();
   expect(within(dialog).queryByText(/研究股票池/)).not.toBeInTheDocument();
   expect(within(dialog).queryByText("DAY_1")).not.toBeInTheDocument();
-  expect(within(dialog).queryByText(/幂等键|instrument_id/)).not.toBeInTheDocument();
+  expect(
+    within(dialog).queryByText(/幂等键|instrument_id/),
+  ).not.toBeInTheDocument();
 
-  fireEvent.click(
-    within(dialog).getByText(/高级参数（已填入推荐默认值）/),
-  );
+  fireEvent.click(within(dialog).getByText(/高级参数（已填入推荐默认值）/));
   expect(
     await within(dialog).findByText(/平均成交量计算周期（volume_window）/),
   ).toBeInTheDocument();
