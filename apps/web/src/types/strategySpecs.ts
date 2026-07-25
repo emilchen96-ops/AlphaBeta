@@ -6,11 +6,7 @@ export interface StrategyOperand {
   kind: OperandKind;
   field: "open" | "high" | "low" | "close" | "volume" | null;
   indicator:
-    | "SMA"
-    | "ROLLING_HIGHEST"
-    | "ROLLING_LOWEST"
-    | "AVERAGE_VOLUME"
-    | null;
+    "SMA" | "ROLLING_HIGHEST" | "ROLLING_LOWEST" | "AVERAGE_VOLUME" | null;
   window: number | null;
   exclude_current: boolean;
   multiplier: string;
@@ -80,4 +76,21 @@ export interface UserStrategyPage {
   page: number;
   page_size: number;
   total: number;
+}
+
+export interface QuickBacktestRequest {
+  instrument_id: string;
+  start_at: string;
+  end_at: string;
+  initial_cash: string;
+  spec?: StrategySpec;
+  user_strategy_id?: string;
+  price_adjustment_mode: "RAW" | "QFQ";
+  commission_rate: string;
+  minimum_commission: string;
+  stamp_duty_rate: string;
+  transfer_fee_rate: string;
+  slippage_basis_points: string;
+  maximum_volume_participation: string | null;
+  idempotency_key: string;
 }

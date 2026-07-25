@@ -126,9 +126,9 @@ beforeEach(() => {
 
 test("历史回放列表明确安全边界并展示回放入口", async () => {
   renderRoute("/replays");
-  expect(await screen.findByText("日线历史回放")).toBeInTheDocument();
+  expect(await screen.findByText("逐日查看")).toBeInTheDocument();
   expect(
-    screen.getByText("这是历史行情回放，不是实时市场"),
+    screen.getByText("逐日查看是回测的解释工具，不是另一套回测"),
   ).toBeInTheDocument();
   expect(await screen.findByText("sma_crossover")).toBeInTheDocument();
   expect(

@@ -154,16 +154,16 @@ export function ReplayRunsPage() {
   return (
     <section>
       <PageHeader
-        title="日线历史回放"
-        description="启动、暂停、单步或加速观察完整 Strategy → Risk → Order → Fill → 账本链路。"
+        title="逐日查看"
+        description="按历史交易日暂停、单步或加速查看策略条件、模拟成交和权益变化。"
       />
       <Alert
         showIcon
         type="warning"
-        title="这是历史行情回放，不是实时市场"
+        title="逐日查看是回测的解释工具，不是另一套回测"
         description={boundaryDescription}
       />
-      <Card title="创建独立回放" className="details-card">
+      <Card title="设置逐日查看" className="details-card">
         <Form
           form={form}
           layout="vertical"
@@ -304,11 +304,15 @@ export function ReplayRunsPage() {
             </div>
           </Card>
           <Button type="primary" htmlType="submit" loading={create.isPending}>
-            创建历史回放
+            开始逐日查看
           </Button>
         </Form>
       </Card>
-      <Card title="回放运行" className="details-card" loading={runs.isLoading}>
+      <Card
+        title="逐日查看记录"
+        className="details-card"
+        loading={runs.isLoading}
+      >
         <Table
           rowKey="id"
           dataSource={runs.data?.items ?? []}

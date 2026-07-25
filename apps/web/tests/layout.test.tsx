@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { mockStatusSuccess, renderRoute } from "./test-utils";
 
 beforeEach(() => {
-  mockStatusSuccess();
+  mockStatusSuccess("RESEARCH_ONLY");
   vi.stubGlobal("WebSocket", undefined);
 });
 

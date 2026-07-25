@@ -25,6 +25,9 @@ export interface BacktestRun {
   replayed?: boolean;
   metrics?: BacktestMetrics | null;
   configuration?: Record<string, unknown> | null;
+  strategy_spec?: import("./strategySpecs").StrategySpec;
+  strategy_preview?: string[];
+  simulation_notice?: string;
 }
 
 export interface BacktestPage {

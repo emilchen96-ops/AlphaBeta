@@ -1,5 +1,11 @@
 # PostgreSQL 持久化模型
 
+## UX02-B 策略规则表
+
+迁移 `0023_ux02b_strategy_specs.py` 新增 `user_strategy_definitions`、
+`user_strategy_versions` 和 `research_backtest_specs`。定义保存当前状态，版本保存不可变
+StrategySpec，回测快照关联实际 BacktestRun，保证后续编辑不改变历史研究含义。
+
 ## D02 市场参考事实
 
 - `trading_calendar_sessions`：SHSE/SZSE 日期、开放状态、前后开放日和来源，唯一键 exchange + session_date。

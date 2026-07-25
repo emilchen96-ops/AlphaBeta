@@ -11,7 +11,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("回测入口展示已完成的本地日线运行能力且没有实盘按钮", async () => {
   renderRoute("/backtest");
-  expect(await screen.findByText("A 股日线回测")).toBeInTheDocument();
+  expect(await screen.findByText("快速回测")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /开始回测/ })).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /实盘|跟单|MiniQMT/ }),
@@ -28,7 +28,7 @@ test("审计与设置页面不会暴露无响应的编辑操作", async () => {
 
   renderRoute("/settings");
   expect(
-    await screen.findByRole("heading", { name: "设置（只读）" }),
+    await screen.findByRole("heading", { name: "设置" }),
   ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /保存|应用/ }),

@@ -90,6 +90,7 @@ from alphadesk_domain.strategy import (
     StrategyBar,
     StrategyContext,
     StrategyEnvironment,
+    StrategyError,
     StrategyParameterValue,
     StrategyRegistry,
 )
@@ -151,7 +152,7 @@ class _CapturedRiskLimitsProvider:
 
 
 def _safe_failure(exc: Exception) -> tuple[str, str]:
-    if isinstance(exc, BacktestError | ApplicationError):
+    if isinstance(exc, BacktestError | ApplicationError | StrategyError):
         return exc.code, str(exc)[:512]
     return "BACKTEST_EXECUTION_FAILED", "backtest execution failed"
 

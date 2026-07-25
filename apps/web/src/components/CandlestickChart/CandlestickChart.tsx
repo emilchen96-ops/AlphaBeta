@@ -23,10 +23,16 @@ export function CandlestickChart({
   bars,
   loading,
   variant = "candlestick",
+  markers = [],
 }: {
   bars: MarketBar[];
   loading: boolean;
   variant?: "candlestick" | "line";
+  markers?: Array<{
+    time: string;
+    side: "BUY" | "SELL";
+    label?: string;
+  }>;
 }) {
   if (loading) return <Skeleton active paragraph={{ rows: 8 }} />;
   if (!bars.length)
@@ -64,6 +70,12 @@ export function CandlestickChart({
       return `${x},${y(Number(bar.close))}`;
     })
     .join(" ");
+  const markerByDay = new Map(
+    markers.map((marker) => [
+      new Date(marker.time).toISOString().slice(0, 10),
+      marker,
+    ]),
+  );
 
   return (
     <div className="candle-chart">
@@ -111,6 +123,9 @@ export function CandlestickChart({
             const close = Number(bar.close);
             const rising = close >= open;
             const color = rising ? "#d4380d" : "#08979c";
+            const marker = markerByDay.get(
+              new Date(bar.bar_time).toISOString().slice(0, 10),
+            );
             return (
               <g key={bar.bar_time}>
                 <line
@@ -128,6 +143,41 @@ export function CandlestickChart({
                   fill={rising ? "#fff" : color}
                   stroke={color}
                 />
+                {marker ? (
+                  <g>
+                    <circle
+                      cx={x}
+                      cy={
+                        marker.side === "BUY"
+                          ? Math.min(y(Number(bar.low)) + 18, HEIGHT - BOTTOM)
+                          : Math.max(y(Number(bar.high)) - 18, TOP)
+                      }
+                      r="8"
+                      fill={marker.side === "BUY" ? "#1677ff" : "#722ed1"}
+                    >
+                      <title>
+                        {marker.label ??
+                          (marker.side === "BUY" ? "买入信号" : "卖出信号")}
+                      </title>
+                    </circle>
+                    <text
+                      x={x}
+                      y={
+                        marker.side === "BUY"
+                          ? Math.min(
+                              y(Number(bar.low)) + 22,
+                              HEIGHT - BOTTOM + 4,
+                            )
+                          : Math.max(y(Number(bar.high)) - 14, TOP + 4)
+                      }
+                      textAnchor="middle"
+                      fill="#fff"
+                      fontSize="10"
+                    >
+                      {marker.side === "BUY" ? "买" : "卖"}
+                    </text>
+                  </g>
+                ) : null}
               </g>
             );
           })
@@ -157,6 +207,7 @@ export function CandlestickChart({
       <Typography.Text type="secondary" className="candle-chart-caption">
         横轴为北京时间，纵轴为价格；
         {variant === "line" ? "蓝线为分钟收盘价。" : "红色上涨，青色下跌。"}
+        {markers.length ? " 蓝色为买入信号，紫色为卖出信号。" : null}
         仅展示最近 {numeric.length} 根。
       </Typography.Text>
     </div>

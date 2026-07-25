@@ -9,7 +9,7 @@ export const healthyStatus = {
   postgresql: "online",
   redis: "online",
   environment: "development",
-  product_mode: "RESEARCH_ONLY",
+  product_mode: "FULL_SIMULATION",
   version: "0.1.0",
   server_time: "2026-07-15T08:00:00+00:00",
   correlation_id: "test-correlation-id",
@@ -50,7 +50,9 @@ export const healthyCapabilities = {
   ],
 };
 
-export function mockStatusSuccess() {
+export function mockStatusSuccess(
+  productMode: "RESEARCH_ONLY" | "FULL_SIMULATION" = "FULL_SIMULATION",
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn((input: string | URL | Request) => {
@@ -60,7 +62,10 @@ export function mockStatusSuccess() {
           : input instanceof URL
             ? input.href
             : input.url;
-      let body: unknown = healthyStatus;
+      let body: unknown = {
+        ...healthyStatus,
+        product_mode: productMode,
+      };
       if (url.endsWith("/system/capabilities")) body = healthyCapabilities;
       else if (url.includes("/api/v1/watchlists")) body = [];
       else if (url.includes("/api/v1/market-data/sources")) body = [];
@@ -87,8 +92,7 @@ export function mockStatusSuccess() {
       else if (url.includes("/api/v1/strategy-templates")) body = [];
       else if (url.includes("/api/v1/user-strategies")) {
         body = { items: [], page: 1, page_size: 100, total: 0 };
-      }
-      else if (url.includes("/api/v1/backtests?")) {
+      } else if (url.includes("/api/v1/backtests?")) {
         body = { items: [], page: 1, page_size: 20, total: 0 };
       } else if (url.includes("/api/v1/instruments?")) {
         body = { items: [], page: 1, page_size: 50, total: 0 };

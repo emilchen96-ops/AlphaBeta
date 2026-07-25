@@ -373,10 +373,7 @@ export function ScannersPage() {
             <Row gutter={16}>
               <Col xs={24} md={12}>
                 <Form.Item
-                  name={[
-                    "universe_filters",
-                    "minimum_listing_trading_days",
-                  ]}
+                  name={["universe_filters", "minimum_listing_trading_days"]}
                   label="排除上市不足指定交易日的股票"
                   tooltip="留空表示不按上市时间排除"
                 >

@@ -312,7 +312,7 @@ test.each(["CREATED", "RUNNING", "FAILED"] as const)(
     expect(await screen.findByText(/回测详情/)).toBeInTheDocument();
     expect(screen.getByText("绩效指标尚未生成")).toBeInTheDocument();
     if (status === "FAILED") {
-      expect(screen.getByText("BACKTEST_STRATEGY_FAILED")).toBeInTheDocument();
+      expect(screen.getByText("本次回测未能完成")).toBeInTheDocument();
       expect(screen.getByText("strategy failed safely")).toBeInTheDocument();
     }
     expect(
@@ -326,11 +326,11 @@ test("事实标签分别展示研究信号、风控、订单、成交与时间�
   renderRoute(`/backtest/${runId}`);
   expect(await screen.findByText("SMA crossed above")).toBeInTheDocument();
 
-  await user.click(screen.getByRole("tab", { name: /风控决策/ }));
+  await user.click(screen.getByRole("tab", { name: /规则检查/ }));
   expect(screen.getByText("风控通过")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /订单/ }));
+  await user.click(screen.getByRole("tab", { name: /模拟交易指令/ }));
   expect(screen.getByText("全部成交")).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /成交与费用/ }));
+  await user.click(screen.getByRole("tab", { name: /模拟成交与费用/ }));
   expect(screen.getByText("¥1,007.01")).toBeInTheDocument();
   await user.click(screen.getByRole("tab", { name: /事件时间线/ }));
   expect(screen.getByText("Execute pending orders")).toBeInTheDocument();

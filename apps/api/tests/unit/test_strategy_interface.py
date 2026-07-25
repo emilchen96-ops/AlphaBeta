@@ -257,6 +257,7 @@ def test_registry_metadata_order_is_stable_and_unregister_is_controlled() -> Non
     assert [item.strategy_key for item in registry.list_metadata()] == [
         "alpha_demo",
         "atr_channel",
+        "price_volume_breakout_sma_exit",
         "sma_crossover",
         "trend_pullback",
         "volume_breakout",
@@ -264,6 +265,7 @@ def test_registry_metadata_order_is_stable_and_unregister_is_controlled() -> Non
     registry.unregister("alpha_demo")
     assert [item.strategy_key for item in registry.list_metadata()] == [
         "atr_channel",
+        "price_volume_breakout_sma_exit",
         "sma_crossover",
         "trend_pullback",
         "volume_breakout",

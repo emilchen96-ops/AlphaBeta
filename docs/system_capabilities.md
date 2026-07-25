@@ -1,5 +1,13 @@
 # 系统能力状态
 
+## UX02-B 研究能力
+
+- `RESEARCH_ONLY` 为默认产品模式；
+- 支持确定性中文策略解析、白名单 StrategySpec、可视化规则确认和用户策略版本；
+- 快速回测复用 BT01，MiniQMT 仅提供只读行情；
+- AI 策略解析当前受控关闭，本地核心示例不受影响；
+- Broker、真实账户、真实下单和撤单未开放。
+
 D02 在 `/api/v1/system/capabilities` 增加 `trading_calendar`、`adjustment_factors`、`suspension_data`、`instrument_lifecycle` 与 `adjusted_strategy_data`。实现状态、Provider 配置状态、数据状态和 availability 分开报告；Provider 未配置不得显示 READY。
 
 `GET /api/v1/system/capabilities` 是首页功能卡片的权威来源。每个模块分别报告：

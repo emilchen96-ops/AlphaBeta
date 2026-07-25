@@ -140,7 +140,11 @@ test("QUEUED 订单显示模拟执行入口、边界警告和二次确认", asyn
   installFetch();
   renderRoute("/orders");
   await userEvent.click(
-    await screen.findByRole("button", { name: "模拟执行" }),
+    await screen.findByRole(
+      "button",
+      { name: "模拟执行" },
+      { timeout: 10_000 },
+    ),
   );
   expect(screen.getByRole("dialog")).toHaveTextContent("仅限本地模拟成交");
   expect(

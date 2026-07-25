@@ -1,16 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Card, Collapse, Empty, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Collapse,
+  Empty,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { useNavigate } from "react-router-dom";
 
 import { getStrategyCatalog } from "../api/strategies";
 import { systemCapabilitiesQueryOptions } from "../api/system";
-import { displayEnum, displayParameter, displayStrategy } from "../utils/display";
+import {
+  displayEnum,
+  displayParameter,
+  displayStrategy,
+} from "../utils/display";
 
 const descriptions: Record<string, string> = {
   price_volume_breakout_sma_exit:
     "价格突破近期高点并出现成交量放大时买入，跌破短期均线时退出。",
-  volume_breakout:
-    "价格突破近期高点并由成交量确认，跌破近期低点时退出。",
+  volume_breakout: "价格突破近期高点并由成交量确认，跌破近期低点时退出。",
   sma_crossover: "短期均线上穿长期均线时进入，下穿时退出。",
   trend_pullback: "在趋势保持向上时等待价格回踩并重新转强。",
   atr_channel: "使用均线和平均真实波幅构造动态趋势通道。",
@@ -76,7 +88,9 @@ export function StrategiesPage() {
               {descriptions[item.strategy_key] || item.description}
             </Typography.Paragraph>
             <Space wrap>
-              <Tag color="blue">{category[item.strategy_key] ?? "研究策略"}</Tag>
+              <Tag color="blue">
+                {category[item.strategy_key] ?? "研究策略"}
+              </Tag>
               {item.supported_timeframes.map((timeframe) => (
                 <Tag key={timeframe}>{displayEnum(timeframe)}</Tag>
               ))}
@@ -94,13 +108,10 @@ export function StrategiesPage() {
                         英文策略键：{item.strategy_key}
                       </Typography.Text>
                       <Typography.Text type="secondary">
-                        版本：{item.version}
+                        版本：v{item.version}
                       </Typography.Text>
                       {item.parameters.map((parameter) => (
-                        <Typography.Text
-                          type="secondary"
-                          key={parameter.name}
-                        >
+                        <Typography.Text type="secondary" key={parameter.name}>
                           {displayParameter(parameter.name)}：默认值{" "}
                           {String(parameter.default ?? "必填")}
                         </Typography.Text>

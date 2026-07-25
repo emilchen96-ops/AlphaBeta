@@ -99,6 +99,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | 变更内容                        | 必读文档                                                                                  |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | 策略、信号、回测                | `domain_model.md`、`backtest_rules.md`、`risk_model.md`                                   |
+| UX02-B 研究工作台               | `research_product_mode.md`、`strategy_spec.md`、`natural_language_strategy.md`、`visual_strategy_editor.md`、`quick_backtest_workflow.md` |
 | BT01 A 股日线回测               | `daily_backtest.md`、`backtest_time_model.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0017 |
 | RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |

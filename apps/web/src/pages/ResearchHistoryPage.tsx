@@ -6,7 +6,11 @@ import { getAIAnalyses } from "../api/aiResearch";
 import { listBacktests } from "../api/backtests";
 import { getScanRuns } from "../api/scanners";
 import { PageHeader } from "../components/PageHeader/PageHeader";
-import { displayScanner, displayStrategy, formatDateTime } from "../utils/display";
+import {
+  displayScanner,
+  displayStrategy,
+  formatDateTime,
+} from "../utils/display";
 
 const statusText: Record<string, string> = {
   CREATED: "已创建",
@@ -122,7 +126,9 @@ export function ResearchHistoryPage() {
                   {
                     title: "完成时间",
                     render: (_, item) =>
-                      item.completed_at ? formatDateTime(item.completed_at) : "—",
+                      item.completed_at
+                        ? formatDateTime(item.completed_at)
+                        : "—",
                   },
                 ]}
               />

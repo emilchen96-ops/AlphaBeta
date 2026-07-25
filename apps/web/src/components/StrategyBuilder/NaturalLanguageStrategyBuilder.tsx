@@ -3,25 +3,18 @@ import {
   EditOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
-import {
-  Alert,
-  Button,
-  Card,
-  Input,
-  List,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Alert, Button, Card, Input, List, Space, Tag, Typography } from "antd";
 import { useState } from "react";
 
 import { ApiError } from "../../api/client";
-import { parseStrategyText, validateStrategySpec } from "../../api/strategySpecs";
+import {
+  parseStrategyText,
+  validateStrategySpec,
+} from "../../api/strategySpecs";
 import type { StrategySpec } from "../../types/strategySpecs";
 import { StrategyRuleEditor } from "./StrategyRuleEditor";
 
-const EXAMPLE =
-  "10日价格突破 + 1.2倍成交量，5日均线退出，单只股票、两年日线";
+const EXAMPLE = "10日价格突破 + 1.2倍成交量，5日均线退出，单只股票、两年日线";
 
 const errorMessage = (reason: unknown) =>
   reason instanceof ApiError ? reason.message : "操作失败，请稍后重试";
@@ -113,9 +106,7 @@ export function NaturalLanguageStrategyBuilder({
               type={spec === null ? "warning" : "error"}
               title={error}
               description={
-                missing.length > 0
-                  ? `还缺少：${missing.join("、")}`
-                  : undefined
+                missing.length > 0 ? `还缺少：${missing.join("、")}` : undefined
               }
             />
           )}

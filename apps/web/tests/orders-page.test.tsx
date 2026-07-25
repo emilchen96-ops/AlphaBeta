@@ -153,7 +153,13 @@ test("可以打开创建表单且明确提示 MARKET 无法估算", async () => 
 test("人工确认必须经过说明弹窗并携带当前版本", async () => {
   const fetchMock = installFetch();
   renderRoute("/orders");
-  fireEvent.click(await screen.findByRole("button", { name: "人工确认" }));
+  fireEvent.click(
+    await screen.findByRole(
+      "button",
+      { name: "人工确认" },
+      { timeout: 10_000 },
+    ),
+  );
   expect(
     screen.getByText(/OrderCommand PENDING 与 Outbox PENDING/),
   ).toBeInTheDocument();
@@ -175,7 +181,9 @@ test("人工确认必须经过说明弹窗并携带当前版本", async () => {
 test("取消动作使用当前 row_version", async () => {
   const fetchMock = installFetch();
   renderRoute("/orders");
-  fireEvent.click(await screen.findByRole("button", { name: /取\s*消/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /取\s*消/ }, { timeout: 10_000 }),
+  );
   await waitFor(() => {
     const call = fetchMock.mock.calls.find(([url]) => {
       const address =

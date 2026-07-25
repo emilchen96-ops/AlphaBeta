@@ -16,11 +16,12 @@ from alphadesk_api.api.v1 import (
     miniqmt,
     orders,
     replays,
+    research_backtests,
     risk,
     scanners,
     simulated_executions,
-    strategy_specs,
     strategies,
+    strategy_specs,
     system,
     watchlists,
 )
@@ -43,6 +44,7 @@ api_router.include_router(scanners.router)
 api_router.include_router(information.router)
 api_router.include_router(ai_research.router)
 api_router.include_router(backtests.router)
+api_router.include_router(research_backtests.router)
 api_router.include_router(replays.router)
 api_router.include_router(demo.router)
 

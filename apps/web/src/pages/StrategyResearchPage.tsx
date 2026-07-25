@@ -57,6 +57,8 @@ export function StrategyResearchPage() {
   }, []);
 
   useEffect(() => {
+    // The page owns this small CRUD list and refreshes it when the loader changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

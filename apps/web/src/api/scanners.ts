@@ -46,9 +46,7 @@ export const getScanResults = (
     if (value !== undefined && value !== "") query.set(key, String(value));
   });
   const suffix = query.size ? `?${query}` : "";
-  return apiRequest<ScanResultList>(
-    `/api/v1/scan-runs/${id}/results${suffix}`,
-  );
+  return apiRequest<ScanResultList>(`/api/v1/scan-runs/${id}/results${suffix}`);
 };
 
 export const getScanMembers = (id: string, status?: string) => {

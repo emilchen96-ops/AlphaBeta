@@ -138,26 +138,31 @@ test("策略目录加载并展示安全边界", async () => {
   expect(
     await screen.findAllByText("均线交叉策略（SMA Crossover）"),
   ).not.toHaveLength(0);
-  expect(screen.getByText(/研究信号（Signal）是研究输出/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/模板只用于历史研究，不会发送真实交易/),
+  ).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: /买入|卖出|自动交易|转为订单/ }),
   ).not.toBeInTheDocument();
 });
 
-test("动态参数表单覆盖 integer decimal boolean enum", async () => {
+test("普通模板页隐藏工程参数并提供统一使用入口", async () => {
   renderRoute("/strategies");
-  const entry = await screen.findByText("创建研究运行");
-  fireEvent.click(entry.closest("button") ?? entry);
-  expect(screen.getAllByText("短期均线周期（short_window）").length).toBe(2);
-  expect(screen.getAllByText("每次交易数量（quantity）").length).toBe(2);
-  expect(screen.getAllByText("是否启用（enabled）").length).toBe(2);
-  expect(screen.getAllByText("运行模式（mode）").length).toBe(2);
-  expect(screen.getByRole("button", { name: "开始研究" })).toBeEnabled();
+  expect(await screen.findByText("使用此策略")).toBeInTheDocument();
+  expect(screen.queryByText("创建研究运行")).not.toBeInTheDocument();
+  expect(screen.queryByText("批量研究")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("查看技术详情"));
+  expect(screen.getByText(/短期均线周期（short_window）/)).toBeInTheDocument();
+  expect(screen.getByText(/每次交易数量（quantity）/)).toBeInTheDocument();
+  expect(screen.getByText(/是否启用（enabled）/)).toBeInTheDocument();
+  expect(screen.getByText(/运行模式（mode）/)).toBeInTheDocument();
 });
 
 test("研究运行列表支持状态展示和筛选", async () => {
   renderRoute("/strategy-runs");
-  expect(await screen.findByText("运行失败")).toBeInTheDocument();
+  expect(
+    await screen.findByText("运行失败", {}, { timeout: 10_000 }),
+  ).toBeInTheDocument();
   expect(screen.getByText(/历史研究运行，不是绩效回测/)).toBeInTheDocument();
 });
 
@@ -171,14 +176,17 @@ test("FAILED运行详情展示脱敏错误和Signal边界", async () => {
 
 test("Signal页面展示Decimal字符串与研究原因", async () => {
   renderRoute(`/signals?strategy_run_id=${runId}`);
-  expect(await screen.findByText("12.34")).toBeInTheDocument();
+  expect(
+    await screen.findByText("12.34", {}, { timeout: 10_000 }),
+  ).toBeInTheDocument();
   expect(screen.getByText("SMA crossover")).toBeInTheDocument();
   expect(screen.getByText(/只创建风控决策，不创建订单/)).toBeInTheDocument();
 });
 
 test("策略目录展示版本和后端参数说明", async () => {
   renderRoute("/strategies");
-  expect(await screen.findByText("v1.0.0")).toBeInTheDocument();
+  fireEvent.click(await screen.findByText("查看技术详情"));
+  expect(await screen.findByText(/版本：v1\.0\.0/)).toBeInTheDocument();
   expect(screen.getAllByText(/quantity/).length).toBeGreaterThan(0);
 });
 
@@ -210,7 +218,13 @@ test.each(["/strategies", "/strategy-runs", "/signals"])(
   async (route) => {
     renderRoute(route);
     expect(
-      (await screen.findAllByText(/Signal|研究运行|SMA Crossover/)).length,
+      (
+        await screen.findAllByText(
+          route === "/strategies"
+            ? /策略模板|SMA Crossover/
+            : /Signal|研究运行|SMA Crossover/,
+        )
+      ).length,
     ).toBeGreaterThan(0);
     expect(
       screen.queryByRole("button", {

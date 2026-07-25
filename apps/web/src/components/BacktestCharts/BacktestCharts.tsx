@@ -8,6 +8,7 @@ interface ChartProps {
   title: string;
   color: string;
   percent?: boolean;
+  benchmark?: Array<{ timestamp: string; value: string }>;
 }
 
 function number(value: string) {
@@ -21,19 +22,29 @@ export function BacktestLineChart({
   title,
   color,
   percent = false,
+  benchmark = [],
 }: ChartProps) {
   if (!points.length) return <Empty description={`${title}暂无数据`} />;
   const width = 900;
   const height = 260;
   const padding = 34;
   const values = points.map((point) => number(point[field]));
-  const minimum = Math.min(...values);
-  const maximum = Math.max(...values);
+  const benchmarkValues = benchmark.map((point) => number(point.value));
+  const allValues = [...values, ...benchmarkValues];
+  const minimum = Math.min(...allValues);
+  const maximum = Math.max(...allValues);
   const spread = maximum - minimum || Math.max(Math.abs(maximum), 1);
   const coordinates = values.map((value, index) => {
     const x =
       padding +
       (index / Math.max(values.length - 1, 1)) * (width - padding * 2);
+    const y = padding + ((maximum - value) / spread) * (height - padding * 2);
+    return `${x},${y}`;
+  });
+  const benchmarkCoordinates = benchmarkValues.map((value, index) => {
+    const x =
+      padding +
+      (index / Math.max(benchmarkValues.length - 1, 1)) * (width - padding * 2);
     const y = padding + ((maximum - value) / spread) * (height - padding * 2);
     return `${x},${y}`;
   });
@@ -64,6 +75,16 @@ export function BacktestLineChart({
           strokeWidth="3"
           vectorEffect="non-scaling-stroke"
         />
+        {benchmarkCoordinates.length ? (
+          <polyline
+            points={benchmarkCoordinates.join(" ")}
+            fill="none"
+            stroke="#98a2b3"
+            strokeWidth="2"
+            strokeDasharray="8 6"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null}
         <text x={padding + 4} y={padding - 8} fill="#667085" fontSize="12">
           {format(maximum)}
         </text>
@@ -76,6 +97,11 @@ export function BacktestLineChart({
           {format(minimum)}
         </text>
       </svg>
+      {benchmarkCoordinates.length ? (
+        <Typography.Text type="secondary">
+          蓝线为策略权益，灰色虚线为同期买入并持有基准。
+        </Typography.Text>
+      ) : null}
     </div>
   );
 }

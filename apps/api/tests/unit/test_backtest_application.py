@@ -6,12 +6,25 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from alphadesk_api.application.backtests import BacktestService
+from alphadesk_api.application.backtests import BacktestService, _safe_failure
 from alphadesk_domain.accounting import FillAccountingResult
 from alphadesk_domain.entities import Fill, Order
 from alphadesk_domain.enums import OrderSide
+from alphadesk_domain.strategy import StrategyError
 
 pytestmark = [pytest.mark.unit, pytest.mark.bt01]
+
+
+def test_backtest_preserves_safe_strategy_data_errors() -> None:
+    assert _safe_failure(
+        StrategyError(
+            "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+            "reference factor is unavailable",
+        )
+    ) == (
+        "MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE",
+        "reference factor is unavailable",
+    )
 
 
 def _accounting(

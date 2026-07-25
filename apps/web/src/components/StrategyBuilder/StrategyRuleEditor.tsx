@@ -1,4 +1,12 @@
-import { Form, Input, InputNumber, Modal, Select, Space, Typography } from "antd";
+import {
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Space,
+  Typography,
+} from "antd";
 import { useEffect } from "react";
 
 import type {
@@ -17,7 +25,11 @@ interface RuleForm {
   data_range_years: number;
 }
 
-function comparisonAt(spec: StrategySpec, group: "entry" | "exit", index: number) {
+function comparisonAt(
+  spec: StrategySpec,
+  group: "entry" | "exit",
+  index: number,
+) {
   return spec[group].conditions[index] as StrategyComparison;
 }
 
@@ -70,10 +82,8 @@ export function StrategyRuleEditor({
           const next = structuredClone(spec);
           next.name = values.name;
           next.entry.operator = values.entry_operator;
-          comparisonAt(next, "entry", 0).right.window =
-            values.breakout_window;
-          comparisonAt(next, "entry", 1).right.window =
-            values.breakout_window;
+          comparisonAt(next, "entry", 0).right.window = values.breakout_window;
+          comparisonAt(next, "entry", 1).right.window = values.breakout_window;
           comparisonAt(next, "entry", 1).right.multiplier = String(
             values.volume_multiplier,
           );

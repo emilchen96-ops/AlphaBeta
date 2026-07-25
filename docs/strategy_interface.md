@@ -1,5 +1,11 @@
 # S01 统一策略接口
 
+## UX02-B StrategySpec 编译边界
+
+普通用户策略先保存为受控 `StrategySpec`，再由无 `eval`/`exec` 的解释编译器注册为本接口
+的运行实例。无论来源是内置模板、自然语言还是可视化编辑，Strategy 只产生 Signal，
+不能直接调用 Broker。复杂策略插件也必须遵守相同边界。
+
 D02 的 `StrategyBar` 显式携带 adjustment mode、RAW reference price 与 adjustment factor。StrategyRun/Experiment 默认 RAW 保持历史兼容，可选择 QFQ；策略仍只读 StrategyBar，不访问因子 Repository。Signal 记录价格模式，但不会创建或定价 Order。
 
 > S02-A 已在本契约之上完成 Decimal 增量指标与 `volume_breakout`、

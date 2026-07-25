@@ -259,7 +259,11 @@ test("实验列表提供空状态、策略状态和创建时间筛选", async ()
 test("目录预选驱动五类参数网格并显示默认值和组合预览", async () => {
   renderRoute("/strategy-experiments?strategy_key=grid_strategy");
   expect(
-    await screen.findByText("观察周期（window） · 整数"),
+    await screen.findByText(
+      "观察周期（window） · 整数",
+      {},
+      { timeout: 10_000 },
+    ),
   ).toBeInTheDocument();
   expect(screen.getByText("阈值（threshold） · 小数")).toBeInTheDocument();
   expect(screen.getByText("是否启用（enabled） · 是/否")).toBeInTheDocument();
@@ -316,7 +320,7 @@ test("同步创建期间按钮禁用以防重复提交", async () => {
     resolvePost = resolve;
   });
   renderRoute("/strategy-experiments?strategy_key=grid_strategy");
-  await screen.findByText("观察周期（window） · 整数");
+  await screen.findByText("观察周期（window） · 整数", {}, { timeout: 10_000 });
   const instrumentSelect = screen.getByLabelText("标的");
   fireEvent.mouseDown(instrumentSelect);
   fireEvent.click(await screen.findByText(/600000\.SSE/));

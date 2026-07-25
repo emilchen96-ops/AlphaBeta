@@ -1,11 +1,13 @@
 import { apiRequest } from "./client";
 import type {
+  QuickBacktestRequest,
   StrategyParseResult,
   StrategySpec,
   StrategyTemplate,
   UserStrategy,
   UserStrategyPage,
 } from "../types/strategySpecs";
+import type { BacktestRun } from "../types/backtests";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -73,3 +75,29 @@ export const archiveUserStrategy = (id: string) =>
   apiRequest<UserStrategy>(`/api/v1/user-strategies/${id}/archive`, {
     method: "POST",
   });
+
+export const createQuickBacktest = (body: QuickBacktestRequest) =>
+  apiRequest<BacktestRun>(
+    "/api/v1/research/quick-backtests",
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    },
+    120_000,
+  );
+
+export const getResearchBacktest = (id: string) =>
+  apiRequest<BacktestRun>(`/api/v1/research/backtests/${id}`);
+
+export const getResearchBacktestSummary = (id: string) =>
+  apiRequest<{
+    run_id: string;
+    status: string;
+    metrics: import("../types/backtests").BacktestMetrics | null;
+    signals_generated: number;
+    fills_generated: number;
+    explanation: string[];
+    strategy_preview: string[];
+    simulation_notice: string;
+  }>(`/api/v1/research/backtests/${id}/summary`);

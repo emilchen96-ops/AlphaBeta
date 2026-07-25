@@ -1,5 +1,11 @@
 # BT01 A股日线回测
 
+## 快速回测入口
+
+UX02-B 的 `/research/backtest` 是 BT01 的产品化入口，不是另一套简化引擎。它将确认后的
+StrategySpec 编译后进入完整 Signal → 规则检查 → 模拟交易指令 → 模拟成交 → 账本链。
+规则快照不可变；模拟成交、费用和权益使用 RAW 价格，且绝不发送真实订单。
+
 D02 增加 `strategy_price_adjustment_mode=RAW|QFQ`。策略可读 QFQ，但 Session Open 成交、Session End 估值、Order、Fill、费用和账本始终使用 RAW；开放日来自交易日历，已知停牌日不会成交。分钟回测仍未实现。
 
 BT01 提供同步、确定性、可审计的本地日线回测。链路复用现有事实管道：

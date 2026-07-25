@@ -13,11 +13,13 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Descriptions,
   Empty,
   Form,
   Input,
   InputNumber,
+  List,
   Row,
   Select,
   Space,
@@ -34,7 +36,6 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
   createBacktest,
-  getBacktest,
   getBacktestEquity,
   getBacktestFills,
   getBacktestIntegrity,
@@ -46,10 +47,16 @@ import {
   getBacktestTrades,
   listBacktests,
 } from "../api/backtests";
+import {
+  createUserStrategy,
+  getResearchBacktest,
+  getResearchBacktestSummary,
+} from "../api/strategySpecs";
 import { ApiError } from "../api/client";
-import { getInstrument, getInstruments } from "../api/market";
+import { getBars, getInstrument, getInstruments } from "../api/market";
 import { getStrategyCatalog } from "../api/strategies";
 import { BacktestLineChart } from "../components/BacktestCharts/BacktestCharts";
+import { CandlestickChart } from "../components/CandlestickChart/CandlestickChart";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
   BacktestEquityPoint,
@@ -93,6 +100,27 @@ const statusText: Record<BacktestRun["status"], string> = {
   RUNNING: "运行中",
   COMPLETED: "已完成",
   FAILED: "失败",
+};
+
+const backtestFailureText: Record<
+  string,
+  { title: string; description: string }
+> = {
+  MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE: {
+    title: "前复权数据尚未准备完成",
+    description:
+      "当前股票缺少所选区间的前复权因子。请先在数据中心补齐复权因子，或在高级设置中改用“不复权”后重新回测。",
+  },
+  BACKTEST_DATA_NOT_READY: {
+    title: "历史行情尚未准备完成",
+    description:
+      "当前股票在所选区间缺少可用的正式日线，请先在数据中心补齐数据后重试。",
+  },
+  BACKTEST_NO_MARKET_DATA: {
+    title: "没有找到历史行情",
+    description:
+      "本地数据库中没有该股票在所选区间的日线，请先补齐数据或调整回测区间。",
+  },
 };
 
 function BoundaryNotice() {
@@ -722,7 +750,8 @@ export function BacktestDetailPage() {
     queryKey: ["backtest-detail", backtestId],
     enabled: Boolean(backtestId),
     queryFn: async () => {
-      const run = await getBacktest(backtestId);
+      const run = await getResearchBacktest(backtestId);
+      const summary = await getResearchBacktestSummary(backtestId);
       let metrics: BacktestMetrics | null = run.metrics ?? null;
       let metricsError: unknown = null;
       if (run.status === "COMPLETED" && metrics === null) {
@@ -753,6 +782,7 @@ export function BacktestDetailPage() {
       ]);
       return {
         run,
+        summary,
         metrics,
         metricsError,
         equity: equity.items,
@@ -778,6 +808,18 @@ export function BacktestDetailPage() {
       ]),
     );
   }, [detail.data]);
+  const configuredInstrumentIds = useMemo(() => {
+    const value = detail.data?.run.configuration?.instrument_ids;
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  }, [detail.data]);
+  const primaryInstrumentId =
+    factInstrumentIds[0] ?? configuredInstrumentIds[0] ?? "";
+  const configuredAdjustmentMode =
+    detail.data?.run.configuration?.strategy_price_adjustment_mode;
+  const chartAdjustmentMode =
+    configuredAdjustmentMode === "RAW" ? "RAW" : "QFQ";
   const factInstrumentQueries = useQueries({
     queries: factInstrumentIds.map((id) => ({
       queryKey: ["instrument", id],
@@ -791,6 +833,14 @@ export function BacktestDetailPage() {
       .filter((item) => item !== undefined)
       .map((item) => [item.id, item]),
   );
+  const chartBars = useQuery({
+    queryKey: ["backtest-chart-bars", primaryInstrumentId, chartAdjustmentMode],
+    enabled: Boolean(primaryInstrumentId),
+    queryFn: () => getBars(primaryInstrumentId, "DAY_1", chartAdjustmentMode),
+  });
+  const saveStrategy = useMutation({
+    mutationFn: createUserStrategy,
+  });
   if (detail.isLoading) return <Spin size="large" />;
   if (detail.error)
     return (
@@ -801,6 +851,34 @@ export function BacktestDetailPage() {
     );
   if (!detail.data) return <Empty description="回测不存在" />;
   const data = detail.data;
+  const bars = chartBars.data?.items ?? [];
+  const firstEquityAt = data.equity[0]?.timestamp;
+  const lastEquityAt = data.equity.at(-1)?.timestamp;
+  const benchmarkBars =
+    firstEquityAt && lastEquityAt
+      ? bars.filter(
+          (bar) =>
+            new Date(bar.bar_time).getTime() >=
+              new Date(firstEquityAt).getTime() &&
+            new Date(bar.bar_time).getTime() <=
+              new Date(lastEquityAt).getTime(),
+        )
+      : [];
+  const firstBenchmarkClose = Number(benchmarkBars[0]?.close);
+  const initialBenchmarkEquity = Number(
+    data.metrics?.initial_equity ?? data.equity[0]?.total_equity ?? 0,
+  );
+  const benchmark =
+    Number.isFinite(firstBenchmarkClose) &&
+    firstBenchmarkClose > 0 &&
+    Number.isFinite(initialBenchmarkEquity)
+      ? benchmarkBars.map((bar) => ({
+          timestamp: bar.bar_time,
+          value: String(
+            (Number(bar.close) / firstBenchmarkClose) * initialBenchmarkEquity,
+          ),
+        }))
+      : [];
   const tradeColumns: ColumnsType<BacktestTrade> = [
     {
       title: "股票名称与代码",
@@ -819,38 +897,81 @@ export function BacktestDetailPage() {
     <section className="backtest-page">
       <PageHeader
         title={`回测详情 · ${displayStrategy(data.run.strategy_key)}`}
-        description="查看策略日线回测的绩效和完整事实链。"
-        action={<Link to="/backtest">返回回测列表</Link>}
+        description="先看收益与风险，再按需展开交易和完整事实链。"
+        action={
+          <Space wrap>
+            <Link to="/research/backtest">再次回测</Link>
+            {data.run.strategy_spec ? (
+              <Button
+                type="link"
+                icon={<ExperimentOutlined />}
+                loading={saveStrategy.isPending}
+                disabled={saveStrategy.isSuccess}
+                onClick={() =>
+                  saveStrategy.mutate({
+                    name: data.run.strategy_spec?.name ?? "我的回测策略",
+                    description:
+                      data.run.strategy_spec?.description ??
+                      "从回测结果保存的策略",
+                    spec: data.run.strategy_spec!,
+                  })
+                }
+              >
+                {saveStrategy.isSuccess ? "已保存到我的策略" : "保存为我的策略"}
+              </Button>
+            ) : null}
+            <Link
+              to={`/research/parameter-comparison${
+                data.run.strategy_spec
+                  ? `?template=${encodeURIComponent(data.run.strategy_key)}`
+                  : ""
+              }`}
+            >
+              参数对比
+            </Link>
+            {data.run.status === "COMPLETED" ? (
+              <Link to={`/research/backtests/${backtestId}/replay`}>
+                逐日查看
+              </Link>
+            ) : null}
+            <Link to="/research/history?tab=backtests">返回研究记录</Link>
+          </Space>
+        }
       />
-      <BoundaryNotice />
-      <Card className="backtest-section">
+      <Alert
+        showIcon
+        type="info"
+        title={data.run.simulation_notice ?? "回测仅为历史模拟，不会发送给券商"}
+        style={{ marginBottom: 16 }}
+      />
+      {saveStrategy.error ? (
+        <ErrorNotice error={saveStrategy.error} />
+      ) : saveStrategy.isSuccess ? (
+        <Alert
+          showIcon
+          type="success"
+          title="策略已保存，可在“我的策略”中再次使用"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
+      {data.run.strategy_preview?.length ? (
+        <Card title="本次回测规则（不可变快照）" className="backtest-section">
+          <List
+            dataSource={data.run.strategy_preview}
+            renderItem={(item) => <List.Item>{item}</List.Item>}
+          />
+        </Card>
+      ) : null}
+      <Card title="运行概况" className="backtest-section">
         <Space wrap>
           <Tag color={statusColor[data.run.status]}>
             {statusText[data.run.status]}
           </Tag>
           <Tag>日线回测</Tag>
-          <Tag
-            color={data.integrity.passed ? "green" : "red"}
-            icon={<SafetyCertificateOutlined />}
-          >
-            完整性检查：{data.integrity.passed ? "通过" : "存在差异"}
-          </Tag>
         </Space>
         <Descriptions bordered size="small" column={{ xs: 1, md: 2, xl: 3 }}>
           <Descriptions.Item label="策略版本">
             {data.run.strategy_version}
-          </Descriptions.Item>
-          <Descriptions.Item label="独立账户">
-            {data.run.account_id ? (
-              <Typography.Text copyable={{ text: data.run.account_id }}>
-                {shortId(data.run.account_id)}
-              </Typography.Text>
-            ) : (
-              "—"
-            )}
-          </Descriptions.Item>
-          <Descriptions.Item label="策略运行记录">
-            {data.run.strategy_run_id ? shortId(data.run.strategy_run_id) : "—"}
           </Descriptions.Item>
           <Descriptions.Item label="K线数量">
             {data.run.bars_processed}
@@ -866,8 +987,15 @@ export function BacktestDetailPage() {
           <Alert
             type="error"
             showIcon
-            title={data.run.error_code}
-            description={data.run.error_message}
+            title={
+              backtestFailureText[data.run.error_code]?.title ??
+              "本次回测未能完成"
+            }
+            description={
+              backtestFailureText[data.run.error_code]?.description ??
+              data.run.error_message ??
+              "请检查历史数据状态后重试。"
+            }
           />
         ) : null}
       </Card>
@@ -896,6 +1024,15 @@ export function BacktestDetailPage() {
             }
           />
         )}
+        {(data.summary.explanation?.length ?? 0) > 0 ? (
+          <Alert
+            showIcon
+            type="warning"
+            title="为什么没有成交？"
+            description={(data.summary.explanation ?? []).join("；")}
+            style={{ marginTop: 16 }}
+          />
+        ) : null}
       </Card>
       <Row gutter={[16, 16]} className="backtest-section">
         <Col xs={24} xl={12}>
@@ -905,6 +1042,7 @@ export function BacktestDetailPage() {
               field="total_equity"
               title="权益曲线"
               color="#1677ff"
+              benchmark={benchmark}
             />
           </Card>
         </Col>
@@ -920,6 +1058,23 @@ export function BacktestDetailPage() {
           </Card>
         </Col>
       </Row>
+      <Card title="K线买卖点" className="backtest-section">
+        <CandlestickChart
+          bars={bars}
+          loading={chartBars.isLoading}
+          markers={data.signals
+            .filter(
+              (signal) =>
+                signal.bar_timestamp &&
+                (signal.side === "BUY" || signal.side === "SELL"),
+            )
+            .map((signal) => ({
+              time: signal.bar_timestamp!,
+              side: signal.side as "BUY" | "SELL",
+              label: `${displayEnum(signal.side)}：${localizeReason(signal.reason)}`,
+            }))}
+        />
+      </Card>
       <Card title="现金与市值" className="backtest-section">
         <Table<BacktestEquityPoint>
           rowKey="id"
@@ -956,7 +1111,7 @@ export function BacktestDetailPage() {
           ]}
         />
       </Card>
-      <Card title="闭合交易" className="backtest-section">
+      <Card title="买卖交易记录" className="backtest-section">
         <Table
           rowKey="id"
           dataSource={data.trades}
@@ -964,77 +1119,108 @@ export function BacktestDetailPage() {
           pagination={{ pageSize: 10 }}
         />
       </Card>
-      <Card className="backtest-section">
-        <Tabs
-          items={[
-            {
-              key: "signals",
-              label: `研究信号（${data.signals.length}）`,
-              children: (
-                <Table
-                  rowKey="id"
-                  dataSource={data.signals}
-                  columns={signalColumns(factInstruments)}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: true }}
+      <Collapse
+        className="backtest-section"
+        defaultActiveKey={data.run.strategy_spec ? undefined : ["technical"]}
+        items={[
+          {
+            key: "technical",
+            label: "技术详情（策略信号、规则检查、模拟交易事实与审计）",
+            children: (
+              <>
+                <Space wrap style={{ marginBottom: 16 }}>
+                  <Tag
+                    color={data.integrity.passed ? "green" : "red"}
+                    icon={<SafetyCertificateOutlined />}
+                  >
+                    完整性检查：
+                    {data.integrity.passed ? "通过" : "存在差异"}
+                  </Tag>
+                  <Typography.Text type="secondary">
+                    账户：
+                    {data.run.account_id ? shortId(data.run.account_id) : "—"}
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    策略运行：
+                    {data.run.strategy_run_id
+                      ? shortId(data.run.strategy_run_id)
+                      : "—"}
+                  </Typography.Text>
+                </Space>
+                <Tabs
+                  items={[
+                    {
+                      key: "signals",
+                      label: `策略信号（${data.signals.length}）`,
+                      children: (
+                        <Table
+                          rowKey="id"
+                          dataSource={data.signals}
+                          columns={signalColumns(factInstruments)}
+                          pagination={{ pageSize: 10 }}
+                          scroll={{ x: true }}
+                        />
+                      ),
+                    },
+                    {
+                      key: "risks",
+                      label: `规则检查（${data.risks.length}）`,
+                      children: (
+                        <Table
+                          rowKey="id"
+                          dataSource={data.risks}
+                          columns={riskColumns(factInstruments)}
+                          pagination={{ pageSize: 10 }}
+                          scroll={{ x: true }}
+                        />
+                      ),
+                    },
+                    {
+                      key: "orders",
+                      label: `模拟交易指令（${data.orders.length}）`,
+                      children: (
+                        <Table
+                          rowKey="id"
+                          dataSource={data.orders}
+                          columns={orderColumns(factInstruments)}
+                          pagination={{ pageSize: 10 }}
+                          scroll={{ x: true }}
+                        />
+                      ),
+                    },
+                    {
+                      key: "fills",
+                      label: `模拟成交与费用（${data.fills.length}）`,
+                      children: (
+                        <Table
+                          rowKey="id"
+                          dataSource={data.fills}
+                          columns={fillColumns(factInstruments)}
+                          pagination={{ pageSize: 10 }}
+                          scroll={{ x: true }}
+                        />
+                      ),
+                    },
+                    {
+                      key: "timeline",
+                      label: `事件时间线（${data.timeline.length}）`,
+                      children: (
+                        <Table
+                          rowKey="id"
+                          dataSource={data.timeline}
+                          columns={timelineColumns}
+                          pagination={{ pageSize: 10 }}
+                          scroll={{ x: true }}
+                        />
+                      ),
+                    },
+                  ]}
                 />
-              ),
-            },
-            {
-              key: "risks",
-              label: `风控决策（${data.risks.length}）`,
-              children: (
-                <Table
-                  rowKey="id"
-                  dataSource={data.risks}
-                  columns={riskColumns(factInstruments)}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: true }}
-                />
-              ),
-            },
-            {
-              key: "orders",
-              label: `订单（${data.orders.length}）`,
-              children: (
-                <Table
-                  rowKey="id"
-                  dataSource={data.orders}
-                  columns={orderColumns(factInstruments)}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: true }}
-                />
-              ),
-            },
-            {
-              key: "fills",
-              label: `成交与费用（${data.fills.length}）`,
-              children: (
-                <Table
-                  rowKey="id"
-                  dataSource={data.fills}
-                  columns={fillColumns(factInstruments)}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: true }}
-                />
-              ),
-            },
-            {
-              key: "timeline",
-              label: `事件时间线（${data.timeline.length}）`,
-              children: (
-                <Table
-                  rowKey="id"
-                  dataSource={data.timeline}
-                  columns={timelineColumns}
-                  pagination={{ pageSize: 10 }}
-                  scroll={{ x: true }}
-                />
-              ),
-            },
-          ]}
-        />
-      </Card>
+              </>
+            ),
+          },
+        ]}
+      />
       {!data.integrity.passed ? (
         <Alert
           showIcon

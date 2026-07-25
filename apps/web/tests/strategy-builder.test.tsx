@@ -104,7 +104,12 @@ beforeEach(() => {
             : input.url;
       let body: unknown = healthyStatus;
       if (url.includes("/system/capabilities")) {
-        body = { generated_at: "", database_reachable: true, counts: {}, items: [] };
+        body = {
+          generated_at: "",
+          database_reachable: true,
+          counts: {},
+          items: [],
+        };
       } else if (url.includes("/user-strategies")) {
         body = { items: [], page: 1, page_size: 100, total: 0 };
       } else if (url.endsWith("/strategy-specs/parse")) {
@@ -140,22 +145,14 @@ test("用户可以用自然语言生成并检查结构化规则", async () => {
   await userEvent.click(
     await screen.findByRole("button", { name: "用一句话创建第一个策略" }),
   );
-  expect(
-    screen.getByLabelText("自然语言策略描述"),
-  ).toHaveValue(
+  expect(screen.getByLabelText("自然语言策略描述")).toHaveValue(
     "10日价格突破 + 1.2倍成交量，5日均线退出，单只股票、两年日线",
   );
 
-  await userEvent.click(
-    screen.getByRole("button", { name: /解析策略$/ }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: /解析策略$/ }));
 
-  expect(
-    await screen.findByText(/收盘价大于前10日最高价/),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: /编辑规则$/ }),
-  ).toBeInTheDocument();
+  expect(await screen.findByText(/收盘价大于前10日最高价/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /编辑规则$/ })).toBeInTheDocument();
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "确认并使用" })).toBeEnabled(),
   );

@@ -1,5 +1,10 @@
 # AlphaDesk
 
+> **UX02-B 研究工作台：** 默认产品模式为 `RESEARCH_ONLY`。推荐从
+> `http://127.0.0.1:5173/research/backtest` 用自然语言或模板确认安全规则，再调用完整
+> BT01 历史模拟；回测不会向 MiniQMT 或券商发送订单。详见
+> [快速回测工作流](docs/quick_backtest_workflow.md)。
+
 > **2026-07-23：MD01 MiniQMT 单一行情源完成。** 正式环境的 A 股/ETF 目录、实时快照、
 > 历史日线和历史分钟线均来自 MiniQMT。Windows 只读 Agent 负责连接 XtQuant，Redis 与
 > WebSocket 承载实时展示，PostgreSQL 保存可追溯的历史 K 线。BaoStock、AKShare、东方财富、
