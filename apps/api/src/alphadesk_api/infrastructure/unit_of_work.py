@@ -52,6 +52,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyReplayEquityPointRepository,
     SqlAlchemyReplayEventRepository,
     SqlAlchemyReplayRunRepository,
+    SqlAlchemyResearchBacktestSpecRepository,
     SqlAlchemyResearchEvidenceRepository,
     SqlAlchemyResearchInsightRepository,
     SqlAlchemyRiskDecisionRepository,
@@ -66,6 +67,7 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyStrategyRunRepository,
     SqlAlchemyTradingAccountRepository,
     SqlAlchemyTradingCalendarRepository,
+    SqlAlchemyUserStrategyRepository,
     SqlAlchemyWatchlistRepository,
 )
 
@@ -112,6 +114,8 @@ class SqlAlchemyUnitOfWork:
         self.ai_analysis_runs = SqlAlchemyAIAnalysisRunRepository(session)
         self.research_insights = SqlAlchemyResearchInsightRepository(session)
         self.research_evidence = SqlAlchemyResearchEvidenceRepository(session)
+        self.user_strategies = SqlAlchemyUserStrategyRepository(session)
+        self.research_backtest_specs = SqlAlchemyResearchBacktestSpecRepository(session)
         self.historical_bars = SqlAlchemyHistoricalBarProvider(session)
         self.orders = SqlAlchemyOrderRepository(session)
         self.order_actions = SqlAlchemyOrderActionRepository(session)

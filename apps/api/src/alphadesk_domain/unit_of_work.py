@@ -49,6 +49,7 @@ from alphadesk_domain.repositories import (
     ReplayEquityPointRepository,
     ReplayEventRepository,
     ReplayRunRepository,
+    ResearchBacktestSpecRepository,
     ResearchEvidenceRepository,
     ResearchInsightRepository,
     RiskDecisionRepository,
@@ -63,6 +64,7 @@ from alphadesk_domain.repositories import (
     StrategyRunRepository,
     TradingAccountRepository,
     TradingCalendarRepository,
+    UserStrategyRepository,
     WatchlistRepository,
 )
 from alphadesk_domain.strategy_runs import HistoricalBarProvider
@@ -97,6 +99,8 @@ class UnitOfWork(Protocol):
     ai_analysis_runs: AIAnalysisRunRepository
     research_insights: ResearchInsightRepository
     research_evidence: ResearchEvidenceRepository
+    user_strategies: UserStrategyRepository
+    research_backtest_specs: ResearchBacktestSpecRepository
     historical_bars: HistoricalBarProvider
     orders: OrderRepository
     order_actions: OrderActionRepository

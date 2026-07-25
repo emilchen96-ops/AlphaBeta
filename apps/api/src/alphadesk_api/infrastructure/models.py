@@ -599,6 +599,58 @@ class StrategyVersionModel(TimestampedModel, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class UserStrategyDefinitionModel(MutableTimestampedModel, Base):
+    __tablename__ = "user_strategy_definitions"
+    __table_args__ = (
+        CheckConstraint("current_version >= 1", name="user_strategy_current_version_positive"),
+        Index("ix_user_strategy_definitions_archived_updated", "archived", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class UserStrategyVersionModel(TimestampedModel, Base):
+    __tablename__ = "user_strategy_versions"
+    __table_args__ = (
+        UniqueConstraint("strategy_id", "version_number", name="uq_user_strategy_versions_number"),
+        CheckConstraint("version_number >= 1", name="user_strategy_version_positive"),
+        Index("ix_user_strategy_versions_strategy_created", "strategy_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    strategy_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("user_strategy_definitions.id", ondelete="RESTRICT"), nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class ResearchBacktestSpecModel(TimestampedModel, Base):
+    __tablename__ = "research_backtest_specs"
+    __table_args__ = (
+        UniqueConstraint("backtest_run_id", name="uq_research_backtest_specs_run"),
+        Index("ix_research_backtest_specs_user_strategy", "user_strategy_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    backtest_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    user_strategy_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("user_strategy_definitions.id", ondelete="RESTRICT")
+    )
+    user_strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("user_strategy_versions.id", ondelete="RESTRICT")
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
 class SignalModel(TimestampedModel, Base):
     __tablename__ = "signals"
     __table_args__ = (

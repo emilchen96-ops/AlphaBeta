@@ -83,6 +83,11 @@ from alphadesk_domain.scanners import ScanResult, ScanRun, ScanRunMember, ScanRu
 from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import StrategyRun
+from alphadesk_domain.strategy_spec import (
+    ResearchBacktestSpecSnapshot,
+    UserStrategyDefinition,
+    UserStrategyVersion,
+)
 
 
 class InstrumentRepository(Protocol):
@@ -682,6 +687,24 @@ class ResearchInsightRepository(Protocol):
 class ResearchEvidenceRepository(Protocol):
     async def append_many(self, entities: list[ResearchEvidence]) -> None: ...
     async def list_by_insight(self, insight_id: UUID) -> list[ResearchEvidence]: ...
+
+
+class UserStrategyRepository(Protocol):
+    async def add_definition(self, entity: UserStrategyDefinition) -> None: ...
+    async def add_version(self, entity: UserStrategyVersion) -> None: ...
+    async def get_definition(self, entity_id: UUID) -> UserStrategyDefinition | None: ...
+    async def get_version(
+        self, strategy_id: UUID, version_number: int | None = None
+    ) -> UserStrategyVersion | None: ...
+    async def list(
+        self, *, include_archived: bool, offset: int, limit: int
+    ) -> tuple[list[UserStrategyDefinition], int]: ...
+    async def update_definition(self, entity: UserStrategyDefinition) -> None: ...
+
+
+class ResearchBacktestSpecRepository(Protocol):
+    async def save(self, entity: ResearchBacktestSpecSnapshot) -> None: ...
+    async def get_by_run(self, run_id: UUID) -> ResearchBacktestSpecSnapshot | None: ...
 
 
 class BacktestRunRepository(Protocol):

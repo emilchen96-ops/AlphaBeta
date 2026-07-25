@@ -73,6 +73,7 @@ from alphadesk_api.infrastructure.models import (
     ReplayEquityPointModel,
     ReplayEventModel,
     ReplayRunModel,
+    ResearchBacktestSpecModel,
     ResearchEvidenceModel,
     ResearchInsightModel,
     RiskDecisionModel,
@@ -88,6 +89,8 @@ from alphadesk_api.infrastructure.models import (
     StrategyVersionModel,
     TradingAccountModel,
     TradingCalendarSessionModel,
+    UserStrategyDefinitionModel,
+    UserStrategyVersionModel,
     WatchlistItemModel,
     WatchlistModel,
 )
@@ -188,6 +191,13 @@ from alphadesk_domain.simulated_execution import BrokerExecutionAttempt
 from alphadesk_domain.strategy import StrategyBar, StrategyError
 from alphadesk_domain.strategy_experiments import StrategyExperiment, StrategyExperimentRun
 from alphadesk_domain.strategy_runs import HistoricalDataReadiness, StrategyRun
+from alphadesk_domain.strategy_spec import (
+    ResearchBacktestSpecSnapshot,
+    UserStrategyDefinition,
+    UserStrategyVersion,
+    strategy_spec_from_dict,
+    strategy_spec_to_dict,
+)
 
 
 def model_values(model: DeclarativeBase, *, include_none: bool = False) -> dict[str, Any]:
@@ -354,6 +364,151 @@ class SqlAlchemyBacktestRunRepository:
         return [
             _backtest_run_from_model(row, tolerate_fingerprint_mismatch=True) for row in rows
         ], total
+
+
+def _user_strategy_definition_from_model(
+    model: UserStrategyDefinitionModel,
+) -> UserStrategyDefinition:
+    return UserStrategyDefinition(
+        id=model.id,
+        name=model.name,
+        description=model.description,
+        current_version=model.current_version,
+        archived=model.archived,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _user_strategy_version_from_model(model: UserStrategyVersionModel) -> UserStrategyVersion:
+    return UserStrategyVersion(
+        id=model.id,
+        strategy_id=model.strategy_id,
+        version_number=model.version_number,
+        spec=strategy_spec_from_dict(model.spec_json),
+        created_at=model.created_at,
+    )
+
+
+class SqlAlchemyUserStrategyRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_definition(self, entity: UserStrategyDefinition) -> None:
+        self._session.add(
+            UserStrategyDefinitionModel(
+                id=entity.id,
+                name=entity.name,
+                description=entity.description,
+                current_version=entity.current_version,
+                archived=entity.archived,
+                created_at=entity.created_at,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+    async def add_version(self, entity: UserStrategyVersion) -> None:
+        self._session.add(
+            UserStrategyVersionModel(
+                id=entity.id,
+                strategy_id=entity.strategy_id,
+                version_number=entity.version_number,
+                schema_version=entity.spec.schema_version,
+                spec_json=strategy_spec_to_dict(entity.spec),
+                created_at=entity.created_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get_definition(self, entity_id: UUID) -> UserStrategyDefinition | None:
+        row = await self._session.get(UserStrategyDefinitionModel, entity_id)
+        return None if row is None else _user_strategy_definition_from_model(row)
+
+    async def get_version(
+        self, strategy_id: UUID, version_number: int | None = None
+    ) -> UserStrategyVersion | None:
+        statement = select(UserStrategyVersionModel).where(
+            UserStrategyVersionModel.strategy_id == strategy_id
+        )
+        if version_number is not None:
+            statement = statement.where(UserStrategyVersionModel.version_number == version_number)
+        else:
+            statement = statement.order_by(UserStrategyVersionModel.version_number.desc())
+        row = await self._session.scalar(statement.limit(1))
+        return None if row is None else _user_strategy_version_from_model(row)
+
+    async def list(
+        self, *, include_archived: bool, offset: int, limit: int
+    ) -> tuple[list[UserStrategyDefinition], int]:
+        conditions = [] if include_archived else [UserStrategyDefinitionModel.archived.is_(False)]
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(UserStrategyDefinitionModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(UserStrategyDefinitionModel)
+            .where(*conditions)
+            .order_by(
+                UserStrategyDefinitionModel.updated_at.desc(),
+                UserStrategyDefinitionModel.id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [_user_strategy_definition_from_model(row) for row in rows], total
+
+    async def update_definition(self, entity: UserStrategyDefinition) -> None:
+        await self._session.execute(
+            update(UserStrategyDefinitionModel)
+            .where(UserStrategyDefinitionModel.id == entity.id)
+            .values(
+                name=entity.name,
+                description=entity.description,
+                current_version=entity.current_version,
+                archived=entity.archived,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+
+class SqlAlchemyResearchBacktestSpecRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def save(self, entity: ResearchBacktestSpecSnapshot) -> None:
+        self._session.add(
+            ResearchBacktestSpecModel(
+                id=entity.id,
+                backtest_run_id=entity.backtest_run_id,
+                user_strategy_id=entity.user_strategy_id,
+                user_strategy_version_id=entity.user_strategy_version_id,
+                schema_version=entity.spec.schema_version,
+                spec_json=strategy_spec_to_dict(entity.spec),
+                created_at=entity.created_at,
+            )
+        )
+        await self._session.flush()
+
+    async def get_by_run(self, run_id: UUID) -> ResearchBacktestSpecSnapshot | None:
+        row = await self._session.scalar(
+            select(ResearchBacktestSpecModel).where(
+                ResearchBacktestSpecModel.backtest_run_id == run_id
+            )
+        )
+        if row is None:
+            return None
+        return ResearchBacktestSpecSnapshot(
+            id=row.id,
+            backtest_run_id=row.backtest_run_id,
+            user_strategy_id=row.user_strategy_id,
+            user_strategy_version_id=row.user_strategy_version_id,
+            spec=strategy_spec_from_dict(row.spec_json),
+            created_at=row.created_at,
+        )
 
 
 class SqlAlchemyTradingCalendarRepository:

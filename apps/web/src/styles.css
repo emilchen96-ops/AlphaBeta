@@ -331,3 +331,28 @@ body {
 .form-grid .ant-form-item {
   margin-bottom: 8px;
 }
+
+.research-section-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.research-section-toolbar .ant-typography {
+  margin-bottom: 0;
+}
+
+.research-rule-preview {
+  color: #475569;
+  line-height: 1.8;
+  margin: 12px 0;
+  padding-left: 20px;
+}
+
+.research-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}

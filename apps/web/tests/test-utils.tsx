@@ -84,6 +84,10 @@ export function mockStatusSuccess() {
       } else if (url.includes("/api/v1/market-subscriptions/active")) {
         body = { schema_version: 1, data: { items: [] } };
       } else if (url.includes("/api/v1/strategies/catalog")) body = [];
+      else if (url.includes("/api/v1/strategy-templates")) body = [];
+      else if (url.includes("/api/v1/user-strategies")) {
+        body = { items: [], page: 1, page_size: 100, total: 0 };
+      }
       else if (url.includes("/api/v1/backtests?")) {
         body = { items: [], page: 1, page_size: 20, total: 0 };
       } else if (url.includes("/api/v1/instruments?")) {
