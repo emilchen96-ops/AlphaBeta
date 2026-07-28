@@ -48,7 +48,7 @@ def wrap_with_cors(app: FastAPI, settings: Settings) -> CORSMiddleware:
         app=app,
         allow_origins=settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Accept", "Content-Type", settings.correlation_id_header],
         expose_headers=[settings.correlation_id_header],
     )
@@ -130,7 +130,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=resolved_settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Accept", "Content-Type", resolved_settings.correlation_id_header],
         expose_headers=[resolved_settings.correlation_id_header],
     )

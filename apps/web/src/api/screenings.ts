@@ -10,12 +10,18 @@ import type {
   ScreeningSpecSnapshot,
   ScreeningTemplate,
   ScreeningValidationResult,
+  ScreeningWatchlistResult,
+  UserScreening,
+  UserScreeningPage,
 } from "../types/screenings";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
 export const getScreeningTemplates = () =>
   apiRequest<ScreeningTemplate[]>("/api/v1/screening-templates");
+
+export const getScreeningTemplate = (key: string) =>
+  apiRequest<ScreeningTemplate>(`/api/v1/screening-templates/${key}`);
 
 export const getScreeningConditions = () =>
   apiRequest<ScreeningConditionDefinition[]>("/api/v1/screening-conditions");
@@ -59,10 +65,21 @@ export function previewScreeningSpec(screening_spec: ScreeningSpecSnapshot) {
   });
 }
 
-export const getScreeningRuns = () =>
-  apiRequest<ScreeningRunPage>(
-    "/api/v1/research/screenings?page=1&page_size=20",
+export function getScreeningRuns(filters?: {
+  status?: string;
+  as_of_from?: string;
+  as_of_to?: string;
+  plan_name?: string;
+  source_type?: "TEMPLATE" | "CUSTOM";
+}) {
+  const params = new URLSearchParams({ page: "1", page_size: "100" });
+  Object.entries(filters ?? {}).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return apiRequest<ScreeningRunPage>(
+    `/api/v1/research/screenings?${params.toString()}`,
   );
+}
 
 export const getScreening = (id: string) =>
   apiRequest<ScreeningRun>(`/api/v1/research/screenings/${id}`);
@@ -89,4 +106,85 @@ export function createScreening(
     headers: jsonHeaders,
     body: JSON.stringify(spec),
   });
+}
+
+export const listUserScreenings = (includeArchived = true) =>
+  apiRequest<UserScreeningPage>(
+    `/api/v1/user-screenings?page=1&page_size=100&include_archived=${includeArchived}`,
+  );
+
+export function saveUserScreening(input: {
+  name: string;
+  description: string | null;
+  source_text: string | null;
+  screening_spec: ScreeningSpecSnapshot;
+  origin: string;
+}) {
+  return apiRequest<UserScreening>("/api/v1/user-screenings", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateUserScreening(
+  id: string,
+  input: {
+    name: string;
+    description: string | null;
+    source_text: string | null;
+    screening_spec: ScreeningSpecSnapshot;
+    origin: string;
+  },
+) {
+  return apiRequest<UserScreening>(`/api/v1/user-screenings/${id}`, {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+}
+
+export const cloneUserScreening = (id: string) =>
+  apiRequest<UserScreening>(`/api/v1/user-screenings/${id}/clone`, {
+    method: "POST",
+  });
+
+export const archiveUserScreening = (id: string) =>
+  apiRequest<UserScreening>(`/api/v1/user-screenings/${id}/archive`, {
+    method: "POST",
+  });
+
+export const restoreUserScreening = (id: string) =>
+  apiRequest<UserScreening>(`/api/v1/user-screenings/${id}/restore`, {
+    method: "POST",
+  });
+
+export function runUserScreening(id: string, asOfDate: string) {
+  return apiRequest<ScreeningRun>(`/api/v1/user-screenings/${id}/run`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      as_of_date: asOfDate,
+      idempotency_key: `screening:${crypto.randomUUID()}`,
+    }),
+  });
+}
+
+export function addScreeningResultsToWatchlist(
+  screeningId: string,
+  input: {
+    instrument_ids: string[];
+    watchlist_id: string | null;
+    new_watchlist_name: string | null;
+    realtime_monitor: boolean;
+  },
+) {
+  return apiRequest<ScreeningWatchlistResult>(
+    `/api/v1/research/screenings/${screeningId}/add-to-watchlist`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input),
+    },
+  );
 }

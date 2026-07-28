@@ -62,5 +62,14 @@ Correlation ID；响应不包含 AI Prompt、Secret 或可执行代码。
 
 ## 当前边界
 
-本阶段不保存“我的选股方案”，不管理方案历史，不接自选股或快速回测，也不进行实时
-盘中选股。这些能力属于后续 SC02-C。
+SC02-C 已在本能力之上补齐“我的选股方案”、不可变版本、历史结果、自选股和快速回测
+预填接线。解析器和规则引擎仍是唯一的受控执行入口；再次运行必须先由用户确认，快速回测
+也不会自动执行。盘中实时选股仍不在当前范围。
+
+相关说明：
+
+- [智能选股模板](screening_templates.md)
+- [我的选股方案](user_screening_definitions.md)
+- [选股历史结果](screening_history.md)
+- [选股结果加入自选股](screening_to_watchlist.md)
+- [选股结果快速回测](screening_to_backtest.md)

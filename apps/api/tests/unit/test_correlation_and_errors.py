@@ -55,3 +55,27 @@ def test_unhandled_error_keeps_cors_headers_for_browser_clients(settings: Settin
     assert response.status_code == 500
     assert response.headers["access-control-allow-origin"] == origin
     assert response.json()["error"]["code"] == "INTERNAL_SERVER_ERROR"
+
+
+def test_cors_preflight_allows_put_for_versioned_screening_edits(
+    settings: Settings,
+) -> None:
+    app = wrap_with_cors(
+        create_app(settings, database=FakeProbe(), redis_service=FakeProbe()),
+        settings,
+    )
+    origin = settings.cors_origins[0]
+
+    with TestClient(app) as client:
+        response = client.options(
+            "/api/v1/user-screenings/example",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "PUT" in response.headers["access-control-allow-methods"]

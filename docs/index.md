@@ -43,12 +43,16 @@
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
-> 当前研究工具里程碑为 **SC02-B 完成**：标准条件目录、安全 ScreeningSpec、历史点时
+> 当前研究工具里程碑为 **SC02-C 完成**：标准条件目录、安全 ScreeningSpec、历史点时
 > 全 A 股股票池、批量规则引擎和两个标准形态见
 > [SC02-A 选股引擎](sc02_screening_engine.md)；确定性中文解析、可选 AI 辅助、中文预览
 > 和 Schema 驱动编辑器见
-> [SC02-B 自然语言选股](sc02_natural_language_screening.md)。SC01-R 后台补数与旧接口
-> 继续兼容，见 [扫描器说明](scanners.md)。结果不会创建 Signal 或订单。
+> [SC02-B 自然语言选股](sc02_natural_language_screening.md)。
+> SC02-C 进一步提供 [智能选股模板](screening_templates.md)、
+> [我的选股方案](user_screening_definitions.md)、[历史结果](screening_history.md)、
+> [加入自选](screening_to_watchlist.md)和[快速回测接线](screening_to_backtest.md)。
+> SC01-R 后台补数与旧接口继续兼容，见 [扫描器说明](scanners.md)。结果不会创建 Signal
+> 或订单。
 
 > 当前执行里程碑为 **B01 完成开发，等待最终环境验收**：B01-A Broker 契约与确定性计算见
 > [simulated_broker.md](simulated_broker.md)；B01-B Attempt、Fill、M04 原子记账、Command 消费和
@@ -110,7 +114,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |
 | L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md` |
-| SC02 标准条件选股引擎           | `sc02_screening_engine.md`、`sc02_natural_language_screening.md`、`scanners.md`、`market_data.md`、`database_schema.md` |
+| SC02 标准条件选股闭环           | `sc02_screening_engine.md`、`sc02_natural_language_screening.md`、`screening_templates.md`、`user_screening_definitions.md`、`screening_history.md`、`screening_to_watchlist.md`、`screening_to_backtest.md` |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |

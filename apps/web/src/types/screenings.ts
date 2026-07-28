@@ -56,10 +56,42 @@ export interface ScreeningSpecSnapshot {
 }
 
 export interface ScreeningTemplate {
-  template_key: "LIMIT_UP_PULLBACK" | "BOTTOM_VOLUME_EXPANSION";
+  template_key: string;
   display_name: string;
   description: string;
+  timeframe: string;
+  required_data: string;
+  enabled: boolean;
   spec: ScreeningSpecSnapshot;
+}
+
+export interface UserScreening {
+  id: string;
+  name: string;
+  description: string | null;
+  source_text: string | null;
+  origin: string;
+  current_version: number;
+  status: "DRAFT" | "ACTIVE" | "ARCHIVED";
+  screening_spec: ScreeningSpecSnapshot;
+  summary: string;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+}
+
+export interface UserScreeningPage {
+  items: UserScreening[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface ScreeningWatchlistResult {
+  watchlist_id: string;
+  succeeded: number;
+  already_exists: number;
+  failed: number;
 }
 
 export interface ScreeningRun {

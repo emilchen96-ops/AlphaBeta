@@ -164,7 +164,59 @@ class ScreeningTemplateResponse(BaseModel):
     template_key: str
     display_name: str
     description: str
+    timeframe: str = "日线"
+    required_data: str = "MiniQMT历史日线"
+    enabled: bool = True
     spec: dict[str, Any]
+
+
+class UserScreeningWriteBody(StrictBody):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=1000)
+    source_text: str | None = Field(default=None, max_length=1000)
+    screening_spec: ScreeningSpecPayload
+    origin: str = Field(default="USER", min_length=1, max_length=32)
+
+
+class UserScreeningResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    source_text: str | None
+    origin: str
+    current_version: int
+    status: Literal["DRAFT", "ACTIVE", "ARCHIVED"]
+    screening_spec: dict[str, Any]
+    summary: str
+    created_at: datetime
+    updated_at: datetime
+    last_used_at: datetime | None
+
+
+class UserScreeningPageResponse(BaseModel):
+    items: list[UserScreeningResponse]
+    page: int
+    page_size: int
+    total: int
+
+
+class UserScreeningRunBody(StrictBody):
+    as_of_date: date
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class ScreeningWatchlistBody(StrictBody):
+    instrument_ids: list[UUID] = Field(min_length=1, max_length=200)
+    watchlist_id: UUID | None = None
+    new_watchlist_name: str | None = Field(default=None, max_length=128)
+    realtime_monitor: bool = False
+
+
+class ScreeningWatchlistResponse(BaseModel):
+    watchlist_id: UUID
+    succeeded: int
+    already_exists: int
+    failed: int
 
 
 class ScreeningRunResponse(BaseModel):

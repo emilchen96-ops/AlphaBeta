@@ -64,6 +64,7 @@ from alphadesk_domain.repositories import (
     StrategyRunRepository,
     TradingAccountRepository,
     TradingCalendarRepository,
+    UserScreeningRepository,
     UserStrategyRepository,
     WatchlistRepository,
 )
@@ -100,6 +101,7 @@ class UnitOfWork(Protocol):
     research_insights: ResearchInsightRepository
     research_evidence: ResearchEvidenceRepository
     user_strategies: UserStrategyRepository
+    user_screenings: UserScreeningRepository
     research_backtest_specs: ResearchBacktestSpecRepository
     historical_bars: HistoricalBarProvider
     orders: OrderRepository

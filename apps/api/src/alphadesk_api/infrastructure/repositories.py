@@ -89,6 +89,9 @@ from alphadesk_api.infrastructure.models import (
     StrategyVersionModel,
     TradingAccountModel,
     TradingCalendarSessionModel,
+    UserScreeningDefinitionModel,
+    UserScreeningRunLinkModel,
+    UserScreeningVersionModel,
     UserStrategyDefinitionModel,
     UserStrategyVersionModel,
     WatchlistItemModel,
@@ -197,6 +200,12 @@ from alphadesk_domain.strategy_spec import (
     UserStrategyVersion,
     strategy_spec_from_dict,
     strategy_spec_to_dict,
+)
+from alphadesk_domain.user_screenings import (
+    UserScreeningDefinition,
+    UserScreeningRunLink,
+    UserScreeningStatus,
+    UserScreeningVersion,
 )
 
 
@@ -469,6 +478,163 @@ class SqlAlchemyUserStrategyRepository:
                 description=entity.description,
                 current_version=entity.current_version,
                 archived=entity.archived,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+
+class SqlAlchemyUserScreeningRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_definition(self, entity: UserScreeningDefinition) -> None:
+        self._session.add(
+            UserScreeningDefinitionModel(
+                id=entity.id,
+                name=entity.name,
+                description=entity.description,
+                source_text=entity.source_text,
+                origin=entity.origin,
+                current_version=entity.current_version,
+                status=entity.status.value,
+                last_used_at=entity.last_used_at,
+                created_at=entity.created_at,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+    async def add_version(self, entity: UserScreeningVersion) -> None:
+        self._session.add(
+            UserScreeningVersionModel(
+                id=entity.id,
+                screening_id=entity.screening_id,
+                version_number=entity.version_number,
+                screening_spec=entity.screening_spec,
+                source_text=entity.source_text,
+                summary=entity.summary,
+                created_at=entity.created_at,
+            )
+        )
+        await self._session.flush()
+
+    async def add_run_link(self, entity: UserScreeningRunLink) -> None:
+        self._session.add(
+            UserScreeningRunLinkModel(
+                id=entity.id,
+                scan_run_id=entity.scan_run_id,
+                screening_id=entity.screening_id,
+                screening_version_id=entity.screening_version_id,
+                created_at=entity.created_at,
+            )
+        )
+        await self._session.flush()
+
+    @staticmethod
+    def _definition(row: UserScreeningDefinitionModel) -> UserScreeningDefinition:
+        return UserScreeningDefinition(
+            id=row.id,
+            name=row.name,
+            description=row.description,
+            source_text=row.source_text,
+            origin=row.origin,
+            current_version=row.current_version,
+            status=UserScreeningStatus(row.status),
+            last_used_at=row.last_used_at,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _version(row: UserScreeningVersionModel) -> UserScreeningVersion:
+        return UserScreeningVersion(
+            id=row.id,
+            screening_id=row.screening_id,
+            version_number=row.version_number,
+            screening_spec=dict(row.screening_spec),
+            source_text=row.source_text,
+            summary=row.summary,
+            created_at=row.created_at,
+        )
+
+    async def get_definition(self, entity_id: UUID) -> UserScreeningDefinition | None:
+        row = await self._session.get(UserScreeningDefinitionModel, entity_id)
+        return None if row is None else self._definition(row)
+
+    async def get_by_name(self, name: str) -> UserScreeningDefinition | None:
+        row = await self._session.scalar(
+            select(UserScreeningDefinitionModel).where(
+                func.lower(UserScreeningDefinitionModel.name) == name.strip().lower()
+            )
+        )
+        return None if row is None else self._definition(row)
+
+    async def get_version(
+        self, screening_id: UUID, version_number: int | None = None
+    ) -> UserScreeningVersion | None:
+        statement = select(UserScreeningVersionModel).where(
+            UserScreeningVersionModel.screening_id == screening_id
+        )
+        if version_number is not None:
+            statement = statement.where(UserScreeningVersionModel.version_number == version_number)
+        else:
+            statement = statement.order_by(UserScreeningVersionModel.version_number.desc())
+        row = await self._session.scalar(statement.limit(1))
+        return None if row is None else self._version(row)
+
+    async def get_run_link(self, run_id: UUID) -> UserScreeningRunLink | None:
+        row = await self._session.scalar(
+            select(UserScreeningRunLinkModel).where(UserScreeningRunLinkModel.scan_run_id == run_id)
+        )
+        if row is None:
+            return None
+        return UserScreeningRunLink(
+            id=row.id,
+            scan_run_id=row.scan_run_id,
+            screening_id=row.screening_id,
+            screening_version_id=row.screening_version_id,
+            created_at=row.created_at,
+        )
+
+    async def list(
+        self, *, include_archived: bool, offset: int, limit: int
+    ) -> tuple[list[UserScreeningDefinition], int]:
+        conditions = (
+            []
+            if include_archived
+            else [UserScreeningDefinitionModel.status != UserScreeningStatus.ARCHIVED.value]
+        )
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(UserScreeningDefinitionModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(UserScreeningDefinitionModel)
+            .where(*conditions)
+            .order_by(
+                UserScreeningDefinitionModel.updated_at.desc(),
+                UserScreeningDefinitionModel.id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [self._definition(row) for row in rows], total
+
+    async def update_definition(self, entity: UserScreeningDefinition) -> None:
+        await self._session.execute(
+            update(UserScreeningDefinitionModel)
+            .where(UserScreeningDefinitionModel.id == entity.id)
+            .values(
+                name=entity.name,
+                description=entity.description,
+                source_text=entity.source_text,
+                origin=entity.origin,
+                current_version=entity.current_version,
+                status=entity.status.value,
+                last_used_at=entity.last_used_at,
                 updated_at=entity.updated_at,
             )
         )

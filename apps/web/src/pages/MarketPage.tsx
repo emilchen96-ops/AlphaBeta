@@ -25,19 +25,21 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import {
   addWatchlistItem,
   createWatchlist,
   deleteWatchlist,
   getBars,
+  getInstrument,
   getInstruments,
   getWatchlist,
   getWatchlists,
   removeWatchlistItem,
   updateWatchlist,
 } from "../api/market";
+import { getScreeningResults } from "../api/screenings";
 import {
   getActiveSubscriptions,
   getMiniQMTStatus,
@@ -89,6 +91,9 @@ function miniQMTState(
 export function MarketPage() {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
+  const [search] = useSearchParams();
+  const screeningInstrumentId = search.get("instrument_id");
+  const sourceScreeningId = search.get("screening_id");
   const [searchText, setSearchText] = useState("");
   const [submittedKeyword, setSubmittedKeyword] = useState("");
   const [selectedWatchlist, setSelectedWatchlist] = useState<string>();
@@ -110,6 +115,16 @@ export function MarketPage() {
       if (!submittedKeyword || active.total > 0) return active;
       return getInstruments(submittedKeyword, true);
     },
+  });
+  const screeningInstrument = useQuery({
+    queryKey: ["screening-market-instrument", screeningInstrumentId],
+    queryFn: () => getInstrument(screeningInstrumentId ?? ""),
+    enabled: Boolean(screeningInstrumentId),
+  });
+  const screeningResults = useQuery({
+    queryKey: ["screening-market-context", sourceScreeningId],
+    queryFn: () => getScreeningResults(sourceScreeningId ?? ""),
+    enabled: Boolean(sourceScreeningId),
   });
   const watchlists = useQuery({
     queryKey: ["watchlists"],
@@ -138,7 +153,12 @@ export function MarketPage() {
       /^\d{6}$/.test(item.instrument.symbol),
   );
   const effectiveInstrument =
-    selectedInstrument ?? formalWatchlistItems[0]?.instrument;
+    selectedInstrument ??
+    screeningInstrument.data ??
+    formalWatchlistItems[0]?.instrument;
+  const screeningReason = screeningResults.data?.items.find(
+    (item) => item.instrument_id === effectiveInstrument?.id,
+  );
   const queryTimeframe: MarketTimeframe =
     timeframe === "TIMESHARE" ? "MINUTE_1" : timeframe;
   const bars = useQuery({
@@ -308,6 +328,15 @@ export function MarketPage() {
           </Button>
         }
       />
+      {screeningReason ? (
+        <Alert
+          showIcon
+          type="info"
+          title="本次入选原因"
+          description={screeningReason.reason}
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       <Card
         size="small"

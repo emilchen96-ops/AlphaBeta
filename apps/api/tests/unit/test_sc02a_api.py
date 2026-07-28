@@ -133,7 +133,7 @@ def payload() -> dict[str, object]:
     }
 
 
-def test_condition_catalog_and_two_templates_are_public(
+def test_condition_catalog_and_sc02_templates_are_public(
     screening_client: tuple[TestClient, Store],
 ) -> None:
     client, _ = screening_client
@@ -152,9 +152,14 @@ def test_condition_catalog_and_two_templates_are_public(
     templates = client.get("/api/v1/screening-templates")
     assert templates.status_code == 200
     assert [item["template_key"] for item in templates.json()] == [
-        "LIMIT_UP_PULLBACK",
-        "BOTTOM_VOLUME_EXPANSION",
+        "limit_up_pullback",
+        "bottom_volume_expansion",
+        "volume_anomaly",
+        "limit_up_retrace",
+        "volume_breakout",
+        "moving_average_trend",
     ]
+    assert all(item["enabled"] is True for item in templates.json())
 
 
 def test_create_is_async_durable_idempotent_and_queryable(

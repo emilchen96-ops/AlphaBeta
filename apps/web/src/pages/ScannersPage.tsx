@@ -1,46 +1,73 @@
-import { FilterOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  CopyOutlined,
+  ExperimentOutlined,
+  FilterOutlined,
+  HeartOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+} from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   App,
   Button,
   Card,
+  Checkbox,
   Col,
   Collapse,
   Descriptions,
   Empty,
   Input,
+  Modal,
   Progress,
   Row,
   Select,
   Space,
   Statistic,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Key } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
-import { getScannerSessionDefault } from "../api/scanners";
 import {
+  addScreeningResultsToWatchlist,
+  archiveUserScreening,
+  cloneUserScreening,
   createScreening,
   getScreening,
   getScreeningConditions,
   getScreeningProgress,
   getScreeningResults,
+  getScreeningRuns,
+  getScreeningTemplates,
+  listUserScreenings,
   parseScreeningText,
   previewScreeningSpec,
+  restoreUserScreening,
+  runUserScreening,
+  saveUserScreening,
+  updateUserScreening,
   validateScreeningSpec,
 } from "../api/screenings";
+import { createWatchlist, getWatchlists } from "../api/market";
+import { getScannerSessionDefault } from "../api/scanners";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import { VisualScreeningEditor } from "../components/ScreeningBuilder/VisualScreeningEditor";
 import type {
+  ScreeningConditionDefinition,
   ScreeningParseResult,
   ScreeningPreview,
   ScreeningResult,
+  ScreeningRun,
   ScreeningSpecSnapshot,
   ScreeningStatus,
+  ScreeningTemplate,
+  UserScreening,
 } from "../types/screenings";
+import { formatDateTime } from "../utils/display";
 
 const terminalStatuses = new Set<ScreeningStatus>([
   "COMPLETED",
@@ -90,6 +117,65 @@ function instrumentText(result: ScreeningResult) {
         ? "SZ"
         : result.exchange;
   return `${result.instrument_name}（${result.symbol}.${exchange}）`;
+}
+
+function metricText(metrics: Record<string, unknown>) {
+  const labels: Record<string, string> = {
+    limit_up_date: "涨停日期",
+    trading_days_since_limit_up: "距涨停",
+    distance_to_anchor: "距离起涨价",
+    volume_ratio: "成交量比例",
+    range_position: "区间位置",
+    volume_multiple: "成交量倍数",
+    bullish_candle: "是否收阳",
+  };
+  const percentKeys = new Set([
+    "distance_to_anchor",
+    "volume_ratio",
+    "range_position",
+  ]);
+  return Object.entries(metrics)
+    .filter(([key]) => key in labels)
+    .map(([key, value]) => {
+      const formatted =
+        typeof value === "boolean"
+          ? value
+            ? "是"
+            : "否"
+          : percentKeys.has(key) && Number.isFinite(Number(value))
+            ? `${(Number(value) * 100).toFixed(2)}%`
+            : key === "volume_multiple" && Number.isFinite(Number(value))
+              ? `${Number(value).toFixed(2)}倍`
+              : typeof value === "string" ||
+                  typeof value === "number" ||
+                  typeof value === "bigint"
+                ? String(value)
+                : "—";
+      return `${labels[key]}：${formatted}`;
+    })
+    .join("；");
+}
+
+function percentMetric(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : "—";
+}
+
+function mainFailureText(
+  stats: Record<string, unknown> | undefined,
+  definitions: ScreeningConditionDefinition[] | undefined,
+) {
+  const raw = stats?.condition_failure_counts;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const entries = Object.entries(raw)
+    .filter((item): item is [string, number] => typeof item[1] === "number")
+    .sort((left, right) => right[1] - left[1]);
+  if (!entries.length) return null;
+  const [conditionKey, count] = entries[0];
+  const name =
+    definitions?.find((item) => item.condition_key === conditionKey)
+      ?.display_name ?? conditionKey;
+  return `淘汰股票最多的条件是“${name}”（${count}只未通过）`;
 }
 
 function requestKey() {
@@ -203,19 +289,50 @@ function PreviewCard({ preview }: { preview: ScreeningPreview }) {
   );
 }
 
-export function ScannersPage() {
+interface NaturalLanguagePaneProps {
+  preset?: {
+    spec: ScreeningSpecSnapshot;
+    sourceText?: string | null;
+    nonce: number;
+    useLatestDate?: boolean;
+  };
+  openRunId?: string;
+  editing?: UserScreening;
+  rerunScreeningId?: string;
+}
+
+function NaturalLanguageScreeningPane({
+  preset,
+  openRunId,
+  editing,
+  rerunScreeningId,
+}: NaturalLanguagePaneProps) {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const progressAnchor = useRef<HTMLDivElement>(null);
   const previewTimer = useRef<number | undefined>(undefined);
   const idempotencyKey = useRef(requestKey());
   const submissionLock = useRef(false);
-  const [text, setText] = useState("");
-  const [asOfDate, setAsOfDate] = useState("");
+  const [text, setText] = useState(preset?.sourceText ?? "");
+  const [asOfDate, setAsOfDate] = useState(
+    preset?.useLatestDate ? "" : (preset?.spec.as_of_date ?? ""),
+  );
   const [parseResult, setParseResult] = useState<ScreeningParseResult>();
-  const [draftSpec, setDraftSpec] = useState<ScreeningSpecSnapshot>();
+  const [draftSpec, setDraftSpec] = useState<ScreeningSpecSnapshot | undefined>(
+    preset?.spec,
+  );
   const [preview, setPreview] = useState<ScreeningPreview>();
-  const [activeId, setActiveId] = useState<string>();
+  const [activeId, setActiveId] = useState<string | undefined>(openRunId);
+  const [selectedResultIds, setSelectedResultIds] = useState<Key[]>([]);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDescription, setSaveDescription] = useState("");
+  const [watchlistOpen, setWatchlistOpen] = useState(false);
+  const [watchlistId, setWatchlistId] = useState<string>();
+  const [newWatchlistName, setNewWatchlistName] = useState("");
+  const [realtimeMonitor, setRealtimeMonitor] = useState(false);
+  const [savedScreeningId, setSavedScreeningId] = useState(rerunScreeningId);
+  const navigate = useNavigate();
 
   const sessionDefault = useQuery({
     queryKey: ["scanner-session-default"],
@@ -224,6 +341,10 @@ export function ScannersPage() {
   const definitions = useQuery({
     queryKey: ["screening-conditions"],
     queryFn: getScreeningConditions,
+  });
+  const watchlists = useQuery({
+    queryKey: ["watchlists"],
+    queryFn: getWatchlists,
   });
   const resolvedAsOfDate = asOfDate || sessionDefault.data?.scan_date || "";
 
@@ -241,6 +362,7 @@ export function ScannersPage() {
     onSuccess: (result) => {
       setParseResult(result);
       setDraftSpec(result.screening_spec ?? undefined);
+      setSavedScreeningId(undefined);
       setPreview(result.preview ?? undefined);
       idempotencyKey.current = requestKey();
       if (result.parse_status === "COMPLETE") {
@@ -255,6 +377,13 @@ export function ScannersPage() {
     onSuccess: (result) => setPreview(result.preview),
     onError: (error: Error) => void message.error(error.message),
   });
+
+  useEffect(() => {
+    if (!preset) return;
+    previewMutation.mutate(preset.spec);
+    // preset.nonce deliberately re-applies the same saved/template spec.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset?.nonce]);
 
   const active = useQuery({
     queryKey: ["screening", activeId],
@@ -301,6 +430,78 @@ export function ScannersPage() {
     },
   });
 
+  const rerunMutation = useMutation({
+    mutationFn: ({
+      screeningId,
+      date,
+    }: {
+      screeningId: string;
+      date: string;
+    }) => runUserScreening(screeningId, date),
+    onSuccess: async (run) => {
+      setActiveId(run.screening_id);
+      await queryClient.invalidateQueries({ queryKey: ["screenings"] });
+      await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
+      void message.success(
+        run.replayed ? "已打开相同的选股任务" : "选股任务已进入后台队列",
+      );
+      window.setTimeout(
+        () => progressAnchor.current?.scrollIntoView?.({ behavior: "smooth" }),
+        50,
+      );
+    },
+    onError: (error: Error) => void message.error(error.message),
+    onSettled: () => {
+      submissionLock.current = false;
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: (input: Parameters<typeof saveUserScreening>[0]) =>
+      editing
+        ? updateUserScreening(editing.id, input)
+        : saveUserScreening(input),
+    onSuccess: async () => {
+      setSaveOpen(false);
+      setSaveName("");
+      setSaveDescription("");
+      await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
+      void message.success("选股方案已保存");
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
+  const addWatchlistMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeId) throw new Error("请先完成一次选股");
+      let targetId = watchlistId ?? null;
+      if (!realtimeMonitor && !targetId && newWatchlistName.trim()) {
+        const created = await createWatchlist(
+          newWatchlistName.trim(),
+          "由智能选股结果创建",
+        );
+        targetId = created.id;
+      }
+      return addScreeningResultsToWatchlist(activeId, {
+        instrument_ids: selectedResultIds.map(String),
+        watchlist_id: realtimeMonitor ? null : targetId,
+        new_watchlist_name:
+          realtimeMonitor || targetId ? null : newWatchlistName.trim() || null,
+        realtime_monitor: realtimeMonitor,
+      });
+    },
+    onSuccess: async (result) => {
+      setWatchlistOpen(false);
+      setSelectedResultIds([]);
+      setRealtimeMonitor(false);
+      await queryClient.invalidateQueries({ queryKey: ["watchlists"] });
+      void message.success(
+        `已加入${result.succeeded}只，已有${result.already_exists}只，失败${result.failed}只`,
+      );
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
   const parse = () => {
     if (!text.trim()) {
       void message.warning("请先用中文描述选股条件");
@@ -327,6 +528,7 @@ export function ScannersPage() {
 
   const updateDraft = (next: ScreeningSpecSnapshot) => {
     setDraftSpec(next);
+    setSavedScreeningId(undefined);
     idempotencyKey.current = requestKey();
     if (previewTimer.current !== undefined) {
       window.clearTimeout(previewTimer.current);
@@ -338,16 +540,31 @@ export function ScannersPage() {
   };
 
   const start = async () => {
-    if (!draftSpec || createMutation.isPending || submissionLock.current)
+    if (
+      !draftSpec ||
+      createMutation.isPending ||
+      rerunMutation.isPending ||
+      submissionLock.current
+    )
       return;
     submissionLock.current = true;
     try {
-      const validated = await validateScreeningSpec(draftSpec);
+      const validated = await validateScreeningSpec({
+        ...draftSpec,
+        as_of_date: resolvedAsOfDate,
+      });
       setDraftSpec(validated.screening_spec);
       setPreview(validated.preview);
       if (!validated.can_execute) {
         void message.error("本地历史日线尚未就绪，暂时不能开始选股");
         submissionLock.current = false;
+        return;
+      }
+      if (savedScreeningId) {
+        rerunMutation.mutate({
+          screeningId: savedScreeningId,
+          date: resolvedAsOfDate,
+        });
         return;
       }
       createMutation.mutate({
@@ -367,28 +584,35 @@ export function ScannersPage() {
   };
 
   const current = progress.data ?? active.data;
+  const terminal = Boolean(current && terminalStatuses.has(current.status));
+  const failureSummary = mainFailureText(
+    active.data?.execution_stats,
+    definitions.data,
+  );
   return (
     <section>
-      <PageHeader
-        title="智能选股"
-        description="用中文描述条件，系统会匹配标准规则、生成可读预览，并使用本地MiniQMT历史日线筛选全部A股。"
-        action={
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => {
-              void sessionDefault.refetch();
-              void definitions.refetch();
-              if (activeId) {
-                void active.refetch();
-                void progress.refetch();
-                void results.refetch();
-              }
-            }}
-          >
-            刷新
-          </Button>
-        }
-      />
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          marginBottom: 12,
+        }}
+      >
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={() => {
+            void sessionDefault.refetch();
+            void definitions.refetch();
+            if (activeId) {
+              void active.refetch();
+              void progress.refetch();
+              void results.refetch();
+            }
+          }}
+        >
+          刷新
+        </Button>
+      </div>
 
       <Card title="自然语言选股">
         <Row gutter={[16, 16]}>
@@ -492,21 +716,34 @@ export function ScannersPage() {
             value={draftSpec}
             onChange={updateDraft}
           />
-          <Button
-            type="primary"
-            size="large"
-            icon={<FilterOutlined />}
-            style={{ marginTop: 20 }}
-            loading={createMutation.isPending}
-            disabled={
-              createMutation.isPending ||
-              previewMutation.isPending ||
-              !preview?.can_execute
-            }
-            onClick={() => void start()}
-          >
-            开始选股
-          </Button>
+          <Space style={{ marginTop: 20 }}>
+            <Button
+              type="primary"
+              size="large"
+              icon={<FilterOutlined />}
+              loading={createMutation.isPending || rerunMutation.isPending}
+              disabled={
+                createMutation.isPending ||
+                rerunMutation.isPending ||
+                previewMutation.isPending ||
+                !preview?.can_execute
+              }
+              onClick={() => void start()}
+            >
+              开始选股
+            </Button>
+            <Button
+              size="large"
+              icon={<SaveOutlined />}
+              onClick={() => {
+                setSaveName(editing?.name ?? draftSpec.name);
+                setSaveDescription(editing?.description ?? "");
+                setSaveOpen(true);
+              }}
+            >
+              保存方案
+            </Button>
+          </Space>
         </Card>
       ) : null}
 
@@ -521,6 +758,33 @@ export function ScannersPage() {
               </Tag>
             }
           >
+            <Descriptions
+              size="small"
+              column={{ xs: 1, md: 2, xl: 4 }}
+              items={[
+                {
+                  key: "name",
+                  label: "方案",
+                  children: active.data?.name ?? draftSpec?.name ?? "临时方案",
+                },
+                {
+                  key: "date",
+                  label: "筛选日期",
+                  children: active.data?.spec.as_of_date ?? resolvedAsOfDate,
+                },
+                {
+                  key: "universe",
+                  label: "股票范围",
+                  children: "全部A股（按排除项过滤）",
+                },
+                {
+                  key: "conditions",
+                  label: "条件数量",
+                  children: `${active.data?.spec.conditions.length ?? draftSpec?.conditions.length ?? 0}项`,
+                },
+              ]}
+              style={{ marginBottom: 12 }}
+            />
             <Progress
               percent={current.progress_percent}
               status={current.status === "FAILED" ? "exception" : "active"}
@@ -570,25 +834,150 @@ export function ScannersPage() {
         ) : null}
       </div>
 
+      {terminal &&
+      current &&
+      current.status !== "FAILED" &&
+      current.matched_count === 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="本次没有股票满足全部条件"
+          description={
+            <Space orientation="vertical" size={6}>
+              <span>
+                已处理{current.processed_instruments}只，其中
+                {current.insufficient_data_count}只历史数据不足、
+                {current.indeterminate_count + current.failed_count}
+                只无法完成判断。
+              </span>
+              {failureSummary ? <span>{failureSummary}。</span> : null}
+              <span>
+                可以放宽阈值、减少组合条件，或改用较近的交易日后重新运行。
+              </span>
+              <Button
+                size="small"
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+              >
+                修改选股条件
+              </Button>
+            </Space>
+          }
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
+      {terminal &&
+      current &&
+      current.status === "PARTIAL_FAILED" &&
+      current.matched_count > 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="结果可用，但部分股票未能完成判断"
+          description={`本次有${current.insufficient_data_count}只数据不足，${current.indeterminate_count + current.failed_count}只计算失败或无法判定；下表只展示满足条件的真实结果。`}
+          style={{ marginTop: 16 }}
+        />
+      ) : null}
+
       {activeId ? (
-        <Card title="真实筛选结果" style={{ marginTop: 16 }}>
+        <Card
+          title="真实筛选结果"
+          style={{ marginTop: 16 }}
+          extra={
+            <Button
+              icon={<HeartOutlined />}
+              disabled={!selectedResultIds.length}
+              onClick={() => setWatchlistOpen(true)}
+            >
+              批量加入自选
+            </Button>
+          }
+        >
           <Table<ScreeningResult>
-            rowKey="result_id"
+            rowKey="instrument_id"
             size="small"
             pagination={{ pageSize: 20 }}
             loading={results.isLoading}
             dataSource={results.data?.items ?? []}
+            rowSelection={{
+              selectedRowKeys: selectedResultIds,
+              onChange: setSelectedResultIds,
+            }}
             columns={[
               { title: "排名", dataIndex: "rank", width: 80 },
               {
                 title: "股票",
-                render: (_, record) => instrumentText(record),
+                render: (_, record) => (
+                  <Link
+                    to={`/market?instrument_id=${record.instrument_id}&screening_id=${activeId}`}
+                  >
+                    {instrumentText(record)}
+                  </Link>
+                ),
               },
               {
                 title: "参考价",
                 render: (_, record) => `${record.reference_price}元`,
               },
-              { title: "入选原因", dataIndex: "reason" },
+              {
+                title: "筛选日涨跌",
+                render: (_, record) =>
+                  percentMetric(record.metrics.daily_return),
+              },
+              {
+                title: "动态条件值",
+                render: (_, record) => metricText(record.metrics) || "—",
+              },
+              {
+                title: "数据提示",
+                render: (_, record) => {
+                  const warning = record.metrics.data_warning;
+                  return typeof warning === "string" ||
+                    typeof warning === "number" ||
+                    typeof warning === "bigint"
+                    ? String(warning)
+                    : "数据正常";
+                },
+              },
+              {
+                title: "入选原因",
+                dataIndex: "reason",
+                render: (reason: string) => (
+                  <Typography.Paragraph
+                    ellipsis={{ rows: 2, expandable: true, symbol: "展开" }}
+                    style={{ margin: 0 }}
+                  >
+                    {reason}
+                  </Typography.Paragraph>
+                ),
+              },
+              {
+                title: "操作",
+                width: 220,
+                render: (_, record) => (
+                  <Space>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setSelectedResultIds([record.instrument_id]);
+                        setWatchlistOpen(true);
+                      }}
+                    >
+                      加入自选
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<ExperimentOutlined />}
+                      onClick={() =>
+                        void navigate(
+                          `/research/backtest?instrument_id=${record.instrument_id}&screening_id=${activeId}&screening_result_id=${record.result_id}`,
+                        )
+                      }
+                    >
+                      快速回测
+                    </Button>
+                  </Space>
+                ),
+              },
             ]}
             locale={{
               emptyText: (
@@ -604,6 +993,456 @@ export function ScannersPage() {
           />
         </Card>
       ) : null}
+      <Modal
+        title={editing ? "保存方案新版本" : "保存为我的选股方案"}
+        open={saveOpen}
+        okText="保存方案"
+        cancelText="取消"
+        confirmLoading={saveMutation.isPending}
+        onCancel={() => setSaveOpen(false)}
+        onOk={() => {
+          if (!draftSpec || !saveName.trim()) {
+            void message.warning("请输入方案名称");
+            return;
+          }
+          saveMutation.mutate({
+            name: saveName.trim(),
+            description: saveDescription.trim() || null,
+            source_text: text.trim() || null,
+            screening_spec: draftSpec,
+            origin: draftSpec.origin,
+          });
+        }}
+      >
+        <Typography.Text>方案名称</Typography.Text>
+        <Input
+          value={saveName}
+          maxLength={128}
+          onChange={(event) => setSaveName(event.target.value)}
+          style={{ marginTop: 8, marginBottom: 16 }}
+        />
+        <Typography.Text>说明（可选）</Typography.Text>
+        <Input.TextArea
+          value={saveDescription}
+          maxLength={1000}
+          onChange={(event) => setSaveDescription(event.target.value)}
+          style={{ marginTop: 8 }}
+        />
+      </Modal>
+      <Modal
+        title="加入自选股"
+        open={watchlistOpen}
+        okText="加入自选"
+        cancelText="取消"
+        confirmLoading={addWatchlistMutation.isPending}
+        onCancel={() => setWatchlistOpen(false)}
+        onOk={() => addWatchlistMutation.mutate()}
+      >
+        <Typography.Paragraph>
+          已选择{selectedResultIds.length}只股票。重复加入不会报错。
+        </Typography.Paragraph>
+        <Select
+          allowClear
+          placeholder="选择现有自选分组"
+          style={{ width: "100%", marginBottom: 12 }}
+          value={watchlistId}
+          options={(watchlists.data ?? []).map((item) => ({
+            value: item.id,
+            label: item.name,
+          }))}
+          onChange={setWatchlistId}
+        />
+        {!watchlistId ? (
+          <Input
+            placeholder="或输入新分组名称"
+            value={newWatchlistName}
+            onChange={(event) => setNewWatchlistName(event.target.value)}
+          />
+        ) : null}
+        <Checkbox
+          checked={realtimeMonitor}
+          onChange={(event) => setRealtimeMonitor(event.target.checked)}
+          style={{ marginTop: 16 }}
+        >
+          同时加入“盘中监控”（会创建或复用该分组，不会自动下单）
+        </Checkbox>
+      </Modal>
+    </section>
+  );
+}
+
+export function ScannersPage() {
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useSearchParams();
+  const activeTab = search.get("tab") ?? "natural";
+  const [preset, setPreset] = useState<NaturalLanguagePaneProps["preset"]>();
+  const [editing, setEditing] = useState<UserScreening>();
+  const [rerunScreeningId, setRerunScreeningId] = useState<string>();
+  const [openRunId, setOpenRunId] = useState<string>();
+  const [historyStatus, setHistoryStatus] = useState<string>();
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
+  const [historyName, setHistoryName] = useState("");
+  const [historySource, setHistorySource] = useState<
+    "TEMPLATE" | "CUSTOM" | undefined
+  >();
+
+  const templates = useQuery({
+    queryKey: ["screening-templates"],
+    queryFn: getScreeningTemplates,
+  });
+  const saved = useQuery({
+    queryKey: ["user-screenings"],
+    queryFn: () => listUserScreenings(true),
+  });
+  const history = useQuery({
+    queryKey: [
+      "screenings",
+      historyStatus,
+      historyFrom,
+      historyTo,
+      historyName,
+      historySource,
+    ],
+    queryFn: () =>
+      getScreeningRuns({
+        status: historyStatus,
+        as_of_from: historyFrom,
+        as_of_to: historyTo,
+        plan_name: historyName.trim(),
+        source_type: historySource,
+      }),
+  });
+
+  const applySpec = (
+    spec: ScreeningSpecSnapshot,
+    sourceText?: string | null,
+    definition?: UserScreening,
+    savedScreeningId?: string,
+    useLatestDate = false,
+  ) => {
+    setPreset((previous) => ({
+      spec,
+      sourceText,
+      nonce: (previous?.nonce ?? 0) + 1,
+      useLatestDate,
+    }));
+    setEditing(definition);
+    setRerunScreeningId(savedScreeningId);
+    setSearch({ tab: "natural" });
+  };
+
+  const cloneMutation = useMutation({
+    mutationFn: cloneUserScreening,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
+      void message.success("已复制选股方案");
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+  const statusMutation = useMutation({
+    mutationFn: ({
+      item,
+      restore,
+    }: {
+      item: UserScreening;
+      restore: boolean;
+    }) =>
+      restore ? restoreUserScreening(item.id) : archiveUserScreening(item.id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
+      void message.success("方案状态已更新");
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
+  const templateCards = (
+    <Row gutter={[16, 16]}>
+      {(templates.data ?? []).map((template: ScreeningTemplate) => (
+        <Col xs={24} md={12} xl={8} key={template.template_key}>
+          <Card
+            title={template.display_name}
+            extra={<Tag>{template.timeframe}</Tag>}
+            actions={[
+              <Button
+                key="use"
+                type="link"
+                disabled={!template.enabled}
+                onClick={() => applySpec(template.spec)}
+              >
+                使用此模板
+              </Button>,
+            ]}
+          >
+            <Typography.Paragraph>{template.description}</Typography.Paragraph>
+            <Typography.Text type="secondary">
+              所需数据：{template.required_data}
+            </Typography.Text>
+          </Card>
+        </Col>
+      ))}
+    </Row>
+  );
+
+  const savedTable = (
+    <Table<UserScreening>
+      rowKey="id"
+      loading={saved.isLoading}
+      dataSource={saved.data?.items ?? []}
+      pagination={{ pageSize: 10 }}
+      locale={{ emptyText: <Empty description="还没有保存选股方案" /> }}
+      columns={[
+        {
+          title: "方案名称",
+          render: (_, item) => (
+            <Space orientation="vertical" size={0}>
+              <Typography.Text strong>{item.name}</Typography.Text>
+              <Typography.Text type="secondary">
+                {item.description ?? item.summary}
+              </Typography.Text>
+            </Space>
+          ),
+        },
+        {
+          title: "版本",
+          render: (_, item) => `第${item.current_version}版`,
+          width: 100,
+        },
+        {
+          title: "状态",
+          render: (_, item) => (
+            <Tag color={item.status === "ARCHIVED" ? "default" : "success"}>
+              {item.status === "ARCHIVED" ? "已归档" : "使用中"}
+            </Tag>
+          ),
+          width: 100,
+        },
+        {
+          title: "最近使用",
+          render: (_, item) =>
+            item.last_used_at ? formatDateTime(item.last_used_at) : "尚未运行",
+          width: 180,
+        },
+        {
+          title: "操作",
+          width: 350,
+          render: (_, item) => (
+            <Space wrap>
+              <Button
+                size="small"
+                disabled={item.status === "ARCHIVED"}
+                onClick={() =>
+                  applySpec(item.screening_spec, item.source_text, undefined)
+                }
+              >
+                使用
+              </Button>
+              <Button
+                size="small"
+                disabled={item.status === "ARCHIVED"}
+                onClick={() =>
+                  applySpec(item.screening_spec, item.source_text, item)
+                }
+              >
+                编辑
+              </Button>
+              <Button
+                size="small"
+                icon={<CopyOutlined />}
+                onClick={() => cloneMutation.mutate(item.id)}
+              >
+                复制
+              </Button>
+              <Button
+                size="small"
+                onClick={() =>
+                  statusMutation.mutate({
+                    item,
+                    restore: item.status === "ARCHIVED",
+                  })
+                }
+              >
+                {item.status === "ARCHIVED" ? "恢复" : "归档"}
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                disabled={item.status === "ARCHIVED"}
+                onClick={() =>
+                  applySpec(
+                    item.screening_spec,
+                    item.source_text,
+                    undefined,
+                    item.id,
+                    true,
+                  )
+                }
+              >
+                再次运行
+              </Button>
+            </Space>
+          ),
+        },
+      ]}
+    />
+  );
+
+  const historyTable = (
+    <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+      <Card size="small">
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={6}>
+            <Input
+              allowClear
+              placeholder="按方案名称筛选"
+              value={historyName}
+              onChange={(event) => setHistoryName(event.target.value)}
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <Select
+              allowClear
+              placeholder="运行状态"
+              style={{ width: "100%" }}
+              value={historyStatus}
+              onChange={setHistoryStatus}
+              options={Object.entries(statusText).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <Select
+              allowClear
+              placeholder="方案来源"
+              style={{ width: "100%" }}
+              value={historySource}
+              onChange={setHistorySource}
+              options={[
+                { value: "TEMPLATE", label: "系统模板" },
+                { value: "CUSTOM", label: "自定义方案" },
+              ]}
+            />
+          </Col>
+          <Col xs={12} md={5}>
+            <Input
+              aria-label="筛选开始日期"
+              type="date"
+              value={historyFrom}
+              onChange={(event) => setHistoryFrom(event.target.value)}
+            />
+          </Col>
+          <Col xs={12} md={5}>
+            <Input
+              aria-label="筛选结束日期"
+              type="date"
+              value={historyTo}
+              onChange={(event) => setHistoryTo(event.target.value)}
+            />
+          </Col>
+        </Row>
+      </Card>
+      <Table<ScreeningRun>
+        rowKey="screening_id"
+        loading={history.isLoading}
+        dataSource={history.data?.items ?? []}
+        pagination={{ pageSize: 10 }}
+        locale={{ emptyText: <Empty description="暂无历史选股结果" /> }}
+        columns={[
+          { title: "方案名称", dataIndex: "name" },
+          {
+            title: "筛选日期",
+            render: (_, item) => item.spec.as_of_date,
+            width: 120,
+          },
+          {
+            title: "股票范围",
+            render: () => "全部A股",
+            width: 110,
+          },
+          {
+            title: "状态",
+            render: (_, item) => (
+              <Tag color={statusColor[item.status]}>
+                {statusText[item.status]}
+              </Tag>
+            ),
+            width: 160,
+          },
+          { title: "匹配", dataIndex: "matched_count", width: 80 },
+          {
+            title: "数据不足",
+            dataIndex: "insufficient_data_count",
+            width: 100,
+          },
+          {
+            title: "耗时",
+            render: (_, item) => `${(item.elapsed_ms / 1000).toFixed(2)}秒`,
+            width: 100,
+          },
+          {
+            title: "完成时间",
+            render: (_, item) =>
+              item.completed_at ? formatDateTime(item.completed_at) : "—",
+            width: 180,
+          },
+          {
+            title: "操作",
+            width: 220,
+            render: (_, item) => (
+              <Space>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setOpenRunId(item.screening_id);
+                    setEditing(undefined);
+                    setRerunScreeningId(undefined);
+                    setSearch({ tab: "natural" });
+                  }}
+                >
+                  查看结果
+                </Button>
+                <Button size="small" onClick={() => applySpec(item.spec)}>
+                  按原日期重跑
+                </Button>
+              </Space>
+            ),
+          },
+        ]}
+      />
+    </Space>
+  );
+
+  return (
+    <section>
+      <PageHeader
+        title="智能选股"
+        description="从自然语言、标准模板或已保存方案开始，统一查看历史结果并继续加入自选或回测。"
+      />
+      <Tabs
+        activeKey={activeTab}
+        onChange={(tab) => setSearch({ tab })}
+        items={[
+          {
+            key: "natural",
+            label: "自然语言选股",
+            children: (
+              <NaturalLanguageScreeningPane
+                key={`${preset?.nonce ?? 0}:${openRunId ?? ""}`}
+                preset={preset}
+                editing={editing}
+                rerunScreeningId={rerunScreeningId}
+                openRunId={openRunId}
+              />
+            ),
+          },
+          { key: "templates", label: "选股模板", children: templateCards },
+          { key: "mine", label: "我的选股方案", children: savedTable },
+          { key: "history", label: "历史结果", children: historyTable },
+        ]}
+      />
     </section>
   );
 }

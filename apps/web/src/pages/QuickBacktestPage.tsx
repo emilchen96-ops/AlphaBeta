@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../api/client";
-import { getInstruments } from "../api/market";
+import { getInstrument, getInstruments } from "../api/market";
 import {
   createQuickBacktest,
   listStrategyTemplates,
@@ -77,6 +77,8 @@ export function QuickBacktestPage() {
   const [instrumentKeyword, setInstrumentKeyword] = useState("长信科技");
   const [selectedInstrument, setSelectedInstrument] =
     useState<Instrument | null>(null);
+  const prefilledInstrumentId = search.get("instrument_id");
+  const screeningId = search.get("screening_id");
 
   const templates = useQuery({
     queryKey: ["strategy-templates"],
@@ -90,6 +92,13 @@ export function QuickBacktestPage() {
     queryKey: ["quick-backtest-instruments", instrumentKeyword],
     queryFn: () => getInstruments(instrumentKeyword),
   });
+  const prefilledInstrument = useQuery({
+    queryKey: ["quick-backtest-prefilled-instrument", prefilledInstrumentId],
+    queryFn: () => getInstrument(prefilledInstrumentId ?? ""),
+    enabled: Boolean(prefilledInstrumentId),
+  });
+  const effectiveSelectedInstrument =
+    selectedInstrument ?? prefilledInstrument.data ?? null;
 
   useEffect(() => {
     const templateKey = search.get("template");
@@ -191,6 +200,15 @@ export function QuickBacktestPage() {
         description="行情来自已同步到本地数据库的 MiniQMT 历史日线；运行会经过信号、风控、模拟订单、成交与账本链路。"
         style={{ marginBottom: 16 }}
       />
+      {screeningId && effectiveSelectedInstrument ? (
+        <Alert
+          showIcon
+          type="success"
+          title={`已从智能选股带入：${formatInstrument(effectiveSelectedInstrument)}`}
+          description="请继续选择或描述策略；系统不会自动开始回测。"
+          style={{ marginBottom: 16 }}
+        />
+      ) : null}
 
       <Card title="第一步：选择或描述策略">
         <Radio.Group
@@ -262,6 +280,7 @@ export function QuickBacktestPage() {
           form={form}
           layout="vertical"
           initialValues={{
+            instrument_id: prefilledInstrumentId ?? undefined,
             range: [dayjs().subtract(2, "year"), dayjs()],
             initial_cash: 100000,
             price_adjustment_mode: "QFQ",
@@ -285,10 +304,22 @@ export function QuickBacktestPage() {
               filterOption={false}
               placeholder="输入名称或代码，例如：长信科技 / 300088"
               loading={instruments.isFetching}
-              options={(instruments.data?.items ?? []).map((item) => ({
-                value: item.id,
-                label: formatInstrument(item),
-              }))}
+              options={[
+                ...(effectiveSelectedInstrument
+                  ? [
+                      {
+                        value: effectiveSelectedInstrument.id,
+                        label: formatInstrument(effectiveSelectedInstrument),
+                      },
+                    ]
+                  : []),
+                ...(instruments.data?.items ?? [])
+                  .filter((item) => item.id !== effectiveSelectedInstrument?.id)
+                  .map((item) => ({
+                    value: item.id,
+                    label: formatInstrument(item),
+                  })),
+              ]}
               onSearch={(keyword) => setInstrumentKeyword(keyword.trim())}
               onChange={(id) =>
                 setSelectedInstrument(
@@ -377,8 +408,8 @@ export function QuickBacktestPage() {
                   ))}
                   <Typography.Text type="secondary">
                     股票：
-                    {selectedInstrument
-                      ? formatInstrument(selectedInstrument)
+                    {effectiveSelectedInstrument
+                      ? formatInstrument(effectiveSelectedInstrument)
                       : "待选择"}
                   </Typography.Text>
                 </Space>

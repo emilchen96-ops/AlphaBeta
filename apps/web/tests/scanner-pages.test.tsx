@@ -47,6 +47,9 @@ const screeningTemplates = [
     template_key: "LIMIT_UP_PULLBACK",
     display_name: "涨停回踩",
     description: "最近涨停后回踩起涨锚点，且成交量缩至涨停日的一半以内",
+    timeframe: "日线",
+    required_data: "MiniQMT历史日线",
+    enabled: true,
     spec: {
       schema_version: 1,
       name: "涨停回踩",
@@ -83,6 +86,9 @@ const screeningTemplates = [
     template_key: "BOTTOM_VOLUME_EXPANSION",
     display_name: "底部放倍量",
     description: "价格处于60日区间底部，成交量超过20日均量2倍且收阳",
+    timeframe: "日线",
+    required_data: "MiniQMT历史日线",
+    enabled: true,
     spec: {
       schema_version: 1,
       name: "底部放倍量",
@@ -246,6 +252,21 @@ const naturalSpec = {
     },
   ],
 };
+const userScreeningId = "88888888-8888-4888-8888-888888888888";
+const savedScreening = {
+  id: userScreeningId,
+  name: "我的涨停回踩",
+  description: "浏览器回归方案",
+  source_text: "找过去20日涨停后缩量回踩的股票",
+  origin: "NATURAL_LANGUAGE",
+  current_version: 2,
+  status: "ACTIVE",
+  screening_spec: naturalSpec,
+  summary: "自然语言选股：涨停回踩，共1项标准条件。",
+  created_at: "2026-07-20T08:00:00Z",
+  updated_at: "2026-07-21T08:00:00Z",
+  last_used_at: null,
+};
 function previewFor(spec = naturalSpec) {
   const lookback = spec.conditions[0].parameters.lookback_days;
   return {
@@ -386,6 +407,9 @@ const result = {
 let createPayload: Record<string, unknown> | undefined;
 let createRequests = 0;
 let lastPreviewLookback: unknown;
+let userScreeningItems: unknown[] = [];
+let savedScreeningRunRequests = 0;
+let savedScreeningRunDate: string | undefined;
 
 function installFetch() {
   vi.stubGlobal(
@@ -400,6 +424,27 @@ function installFetch() {
       let body: unknown = healthyStatus;
       let status = 200;
       if (url.includes("/screening-conditions")) body = screeningConditions;
+      else if (
+        url.endsWith(`/user-screenings/${userScreeningId}/run`) &&
+        init?.method === "POST"
+      ) {
+        if (typeof init.body !== "string") {
+          throw new Error("expected JSON request body");
+        }
+        savedScreeningRunRequests += 1;
+        savedScreeningRunDate = (
+          JSON.parse(init.body) as { as_of_date: string }
+        ).as_of_date;
+        body = { ...screeningRun, status: "QUEUED", current_phase: "QUEUED" };
+        status = 202;
+      } else if (url.includes("/user-screenings"))
+        body = {
+          items: userScreeningItems,
+          page: 1,
+          page_size: 100,
+          total: userScreeningItems.length,
+        };
+      else if (url.includes("/watchlists")) body = [];
       else if (
         url.endsWith("/screening-specs/parse") &&
         init?.method === "POST"
@@ -568,6 +613,9 @@ beforeEach(() => {
   createPayload = undefined;
   createRequests = 0;
   lastPreviewLookback = undefined;
+  userScreeningItems = [];
+  savedScreeningRunRequests = 0;
+  savedScreeningRunDate = undefined;
   vi.stubGlobal("WebSocket", undefined);
   installFetch();
 });
@@ -575,7 +623,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭环", async () => {
   renderRoute("/scanners");
-  expect(await screen.findByText("自然语言选股")).toBeInTheDocument();
+  expect((await screen.findAllByText("自然语言选股")).length).toBeGreaterThan(
+    0,
+  );
   fireEvent.change(screen.getByLabelText("选股描述"), {
     target: {
       value:
@@ -638,7 +688,9 @@ test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭�
 
 test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async () => {
   renderRoute("/scanners");
-  await screen.findByText("自然语言选股");
+  expect((await screen.findAllByText("自然语言选股")).length).toBeGreaterThan(
+    0,
+  );
   fireEvent.change(screen.getByLabelText("选股描述"), {
     target: { value: "找低位放量的股票" },
   });
@@ -654,23 +706,32 @@ test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async
   expect(screen.getByLabelText("回看交易日数")).toBeInTheDocument();
 });
 
-test("扫描运行列表用中文展示全市场范围和任务状态", async () => {
-  renderRoute("/scan-runs");
-  expect(await screen.findByText(/成交量异常筛选/)).toBeInTheDocument();
-  expect(screen.getByText("已完成")).toBeInTheDocument();
-  expect(screen.getByText(/总数 5200 · 排除 120/)).toBeInTheDocument();
-  expect(screen.getByText("新建全市场扫描")).toBeInTheDocument();
+test("SC02-C从已保存方案确认后按最新交易日关联版本重跑", async () => {
+  userScreeningItems = [savedScreening];
+  renderRoute("/scanners?tab=mine");
+
+  expect(await screen.findByText("我的涨停回踩")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "再次运行" }));
+
+  expect(await screen.findByText("确认或修改条件")).toBeInTheDocument();
+  expect(screen.getByLabelText("筛选日期")).toHaveValue("2026-07-22");
+  fireEvent.click(screen.getByRole("button", { name: /开始选股/ }));
+
+  await waitFor(() => expect(savedScreeningRunRequests).toBe(1));
+  expect(savedScreeningRunDate).toBe("2026-07-22");
+  expect(createRequests).toBe(0);
 });
 
-test("扫描详情展示股票名称、数据准备统计和中文关键指标", async () => {
+test("旧扫描运行列表入口重定向到统一历史结果", async () => {
+  renderRoute("/scan-runs");
+  expect(await screen.findByText("历史结果")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("按方案名称筛选")).toBeInTheDocument();
+});
+
+test("旧扫描详情入口重定向到统一历史结果", async () => {
   renderRoute(`/scan-runs/${runId}`);
-  expect(await screen.findByText("浦发银行（600000.SH）")).toBeInTheDocument();
-  expect(screen.getByText(/目录 5200 · 排除 120/)).toBeInTheDocument();
-  expect(document.body).toHaveTextContent("放量倍数");
-  expect(document.body).toHaveTextContent("3.5");
-  expect(document.body).toHaveTextContent("MiniQMT数据时间");
-  expect(screen.queryByText(result.instrument_id)).not.toBeInTheDocument();
-  expect(screen.queryByText(/幂等键/)).not.toBeInTheDocument();
+  expect(await screen.findByText("历史结果")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("按方案名称筛选")).toBeInTheDocument();
 });
 
 test.each(["/scanners", "/scan-runs", `/scan-runs/${runId}`])(

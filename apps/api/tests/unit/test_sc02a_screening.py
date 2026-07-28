@@ -378,10 +378,11 @@ def test_volume_multiple_ranking_is_descending_and_stable() -> None:
     assert [item.symbol for item in ranked] == ["600003", "600001"]
 
 
-def test_templates_expose_only_two_sc02a_standard_patterns() -> None:
+def test_templates_include_the_original_patterns_and_sc02c_standard_library() -> None:
     templates = screening_templates()
-    assert [item.conditions[0].condition_key for item in templates] == [
+    assert [item.conditions[0].condition_key for item in templates[:2]] == [
         "LIMIT_UP_PULLBACK",
         "BOTTOM_VOLUME_EXPANSION",
     ]
+    assert len(templates) == 6
     assert all(item.universe_spec.universe_key == "ALL_A_SHARES" for item in templates)

@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from typing import cast
+from datetime import date
+from typing import Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, status
@@ -17,6 +18,10 @@ from alphadesk_api.application.common import ApplicationError
 from alphadesk_api.application.scanners import ScannerQueryService
 from alphadesk_api.application.screening_specs import ScreeningSpecService
 from alphadesk_api.application.screenings import ScreeningRunService
+from alphadesk_api.application.user_screenings import (
+    ScreeningWatchlistService,
+    UserScreeningService,
+)
 from alphadesk_api.schemas.screenings import (
     ConditionDefinitionResponse,
     RankingRuleBody,
@@ -33,7 +38,13 @@ from alphadesk_api.schemas.screenings import (
     ScreeningTemplateResponse,
     ScreeningTextParseBody,
     ScreeningValidationResponse,
+    ScreeningWatchlistBody,
+    ScreeningWatchlistResponse,
     UniverseSpecBody,
+    UserScreeningPageResponse,
+    UserScreeningResponse,
+    UserScreeningRunBody,
+    UserScreeningWriteBody,
 )
 from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.market_reference import PriceAdjustmentMode
@@ -45,9 +56,11 @@ from alphadesk_domain.screening import (
     ScreeningCondition,
     ScreeningError,
     ScreeningSpec,
+    ScreeningTemplateDefinition,
     UniverseSpec,
-    screening_templates,
+    screening_template_catalog,
 )
+from alphadesk_domain.user_screenings import UserScreeningStatus
 
 router = APIRouter(tags=["research-screenings"])
 
@@ -152,6 +165,19 @@ def _spec_service(request: Request) -> ScreeningSpecService:
     )
 
 
+def _template_enabled(
+    item: ScreeningTemplateDefinition,
+    condition_catalog: ConditionCatalog,
+) -> bool:
+    try:
+        return bool(item.enabled) and all(
+            condition_catalog.get(condition.condition_key).enabled
+            for condition in item.spec.conditions
+        )
+    except ScreeningError:
+        return False
+
+
 @router.post(
     "/screening-specs/parse",
     response_model=ScreeningParseResponse,
@@ -210,22 +236,160 @@ async def preview_screening_spec(
 )
 async def list_screening_templates(request: Request) -> list[ScreeningTemplateResponse]:
     condition_catalog = catalog(request)
-    values = []
-    descriptions = {
-        "LIMIT_UP_PULLBACK": "最近涨停后回踩起涨锚点，且成交量缩至涨停日的一半以内",
-        "BOTTOM_VOLUME_EXPANSION": "价格处于60日区间底部，成交量超过20日均量2倍且收阳",
-    }
-    for item in screening_templates():
-        key = item.conditions[0].condition_key
-        values.append(
-            ScreeningTemplateResponse(
-                template_key=key,
-                display_name=item.name,
-                description=descriptions[key],
-                spec=item.snapshot(condition_catalog),
+    return [
+        ScreeningTemplateResponse(
+            template_key=item.template_key,
+            display_name=item.display_name,
+            description=item.description,
+            timeframe=item.timeframe,
+            required_data=item.required_data,
+            enabled=_template_enabled(item, condition_catalog),
+            spec=item.spec.snapshot(condition_catalog),
+        )
+        for item in screening_template_catalog()
+    ]
+
+
+@router.get(
+    "/screening-templates/{template_key}",
+    response_model=ScreeningTemplateResponse,
+)
+async def get_screening_template(request: Request, template_key: str) -> ScreeningTemplateResponse:
+    item = next(
+        (value for value in screening_template_catalog() if value.template_key == template_key),
+        None,
+    )
+    if item is None:
+        raise to_app_error(ApplicationError("SCREENING_TEMPLATE_NOT_FOUND", "没有找到该模板"))
+    return ScreeningTemplateResponse(
+        template_key=item.template_key,
+        display_name=item.display_name,
+        description=item.description,
+        timeframe=item.timeframe,
+        required_data=item.required_data,
+        enabled=_template_enabled(item, catalog(request)),
+        spec=item.spec.snapshot(catalog(request)),
+    )
+
+
+def _user_service(request: Request) -> UserScreeningService:
+    return UserScreeningService(
+        uow_factory(request),
+        catalog(request),
+        source_code=request.app.state.settings.authoritative_market_source,
+    )
+
+
+@router.post(
+    "/user-screenings",
+    response_model=UserScreeningResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user_screening(
+    request: Request, body: UserScreeningWriteBody
+) -> UserScreeningResponse:
+    try:
+        result = await _user_service(request).create(
+            name=body.name,
+            description=body.description,
+            source_text=body.source_text,
+            screening_spec=body.screening_spec.model_dump(mode="json"),
+            origin=body.origin,
+        )
+        return UserScreeningResponse.model_validate(result)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.get("/user-screenings", response_model=UserScreeningPageResponse)
+async def list_user_screenings(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    include_archived: bool = False,
+) -> UserScreeningPageResponse:
+    return UserScreeningPageResponse.model_validate(
+        await _user_service(request).list(
+            page=page, page_size=page_size, include_archived=include_archived
+        )
+    )
+
+
+@router.get("/user-screenings/{screening_id}", response_model=UserScreeningResponse)
+async def get_user_screening(request: Request, screening_id: UUID) -> UserScreeningResponse:
+    try:
+        return UserScreeningResponse.model_validate(await _user_service(request).get(screening_id))
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.put("/user-screenings/{screening_id}", response_model=UserScreeningResponse)
+async def update_user_screening(
+    request: Request, screening_id: UUID, body: UserScreeningWriteBody
+) -> UserScreeningResponse:
+    try:
+        return UserScreeningResponse.model_validate(
+            await _user_service(request).update(
+                screening_id,
+                name=body.name,
+                description=body.description,
+                source_text=body.source_text,
+                screening_spec=body.screening_spec.model_dump(mode="json"),
+                origin=body.origin,
             )
         )
-    return values
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post("/user-screenings/{screening_id}/clone", response_model=UserScreeningResponse)
+async def clone_user_screening(request: Request, screening_id: UUID) -> UserScreeningResponse:
+    try:
+        return UserScreeningResponse.model_validate(
+            await _user_service(request).clone(screening_id)
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post("/user-screenings/{screening_id}/archive", response_model=UserScreeningResponse)
+async def archive_user_screening(request: Request, screening_id: UUID) -> UserScreeningResponse:
+    try:
+        return UserScreeningResponse.model_validate(
+            await _user_service(request).set_status(screening_id, UserScreeningStatus.ARCHIVED)
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post("/user-screenings/{screening_id}/restore", response_model=UserScreeningResponse)
+async def restore_user_screening(request: Request, screening_id: UUID) -> UserScreeningResponse:
+    try:
+        return UserScreeningResponse.model_validate(
+            await _user_service(request).set_status(screening_id, UserScreeningStatus.ACTIVE)
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post(
+    "/user-screenings/{screening_id}/run",
+    response_model=ScreeningRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_user_screening(
+    request: Request, screening_id: UUID, body: UserScreeningRunBody
+) -> ScreeningRunResponse:
+    try:
+        outcome = await _user_service(request).run(
+            screening_id,
+            as_of_date=body.as_of_date,
+            correlation_id=request_correlation_id(request),
+            idempotency_key=body.idempotency_key,
+        )
+        return _run_response(outcome.run, replayed=outcome.replayed)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
 
 
 @router.post(
@@ -258,6 +422,10 @@ async def create_screening(request: Request, body: ScreeningCreateBody) -> Scree
 async def list_screenings(
     request: Request,
     run_status: str | None = Query(default=None, alias="status"),
+    as_of_from: date | None = None,
+    as_of_to: date | None = None,
+    plan_name: str | None = Query(default=None, max_length=128),
+    source_type: Literal["TEMPLATE", "CUSTOM"] | None = Query(default=None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ) -> ScreeningRunPageResponse:
@@ -272,6 +440,24 @@ async def list_screenings(
             limit=10_000,
         )
     filtered = [item for item in items if item.screening_spec]
+    if as_of_from is not None:
+        filtered = [item for item in filtered if item.as_of.date() >= as_of_from]
+    if as_of_to is not None:
+        filtered = [item for item in filtered if item.as_of.date() <= as_of_to]
+    if plan_name:
+        normalized_name = plan_name.strip().casefold()
+        filtered = [
+            item
+            for item in filtered
+            if normalized_name in str(item.screening_spec.get("name", "")).casefold()
+        ]
+    if source_type is not None:
+        filtered = [
+            item
+            for item in filtered
+            if (str(item.screening_spec.get("origin", "")) == "BUILTIN_TEMPLATE")
+            is (source_type == "TEMPLATE")
+        ]
     total = len(filtered)
     start = (page - 1) * page_size
     return ScreeningRunPageResponse(
@@ -359,3 +545,29 @@ async def get_screening_results(
         page_size=page_size,
         total=total,
     )
+
+
+@router.post(
+    "/research/screenings/{screening_id}/add-to-watchlist",
+    response_model=ScreeningWatchlistResponse,
+)
+async def add_screening_results_to_watchlist(
+    request: Request,
+    screening_id: UUID,
+    body: ScreeningWatchlistBody,
+) -> ScreeningWatchlistResponse:
+    try:
+        result = await ScreeningWatchlistService(
+            uow_factory(request),
+            item_limit=request.app.state.settings.watchlist_item_limit,
+        ).add(
+            scan_run_id=screening_id,
+            instrument_ids=body.instrument_ids,
+            watchlist_id=body.watchlist_id,
+            new_watchlist_name=body.new_watchlist_name,
+            realtime_monitor=body.realtime_monitor,
+            correlation_id=request_correlation_id(request),
+        )
+        return ScreeningWatchlistResponse.model_validate(result)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc

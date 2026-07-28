@@ -32,7 +32,6 @@ import {
 } from "../pages/RiskPages";
 import { SettingsPage } from "../pages/SettingsPage";
 import { ScannersPage } from "../pages/ScannersPage";
-import { ScanRunDetailPage, ScanRunsPage } from "../pages/ScanRunsPage";
 import { StrategiesPage } from "../pages/StrategiesPage";
 import {
   StrategyExperimentDetailPage,
@@ -100,8 +99,14 @@ export const routes: RouteObject[] = [
         ),
       },
       { path: "scanners", element: <ScannersPage /> },
-      { path: "scan-runs", element: <ScanRunsPage /> },
-      { path: "scan-runs/:runId", element: <ScanRunDetailPage /> },
+      {
+        path: "scan-runs",
+        element: <Navigate to="/scanners?tab=history" replace />,
+      },
+      {
+        path: "scan-runs/:runId",
+        element: <Navigate to="/scanners?tab=history" replace />,
+      },
       { path: "information", element: <InformationCenterPage /> },
       { path: "information/:itemId", element: <InformationDetailPage /> },
       { path: "market-events", element: <MarketEventsPage /> },

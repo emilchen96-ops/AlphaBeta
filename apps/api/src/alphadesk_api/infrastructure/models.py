@@ -92,6 +92,7 @@ from alphadesk_domain.scanners import ScanMemberStatus, ScanRunStatus
 from alphadesk_domain.strategy import StrategyEnvironment
 from alphadesk_domain.strategy_experiments import StrategyExperimentStatus
 from alphadesk_domain.strategy_runs import StrategyRunStatus
+from alphadesk_domain.user_screenings import UserScreeningStatus
 
 PRICE = Numeric(20, 8)
 QUANTITY = Numeric(24, 8)
@@ -2044,6 +2045,72 @@ class ScanResultModel(TimestampedModel, Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class UserScreeningDefinitionModel(MutableTimestampedModel, Base):
+    __tablename__ = "user_screening_definitions"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_user_screening_definitions_name"),
+        CheckConstraint(
+            f"status IN ({enum_values(UserScreeningStatus)})",
+            name="user_screening_status_valid",
+        ),
+        CheckConstraint("current_version >= 1", name="user_screening_version_positive"),
+        Index("ix_user_screening_status_updated", "status", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    source_text: Mapped[str | None] = mapped_column(Text)
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserScreeningVersionModel(TimestampedModel, Base):
+    __tablename__ = "user_screening_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "screening_id", "version_number", name="uq_user_screening_versions_number"
+        ),
+        Index("ix_user_screening_versions_screening", "screening_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    screening_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_screening_definitions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    screening_spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_text: Mapped[str | None] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class UserScreeningRunLinkModel(TimestampedModel, Base):
+    __tablename__ = "user_screening_run_links"
+    __table_args__ = (
+        UniqueConstraint("scan_run_id", name="uq_user_screening_run_links_run"),
+        Index("ix_user_screening_run_links_screening", "screening_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    scan_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("scan_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    screening_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_screening_definitions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    screening_version_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("user_screening_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
 
 
 class InformationSourceModel(MutableTimestampedModel, Base):

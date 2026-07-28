@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -292,6 +293,7 @@ class RuleBasedScreeningProcessor:
         failed = 0
         ready = 0
         processed = 0
+        condition_failure_counts: Counter[str] = Counter()
         by_member = {item.instrument_id: item for item in members}
         included = list(resolution.included)
         for offset in range(0, len(included), self._batch_size):
@@ -325,6 +327,11 @@ class RuleBasedScreeningProcessor:
                     failed += 1
                     processed += 1
                     continue
+                if (
+                    outcome.outcome is not ConditionOutcome.MATCHED
+                    and outcome.failed_condition_key is not None
+                ):
+                    condition_failure_counts[outcome.failed_condition_key] += 1
                 if outcome.outcome is ConditionOutcome.MATCHED and outcome.candidate:
                     member.status = ScanMemberStatus.MATCHED
                     candidates.append(outcome.candidate)
@@ -426,6 +433,7 @@ class RuleBasedScreeningProcessor:
                 "no_n_plus_one": True,
                 "future_bars_read": 0,
                 "feature_version": "sc02a-v1",
+                "condition_failure_counts": dict(condition_failure_counts),
             }
             if insufficient or indeterminate or failed:
                 locked.mark_partial_failed(now, processed, len(results))

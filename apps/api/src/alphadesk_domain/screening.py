@@ -543,6 +543,7 @@ class InstrumentScreeningOutcome:
     candidate: ScreeningCandidate | None = None
     reason_code: str | None = None
     reason: str | None = None
+    failed_condition_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -683,6 +684,7 @@ class RuleBasedScreeningEngine:
                     outcome=ConditionOutcome.FAILED,
                     reason_code="CONDITION_EVALUATION_FAILED",
                     reason=str(exc)[:400],
+                    failed_condition_key=condition.definition.condition_key,
                 )
             evaluations.append(evaluation)
             if evaluation.outcome is not ConditionOutcome.MATCHED:
@@ -691,6 +693,7 @@ class RuleBasedScreeningEngine:
                     outcome=evaluation.outcome,
                     reason_code=evaluation.reason_code,
                     reason=evaluation.reason,
+                    failed_condition_key=condition.definition.condition_key,
                 )
         current = snapshot.bars[-1]
         score = sum((item.score for item in evaluations), Decimal("0"))
@@ -699,6 +702,11 @@ class RuleBasedScreeningEngine:
             "as_of_date": snapshot.as_of_date.isoformat(),
             "market_data_time": current.timestamp.isoformat(),
             "current_close": _metric(current.close),
+            "daily_return": (
+                None
+                if len(snapshot.bars) < 2
+                else _metric(current.close / snapshot.bars[-2].close - Decimal("1"))
+            ),
             "data_source": "MINIQMT",
         }
         for evaluation in evaluations:
@@ -1635,4 +1643,109 @@ def screening_templates() -> tuple[ScreeningSpec, ...]:
             ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
+        ScreeningSpec(
+            schema_version=1,
+            name="成交量异常",
+            origin="BUILTIN_TEMPLATE",
+            universe_spec=UniverseSpec(),
+            as_of_date=today,
+            timeframe=MarketTimeframe.DAY_1,
+            conditions=(
+                ScreeningCondition(
+                    condition_key="VOLUME_RATIO",
+                    parameters={"window": 20, "minimum_ratio": "2"},
+                ),
+            ),
+            ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+        ),
+        ScreeningSpec(
+            schema_version=1,
+            name="涨停后回落",
+            origin="BUILTIN_TEMPLATE",
+            universe_spec=UniverseSpec(),
+            as_of_date=today,
+            timeframe=MarketTimeframe.DAY_1,
+            conditions=(
+                ScreeningCondition(
+                    condition_key="LIMIT_UP_PULLBACK",
+                    parameters={
+                        "lookback_days": 20,
+                        "event_selection": "LATEST_VALID",
+                        "anchor_price": "PRE_LIMIT_PREVIOUS_CLOSE",
+                        "maximum_distance_pct": "0.08",
+                        "minimum_price_ratio_to_anchor": "0.95",
+                        "volume_reference": "LIMIT_UP_DAY_VOLUME",
+                        "maximum_volume_ratio": "0.80",
+                    },
+                ),
+            ),
+            ranking_rules=(RankingRule(field="distance_to_anchor"),),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+        ),
+        ScreeningSpec(
+            schema_version=1,
+            name="放量突破",
+            origin="BUILTIN_TEMPLATE",
+            universe_spec=UniverseSpec(),
+            as_of_date=today,
+            timeframe=MarketTimeframe.DAY_1,
+            conditions=(
+                ScreeningCondition(condition_key="N_DAY_HIGH_BREAKOUT", parameters={"window": 20}),
+                ScreeningCondition(
+                    condition_key="VOLUME_RATIO",
+                    parameters={"window": 20, "minimum_ratio": "1.5"},
+                ),
+            ),
+            ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+        ),
+        ScreeningSpec(
+            schema_version=1,
+            name="均线趋势",
+            origin="BUILTIN_TEMPLATE",
+            universe_spec=UniverseSpec(),
+            as_of_date=today,
+            timeframe=MarketTimeframe.DAY_1,
+            conditions=(
+                ScreeningCondition(
+                    condition_key="SMA_RELATION",
+                    parameters={"short_window": 5, "long_window": 20, "relation": "ABOVE"},
+                ),
+            ),
+            ranking_rules=(RankingRule(field="score", direction=RankingDirection.DESC),),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ScreeningTemplateDefinition:
+    template_key: str
+    display_name: str
+    description: str
+    spec: ScreeningSpec
+    timeframe: str = "日线"
+    required_data: str = "MiniQMT历史日线"
+    enabled: bool = True
+
+
+def screening_template_catalog() -> tuple[ScreeningTemplateDefinition, ...]:
+    specs = screening_templates()
+    metadata = (
+        ("limit_up_pullback", "最近涨停后回踩起涨锚点，同时成交量明显收缩"),
+        ("bottom_volume_expansion", "位于历史区间底部、成交量放大且当日收阳"),
+        ("volume_anomaly", "当前成交量显著高于此前平均成交量"),
+        ("limit_up_retrace", "最近涨停后回落至起涨区域，用于宽松观察"),
+        ("volume_breakout", "价格突破前期高点，同时成交量明显放大"),
+        ("moving_average_trend", "短期均线位于长期均线上方"),
+    )
+    return tuple(
+        ScreeningTemplateDefinition(
+            template_key=key,
+            display_name=spec.name,
+            description=description,
+            spec=spec,
+        )
+        for spec, (key, description) in zip(specs, metadata, strict=True)
     )

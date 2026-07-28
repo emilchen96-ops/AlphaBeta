@@ -42,3 +42,9 @@ D03 新增 `intraday_market_data`、`intraday_1m`、`intraday_5m`、`intraday_15
 `intraday_30m`、`intraday_60m`、`minute_backtest` 和 `minute_replay`。前六项根据 PostgreSQL
 分钟 Bar 计数报告数据状态；后两项实现状态固定 `NOT_IMPLEMENTED`，数据状态单独计算。
 分钟历史数据不得映射为 `realtime_market_data=READY`。
+## SC02-C 智能选股闭环
+
+已具备：六个数据驱动模板、自然语言安全解析、可视化条件编辑、版本化个人方案、不可变运行
+快照、历史筛选、结果解释、批量加入自选及快速回测预填。
+
+当前不具备：任意脚本条件、实时盘中选股、自动回测、自动下单或 MiniQMT 交易接线。
