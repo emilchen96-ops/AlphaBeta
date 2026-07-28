@@ -180,15 +180,18 @@ class ScreeningSpecService:
                 }
             if bar_count <= 0:
                 return {
-                    "ready": False,
-                    "message": "本地尚无MiniQMT历史日线，当前规则不能执行。",
+                    "ready": True,
+                    "message": (
+                        "本地尚无完整MiniQMT历史日线；开始选股后系统会自动分析窗口、"
+                        "只补齐缺失区间，再执行筛选。"
+                    ),
                     "bar_count": 0,
                 }
             return {
                 "ready": True,
                 "message": (
-                    f"本地已有{bar_count:,}根正式历史日K线；执行时仍会逐只检查所需窗口，"
-                    "数据不足会单独计数。"
+                    f"本地已有{bar_count:,}根正式历史日K线；开始选股后仍会自动检查"
+                    "每只股票的所需窗口，并只补齐缺失区间。"
                 ),
                 "bar_count": bar_count,
             }

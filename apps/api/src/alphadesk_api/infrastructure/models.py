@@ -1956,7 +1956,7 @@ class ScanRunModel(MutableTimestampedModel, Base):
         String(8), nullable=False, default=PriceAdjustmentMode.RAW.value
     )
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
     total_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     excluded_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     data_ready_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

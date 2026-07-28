@@ -1,6 +1,13 @@
 export type ScreeningStatus =
   | "CREATED"
   | "QUEUED"
+  | "PLANNING"
+  | "CHECKING_COVERAGE"
+  | "BACKFILLING_MARKET_DATA"
+  | "BACKFILLING_REFERENCE_DATA"
+  | "VERIFYING_DATA"
+  | "PREPARING_FEATURES"
+  | "SCREENING"
   | "RESOLVING"
   | "CHECKING_DATA"
   | "BACKFILLING"
@@ -118,6 +125,8 @@ export interface ScreeningRun {
   started_at: string | null;
   completed_at: string | null;
   replayed: boolean;
+  data_requirement_plan: Record<string, unknown> | null;
+  data_preparation: Record<string, unknown> | null;
 }
 
 export interface ScreeningRunPage {
@@ -139,6 +148,13 @@ export interface ScreeningProgress {
   matched_count: number;
   progress_percent: number;
   elapsed_ms: number;
+  current_stage: string;
+  stage_label: string;
+  current_action: string;
+  downloading_count: number;
+  provider_failed_count: number;
+  quality_failed_count: number;
+  not_applicable_count: number;
 }
 
 export interface ScreeningResult {

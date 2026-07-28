@@ -60,6 +60,7 @@ class ScreeningSpecPayload(StrictBody):
 
 class ScreeningCreateBody(ScreeningSpecPayload):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    use_existing_data_only: bool = False
 
 
 class ScreeningTextParseBody(StrictBody):
@@ -203,6 +204,11 @@ class UserScreeningPageResponse(BaseModel):
 class UserScreeningRunBody(StrictBody):
     as_of_date: date
     idempotency_key: str | None = Field(default=None, max_length=128)
+    use_existing_data_only: bool = False
+
+
+class ScreeningRetryBody(StrictBody):
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
 
 class ScreeningWatchlistBody(StrictBody):
@@ -243,6 +249,8 @@ class ScreeningRunResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     replayed: bool = False
+    data_requirement_plan: dict[str, Any] | None = None
+    data_preparation: dict[str, Any] | None = None
 
 
 class ScreeningRunPageResponse(BaseModel):
@@ -264,6 +272,13 @@ class ScreeningProgressResponse(BaseModel):
     matched_count: int
     progress_percent: int
     elapsed_ms: int
+    current_stage: str
+    stage_label: str
+    current_action: str
+    downloading_count: int
+    provider_failed_count: int
+    quality_failed_count: int
+    not_applicable_count: int
 
 
 class ScreeningResultResponse(BaseModel):

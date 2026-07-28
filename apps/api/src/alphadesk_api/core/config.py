@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     scanner_backfill_batch_size: int = Field(default=50, ge=1, le=50)
     scanner_backfill_wait_seconds: int = Field(default=120, ge=0, le=3600)
     scanner_scan_batch_size: int = Field(default=250, ge=1, le=1000)
+    screening_warmup_buffer_sessions: int = Field(default=10, ge=0, le=250)
     strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
     backtest_max_instruments: int = Field(default=20, ge=1, le=200)
     backtest_max_bars: int = Field(default=100_000, ge=1, le=2_000_000)

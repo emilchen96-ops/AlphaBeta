@@ -35,6 +35,13 @@ class ScannerParameterType(StrEnum):
 class ScanRunStatus(StrEnum):
     CREATED = "CREATED"
     QUEUED = "QUEUED"
+    PLANNING = "PLANNING"
+    CHECKING_COVERAGE = "CHECKING_COVERAGE"
+    BACKFILLING_MARKET_DATA = "BACKFILLING_MARKET_DATA"
+    BACKFILLING_REFERENCE_DATA = "BACKFILLING_REFERENCE_DATA"
+    VERIFYING_DATA = "VERIFYING_DATA"
+    PREPARING_FEATURES = "PREPARING_FEATURES"
+    SCREENING = "SCREENING"
     RESOLVING = "RESOLVING"
     CHECKING_DATA = "CHECKING_DATA"
     BACKFILLING = "BACKFILLING"
@@ -57,6 +64,11 @@ class ScanMemberStatus(StrEnum):
     DATA_MISSING = "DATA_MISSING"
     BACKFILL_REQUESTED = "BACKFILL_REQUESTED"
     READY = "READY"
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+    REFERENCE_DATA_MISSING = "REFERENCE_DATA_MISSING"
+    QUALITY_FAILED = "QUALITY_FAILED"
+    PROVIDER_FAILED = "PROVIDER_FAILED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
     SCANNED = "SCANNED"
     MATCHED = "MATCHED"
     INDETERMINATE = "INDETERMINATE"
@@ -715,6 +727,13 @@ class ScanRun:
             ScanRunStatus.RESOLVING,
             ScanRunStatus.CHECKING_DATA,
             ScanRunStatus.BACKFILLING,
+            ScanRunStatus.PLANNING,
+            ScanRunStatus.CHECKING_COVERAGE,
+            ScanRunStatus.BACKFILLING_MARKET_DATA,
+            ScanRunStatus.BACKFILLING_REFERENCE_DATA,
+            ScanRunStatus.VERIFYING_DATA,
+            ScanRunStatus.PREPARING_FEATURES,
+            ScanRunStatus.SCREENING,
         }:
             raise ValueError("scan run cannot start from its current status")
         now = as_utc(occurred_at, "occurred_at")
@@ -731,6 +750,13 @@ class ScanRun:
             ScanRunStatus.CHECKING_DATA,
             ScanRunStatus.BACKFILLING,
             ScanRunStatus.RUNNING,
+            ScanRunStatus.PLANNING,
+            ScanRunStatus.CHECKING_COVERAGE,
+            ScanRunStatus.BACKFILLING_MARKET_DATA,
+            ScanRunStatus.BACKFILLING_REFERENCE_DATA,
+            ScanRunStatus.VERIFYING_DATA,
+            ScanRunStatus.PREPARING_FEATURES,
+            ScanRunStatus.SCREENING,
         }:
             raise ValueError("invalid in-progress scan phase")
         if not 0 <= progress_percent <= 99:
@@ -742,8 +768,8 @@ class ScanRun:
         self.updated_at = now
 
     def mark_completed(self, occurred_at: datetime, instruments: int, matches: int) -> None:
-        if self.status is not ScanRunStatus.RUNNING:
-            raise ValueError("only RUNNING scan runs can complete")
+        if self.status not in {ScanRunStatus.RUNNING, ScanRunStatus.SCREENING}:
+            raise ValueError("only screening scan runs can complete")
         if instruments < 0 or matches < 0 or matches > instruments:
             raise ValueError("invalid scan counters")
         now = as_utc(occurred_at, "occurred_at")
@@ -752,6 +778,11 @@ class ScanRun:
         self.matches_found = matches
         self.progress_percent = 100
         self.completed_at = now
+        if self.started_at is not None:
+            self.elapsed_ms = max(
+                self.elapsed_ms,
+                int((now - self.started_at).total_seconds() * 1_000),
+            )
         self.updated_at = now
 
     def mark_partial(self, occurred_at: datetime, instruments: int, matches: int) -> None:
@@ -779,12 +810,22 @@ class ScanRun:
         now = as_utc(occurred_at, "occurred_at")
         self.status = ScanRunStatus.CANCELED
         self.completed_at = now
+        if self.started_at is not None:
+            self.elapsed_ms = max(
+                self.elapsed_ms,
+                int((now - self.started_at).total_seconds() * 1_000),
+            )
         self.updated_at = now
 
     def mark_failed(self, occurred_at: datetime, code: str, message: str) -> None:
         now = as_utc(occurred_at, "occurred_at")
         self.status = ScanRunStatus.FAILED
         self.failed_at = now
+        if self.started_at is not None:
+            self.elapsed_ms = max(
+                self.elapsed_ms,
+                int((now - self.started_at).total_seconds() * 1_000),
+            )
         self.error_code = non_empty(code, "error_code")[:64]
         self.error_message = non_empty(message, "error_message")[:512]
         self.updated_at = now

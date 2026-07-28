@@ -12,6 +12,8 @@ from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
 from alphadesk_api.application.scanners import FullMarketScannerProcessor
 from alphadesk_api.application.screenings import (
     RuleBasedScreeningProcessor,
+    ScreeningDataPreparationService,
+    ScreeningOrchestrationService,
     UnifiedScannerWorkerProcessor,
 )
 from alphadesk_api.core.config import Settings, get_settings
@@ -51,14 +53,27 @@ class ScannerWorker:
             backfill_wait_seconds=settings.scanner_backfill_wait_seconds,
             scan_batch_size=settings.scanner_scan_batch_size,
         )
+        screening_processor = RuleBasedScreeningProcessor(
+            factory,
+            builtin_condition_catalog(),
+            source_code=settings.authoritative_market_source,
+            batch_size=settings.scanner_scan_batch_size,
+        )
+        preparation_service = ScreeningDataPreparationService(
+            factory,
+            builtin_condition_catalog(),
+            source_code=settings.authoritative_market_source,
+            warmup_buffer=settings.screening_warmup_buffer_sessions,
+            backfill_batch_size=settings.scanner_backfill_batch_size,
+            backfill_wait_seconds=settings.scanner_backfill_wait_seconds,
+        )
         self._processor = UnifiedScannerWorkerProcessor(
             factory,
             legacy_processor,
-            RuleBasedScreeningProcessor(
-                factory,
-                builtin_condition_catalog(),
-                source_code=settings.authoritative_market_source,
-                batch_size=settings.scanner_scan_batch_size,
+            screening_processor,
+            ScreeningOrchestrationService(
+                preparation_service,
+                screening_processor,
             ),
         )
 

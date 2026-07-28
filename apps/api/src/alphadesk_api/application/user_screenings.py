@@ -205,6 +205,7 @@ class UserScreeningService:
         as_of_date: date,
         correlation_id: UUID,
         idempotency_key: str | None,
+        use_existing_data_only: bool = False,
     ) -> ScreeningRunOutcome:
         async with self._uow_factory() as uow:
             definition = await uow.user_screenings.get_definition(screening_id)
@@ -226,6 +227,7 @@ class UserScreeningService:
             ),
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,
+            use_existing_data_only=use_existing_data_only,
         )
         if not outcome.replayed:
             now = datetime.now(UTC)

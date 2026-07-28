@@ -1,8 +1,9 @@
 # AlphaDesk
 
-> **SC02-C 智能选股闭环：** 默认产品模式为 `RESEARCH_ONLY`。智能选股现已包含自然语言、
+> **SC02-D 智能选股数据自动准备：** 默认产品模式为 `RESEARCH_ONLY`。智能选股现已包含自然语言、
 > 系统模板、我的方案和历史结果，并可将真实结果加入自选或预填快速回测。推荐从
-> `http://127.0.0.1:5173/scanners` 用自然语言或模板确认安全规则；快速回测仍不会向
+> `http://127.0.0.1:5173/scanners` 用自然语言或模板确认安全规则；开始后会自动检查
+> 正式日线覆盖、只补 MiniQMT 缺失区间、复检质量并准备所需指标。快速回测仍不会向
 > MiniQMT 或券商发送订单。详见 [选股历史结果](docs/screening_history.md)。
 
 > **2026-07-23：MD01 MiniQMT 单一行情源完成。** 正式环境的 A 股/ETF 目录、实时快照、
@@ -187,11 +188,13 @@ BaoStock、AKShare、东方财富和 Fixture 适配器仅保留给显式测试�
 
 启动 PostgreSQL、Redis、API、`scanner_worker`、Web 和 Windows MiniQMT 只读行情
 Agent 后，访问 `http://localhost:5173/scanners`。选择“涨停回踩”或“底部放倍量”
-模板和筛选日期即可创建后台任务。系统按历史点时解析沪深北全部 A 股，批量读取本地
-MiniQMT 日线，展示进度、统计、结果和中文入选原因。首次全市场数据准备可能耗时
-较长；数据不足会明确计数，不会伪装为全市场成功。扫描不会调用风控、Broker、账本
+模板和筛选日期即可创建后台任务。系统按历史点时解析沪深北全部 A 股，自动推导数据
+窗口，只补齐本地缺失的 MiniQMT 日线，完成质量检查和指标预热后再筛选，展示阶段、
+统计、结果和中文入选原因。首次全市场数据准备可能耗时较长；数据不足、不可判定和
+Provider 失败会分别计数，不会伪装为全市场成功。扫描不会调用风控、Broker、账本
 或 MiniQMT 交易接口，也不会产生 Signal 或订单。完整说明见
-[SC02-A 选股引擎](docs/sc02_screening_engine.md)；旧 SC01-R 补数链路见
+[SC02-A 选股引擎](docs/sc02_screening_engine.md)与
+[SC02-D 数据自动准备](docs/sc02_screening_data_preparation.md)；旧 SC01-R 补数链路见
 [扫描器说明](docs/scanners.md)。
 
 SC02-B/SC02-C 在同一规则引擎上提供自然语言解析、可视化确认、六个系统模板、版本化个人

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from time import perf_counter
@@ -14,7 +14,11 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
-from alphadesk_api.application.scanners import BackfillEnqueuer, FullMarketScannerProcessor
+from alphadesk_api.application.scanners import (
+    BackfillEnqueuer,
+    FullMarketScannerProcessor,
+    miniqmt_provider_symbol,
+)
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.market_reference import PriceAdjustmentMode
@@ -37,8 +41,19 @@ from alphadesk_domain.screening import (
     ScreeningCandidate,
     ScreeningCondition,
     ScreeningError,
+    ScreeningFeatureStore,
     ScreeningSpec,
     UniverseSpec,
+    ValidatedScreeningSpec,
+)
+from alphadesk_domain.screening_data_preparation import (
+    DataRequirementPlan,
+    InstrumentDataGap,
+    ScreeningDataGapService,
+    ScreeningDataRequirementPlanner,
+    ScreeningInstrumentReadiness,
+    ScreeningPreparationRun,
+    ScreeningPreparationStage,
 )
 from alphadesk_domain.strategy import StrategyBar
 
@@ -128,6 +143,8 @@ class ScreeningRunService:
         *,
         correlation_id: UUID,
         idempotency_key: str | None,
+        use_existing_data_only: bool = False,
+        retry_instrument_ids: Sequence[UUID] = (),
     ) -> ScreeningRunOutcome:
         try:
             validated = spec.validate(self._catalog)
@@ -136,7 +153,14 @@ class ScreeningRunService:
             raise ApplicationError(exc.code, str(exc)) from exc
         await self._validate_date(spec.as_of_date)
         key = idempotency_key or f"screening:{uuid4()}"
-        fingerprint = scanner_request_fingerprint(snapshot)
+        request_snapshot = {
+            **snapshot,
+            "preparation_options": {
+                "use_existing_data_only": use_existing_data_only,
+                "retry_instrument_ids": [str(item) for item in retry_instrument_ids],
+            },
+        }
+        fingerprint = scanner_request_fingerprint(request_snapshot)
         primary = validated.conditions[0].definition
         primary_parameters = validated.conditions[0].parameters
         universe_snapshot = snapshot["universe_spec"]
@@ -161,6 +185,12 @@ class ScreeningRunService:
                     for name, value in primary_parameters.items()
                 },
                 screening_spec=snapshot,
+                execution_stats={
+                    "preparation_options": {
+                        "use_existing_data_only": use_existing_data_only,
+                        "retry_instrument_ids": [str(item) for item in retry_instrument_ids],
+                    }
+                },
                 universe_type=ScanUniverseType.ALL_ACTIVE_A_SHARES.value,
                 universe_filters={
                     **dict(universe_snapshot),
@@ -180,6 +210,54 @@ class ScreeningRunService:
             await uow.commit()
         return ScreeningRunOutcome(run=run, replayed=False)
 
+    async def cancel(self, run_id: UUID) -> ScanRun:
+        async with self._uow_factory() as uow:
+            run = await uow.scan_runs.get_for_update(run_id)
+            if run is None or not run.screening_spec:
+                raise ApplicationError("SCREENING_RUN_NOT_FOUND", "筛选任务不存在")
+            try:
+                run.request_cancel(datetime.now(UTC))
+            except ValueError as exc:
+                raise ApplicationError(
+                    "SCREENING_PREPARATION_CANCELLED",
+                    "该筛选任务已经结束，不能再次取消",
+                ) from exc
+            await uow.scan_runs.update(run)
+            await uow.commit()
+        return run
+
+    async def retry_failed(
+        self,
+        run_id: UUID,
+        *,
+        correlation_id: UUID,
+        idempotency_key: str | None,
+    ) -> ScreeningRunOutcome:
+        async with self._uow_factory() as uow:
+            run = await uow.scan_runs.get_by_id(run_id)
+            members = [] if run is None else await uow.scan_run_members.list_by_run(run_id)
+        if run is None or not run.screening_spec:
+            raise ApplicationError("SCREENING_RUN_NOT_FOUND", "筛选任务不存在")
+        retry_statuses = {
+            ScanMemberStatus.INSUFFICIENT_HISTORY,
+            ScanMemberStatus.REFERENCE_DATA_MISSING,
+            ScanMemberStatus.QUALITY_FAILED,
+            ScanMemberStatus.PROVIDER_FAILED,
+            ScanMemberStatus.FAILED,
+        }
+        retry_ids = tuple(item.instrument_id for item in members if item.status in retry_statuses)
+        if not retry_ids:
+            raise ApplicationError(
+                "SCREENING_NO_FAILED_INSTRUMENTS",
+                "本次筛选没有可重新尝试的失败股票",
+            )
+        return await self.enqueue(
+            screening_spec_from_snapshot(run.screening_spec),
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            retry_instrument_ids=retry_ids,
+        )
+
     async def _validate_date(self, value: date) -> None:
         async with self._uow_factory() as uow:
             sessions = await uow.trading_calendar.list(
@@ -190,6 +268,758 @@ class ScreeningRunService:
                 "SCREENING_DATE_NOT_TRADING_DAY",
                 "筛选日期不是已登记的A股交易日",
             )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScreeningPreparationOutcome:
+    ready_for_screening: bool
+    feature_store: ScreeningFeatureStore | None = None
+
+
+class ScreeningDataPreparationService:
+    """Prepare only missing SC02 data before invoking the existing engine."""
+
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        catalog: ConditionCatalog,
+        *,
+        source_code: str = "MINIQMT",
+        warmup_buffer: int = 10,
+        backfill_batch_size: int = 50,
+        backfill_wait_seconds: int = 120,
+    ) -> None:
+        self._uow_factory = uow_factory
+        self._catalog = catalog
+        self._source_code = source_code.strip().upper()
+        self._planner = ScreeningDataRequirementPlanner(
+            warmup_buffer=warmup_buffer,
+            provider_code=self._source_code,
+        )
+        self._gap_service = ScreeningDataGapService()
+        self._universe = PointInTimeAshareUniverseService(
+            uow_factory,
+            source_code=self._source_code,
+        )
+        self._backfill_batch_size = max(1, min(backfill_batch_size, 50))
+        self._backfill_wait_seconds = max(0, backfill_wait_seconds)
+
+    async def prepare(
+        self,
+        run_id: UUID,
+        enqueue_backfill: BackfillEnqueuer,
+    ) -> ScreeningPreparationOutcome:
+        run = await self._get_run(run_id)
+        if run.cancel_requested:
+            await self._cancel(run.id)
+            return ScreeningPreparationOutcome(ready_for_screening=False)
+        if run.status is ScanRunStatus.QUEUED:
+            await self._persist_stage(
+                run.id,
+                ScanRunStatus.PLANNING,
+                3,
+                "正在分析选股数据需求",
+            )
+            run = await self._get_run(run.id)
+        spec = screening_spec_from_snapshot(run.screening_spec)
+        try:
+            validated = spec.validate(self._catalog)
+        except ScreeningError as exc:
+            raise ApplicationError(exc.code, str(exc)) from exc
+        resolution = await self._universe.resolve(spec.as_of_date, spec.universe_spec)
+        retry_ids = self._retry_ids(run)
+        included = tuple(
+            item for item in resolution.included if not retry_ids or item.id in retry_ids
+        )
+        if not included:
+            raise ApplicationError(
+                "SCREENING_EMPTY_UNIVERSE",
+                "应用排除条件后没有可筛选的A股",
+            )
+        plan, open_sessions = await self._plan(validated, resolution.total)
+        if run.status in {ScanRunStatus.QUEUED, ScanRunStatus.PLANNING}:
+            await self._persist_plan(run, included, resolution.excluded, plan)
+            run = await self._get_run(run.id)
+        bars_by_instrument, statuses = await self._load_data(
+            included,
+            plan,
+            open_sessions,
+        )
+        suspended = {
+            (item.instrument_id, item.session_date)
+            for item in statuses
+            if item.status.value == "SUSPENDED"
+        }
+        gaps = self._gap_service.assess(
+            instruments=included,
+            bars_by_instrument=bars_by_instrument,
+            required_sessions=open_sessions,
+            minimum_rule_sessions=plan.minimum_rule_sessions,
+            suspended_sessions=suspended,
+        )
+        use_existing = bool(self._options(run).get("use_existing_data_only", False))
+        missing = tuple(item for item in gaps if item.needs_backfill)
+        if run.status is ScanRunStatus.CHECKING_COVERAGE and run.backfill_requested_at is None:
+            plan = replace(
+                plan,
+                estimated_missing_instruments=len(missing),
+            )
+            await self._persist_gap_estimate(run.id, plan)
+        if missing and not use_existing and run.backfill_requested_at is None:
+            await self._enqueue_gaps(
+                run,
+                included,
+                gaps,
+                open_sessions,
+                enqueue_backfill,
+            )
+            return ScreeningPreparationOutcome(ready_for_screening=False)
+        now = datetime.now(UTC)
+        if (
+            missing
+            and not use_existing
+            and run.backfill_requested_at is not None
+            and (now - run.backfill_requested_at).total_seconds() < self._backfill_wait_seconds
+        ):
+            await self._persist_waiting(run, gaps)
+            return ScreeningPreparationOutcome(ready_for_screening=False)
+
+        finalized = tuple(
+            self._finalize_gap(item, backfill_attempted=run.backfill_requested_at is not None)
+            for item in gaps
+        )
+        await self._persist_stage(
+            run.id,
+            ScanRunStatus.BACKFILLING_REFERENCE_DATA,
+            55,
+            "正在补齐交易状态",
+        )
+        finalized = await self._verify_reference_data(
+            spec,
+            included,
+            finalized,
+            plan,
+        )
+        await self._persist_stage(
+            run.id,
+            ScanRunStatus.VERIFYING_DATA,
+            65,
+            "正在检查数据质量",
+        )
+        ready_ids = {
+            item.instrument_id
+            for item in finalized
+            if item.readiness is ScreeningInstrumentReadiness.READY
+        }
+        await self._persist_readiness(
+            run.id,
+            finalized,
+            ready_ids=ready_ids,
+            plan=plan,
+            bars_by_instrument=bars_by_instrument,
+        )
+        if not ready_ids:
+            await self._finish_without_ready(run.id)
+            return ScreeningPreparationOutcome(ready_for_screening=False)
+        await self._persist_stage(
+            run.id,
+            ScanRunStatus.PREPARING_FEATURES,
+            75,
+            "正在准备选股指标",
+        )
+        feature_store = ScreeningFeatureStore(
+            required_condition_keys=tuple(
+                item.definition.condition_key for item in validated.conditions
+            )
+        )
+        by_id = {item.id: item for item in included}
+        for instrument_id in ready_ids:
+            feature_store.get(
+                by_id[instrument_id],
+                bars_by_instrument[instrument_id],
+                spec.as_of_date,
+            )
+        await self._persist_prepared(run.id, ready_ids, len(ready_ids))
+        return ScreeningPreparationOutcome(
+            ready_for_screening=True,
+            feature_store=feature_store,
+        )
+
+    async def _get_run(self, run_id: UUID) -> ScanRun:
+        async with self._uow_factory() as uow:
+            run = await uow.scan_runs.get_by_id(run_id)
+        if run is None:
+            raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+        return run
+
+    async def _plan(
+        self,
+        validated: ValidatedScreeningSpec,
+        universe_count: int,
+    ) -> tuple[DataRequirementPlan, tuple[date, ...]]:
+        try:
+            spec = validated.spec
+            search_start = spec.as_of_date - timedelta(days=4_000)
+            async with self._uow_factory() as uow:
+                sessions = await uow.trading_calendar.list(
+                    exchange="SHSE",
+                    start=search_start,
+                    end=spec.as_of_date,
+                    limit=4_500,
+                )
+            open_dates = tuple(item.session_date for item in sessions if item.is_open)
+            plan = self._planner.plan(
+                validated,
+                universe_count=universe_count,
+                open_sessions=open_dates,
+            )
+            required = tuple(
+                item
+                for item in open_dates
+                if plan.earliest_required_date <= item <= plan.latest_required_date
+            )
+            return plan, required
+        except (AttributeError, ValueError) as exc:
+            raise ApplicationError(
+                "SCREENING_DATA_PLAN_FAILED",
+                f"无法生成选股数据计划：{str(exc)[:300]}",
+            ) from exc
+
+    async def _persist_plan(
+        self,
+        run: ScanRun,
+        included: Sequence[Instrument],
+        excluded: Sequence[tuple[Instrument, str, str]],
+        plan: DataRequirementPlan,
+    ) -> None:
+        members = [
+            ScanRunMember(
+                scan_run_id=run.id,
+                instrument_id=item.id,
+                symbol=item.symbol,
+                exchange=item.exchange,
+                instrument_name=item.name,
+                status=ScanMemberStatus.INCLUDED,
+                required_bars=plan.required_open_sessions,
+            )
+            for item in included
+        ]
+        members.extend(
+            ScanRunMember(
+                scan_run_id=run.id,
+                instrument_id=item.id,
+                symbol=item.symbol,
+                exchange=item.exchange,
+                instrument_name=item.name,
+                status=ScanMemberStatus.EXCLUDED,
+                reason_code=code,
+                reason=reason,
+                required_bars=plan.required_open_sessions,
+            )
+            for item, code, reason in excluded
+        )
+        now = datetime.now(UTC)
+        preparation = ScreeningPreparationRun(
+            scan_run_id=run.id,
+            stage=ScreeningPreparationStage.CHECKING_COVERAGE,
+            current_action="正在检查本地数据",
+            started_at=run.started_at or now,
+            updated_at=now,
+        )
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run.id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            await uow.scan_run_members.upsert_many(members)
+            locked.instrument_ids = tuple(item.id for item in included)
+            locked.total_instruments = len(included) + len(excluded)
+            locked.excluded_instruments = len(excluded)
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_requirement_plan": plan.response_dict(),
+                "data_preparation": preparation.response_dict(),
+            }
+            locked.mark_phase(ScanRunStatus.CHECKING_COVERAGE, now, progress_percent=10)
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _persist_gap_estimate(
+        self,
+        run_id: UUID,
+        plan: DataRequirementPlan,
+    ) -> None:
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_requirement_plan": plan.response_dict(),
+            }
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _load_data(
+        self,
+        instruments: Sequence[Instrument],
+        plan: DataRequirementPlan,
+        open_sessions: Sequence[date],
+    ) -> tuple[dict[UUID, list[StrategyBar]], list[object]]:
+        start_at = datetime.combine(plan.earliest_required_date, time.min, SHANGHAI).astimezone(UTC)
+        end_at = datetime.combine(
+            plan.latest_required_date + timedelta(days=1),
+            time.min,
+            SHANGHAI,
+        ).astimezone(UTC)
+        instrument_ids = [item.id for item in instruments]
+        async with self._uow_factory() as uow:
+            bars = await uow.historical_bars.list_authoritative_bars(
+                instrument_ids=instrument_ids,
+                timeframe=plan.required_timeframe,
+                start_at=start_at,
+                end_at=end_at,
+                source_code=self._source_code,
+                price_adjustment_mode=plan.price_adjustment_mode,
+            )
+            statuses = await uow.instrument_trading_statuses.list(
+                instrument_ids=instrument_ids,
+                start=open_sessions[0],
+                end=open_sessions[-1],
+                limit=max(len(instrument_ids) * len(open_sessions), 10_000),
+            )
+        grouped = {item.id: [] for item in instruments}
+        for bar in bars:
+            if bar.instrument_id in grouped:
+                grouped[bar.instrument_id].append(bar)
+        for values in grouped.values():
+            values.sort(key=lambda item: item.timestamp)
+        return grouped, statuses
+
+    async def _enqueue_gaps(
+        self,
+        run: ScanRun,
+        instruments: Sequence[Instrument],
+        gaps: Sequence[InstrumentDataGap],
+        open_sessions: Sequence[date],
+        enqueue_backfill: BackfillEnqueuer,
+    ) -> None:
+        by_id = {item.id: item for item in instruments}
+        requests: dict[tuple[date, date], list[Instrument]] = {}
+        for gap in gaps:
+            for value in self._gap_service.contiguous_ranges(
+                gap.missing_sessions,
+                open_sessions,
+            ):
+                requests.setdefault(value, []).append(by_id[gap.instrument_id])
+        missing_gaps = tuple(item for item in gaps if item.needs_backfill)
+        queue_failed_ids: set[UUID] = set()
+        for (start_date, end_date), values in requests.items():
+            for offset in range(0, len(values), self._backfill_batch_size):
+                batch = values[offset : offset + self._backfill_batch_size]
+                try:
+                    await enqueue_backfill(
+                        {
+                            "request_id": str(uuid4()),
+                            "instrument_ids": [str(item.id) for item in batch],
+                            "timeframe": MarketTimeframe.DAY_1.value,
+                            "start_at": datetime.combine(
+                                start_date,
+                                time.min,
+                                SHANGHAI,
+                            )
+                            .astimezone(UTC)
+                            .isoformat(),
+                            "end_at": datetime.combine(
+                                end_date + timedelta(days=1),
+                                time.min,
+                                SHANGHAI,
+                            )
+                            .astimezone(UTC)
+                            .isoformat(),
+                            "instruments": [
+                                {
+                                    "instrument_id": str(item.id),
+                                    "provider_symbol": miniqmt_provider_symbol(
+                                        item.symbol,
+                                        item.exchange,
+                                    ),
+                                }
+                                for item in batch
+                            ],
+                            "origin": "SC02_D",
+                            "scan_run_id": str(run.id),
+                        }
+                    )
+                except Exception:
+                    queue_failed_ids.update(item.id for item in batch)
+        now = datetime.now(UTC)
+        members = await self._members(run.id)
+        gap_by_id = {item.instrument_id: item for item in gaps}
+        for member in members:
+            gap = gap_by_id.get(member.instrument_id)
+            if gap is None or not gap.needs_backfill:
+                continue
+            member.status = (
+                ScanMemberStatus.PROVIDER_FAILED
+                if member.instrument_id in queue_failed_ids
+                else ScanMemberStatus.BACKFILL_REQUESTED
+            )
+            member.reason_code = (
+                "SCREENING_PROVIDER_NOT_AVAILABLE"
+                if member.instrument_id in queue_failed_ids
+                else "HISTORY_BACKFILL_REQUESTED"
+            )
+            member.reason = (
+                "MiniQMT历史行情请求未能进入队列"
+                if member.instrument_id in queue_failed_ids
+                else "正在通过MiniQMT补齐缺失的历史日线区间"
+            )
+            member.bars_available = gap.available_bars
+            member.required_bars = gap.required_bars
+            member.updated_at = now
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run.id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            await uow.scan_run_members.upsert_many(members)
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": ScreeningPreparationStage.BACKFILLING_MARKET_DATA.value,
+                    "current_action": "正在补齐历史行情",
+                    "original_ready_count": sum(
+                        item.readiness is ScreeningInstrumentReadiness.READY for item in gaps
+                    ),
+                    "original_bar_counts": {
+                        str(item.instrument_id): item.available_bars for item in gaps
+                    },
+                    "downloading_count": len(missing_gaps) - len(queue_failed_ids),
+                    "provider_failed_count": len(queue_failed_ids),
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.backfill_requested = len(missing_gaps)
+            locked.backfill_failed = len(queue_failed_ids)
+            locked.backfill_requested_at = now
+            locked.mark_phase(
+                ScanRunStatus.BACKFILLING_MARKET_DATA,
+                now,
+                progress_percent=30,
+            )
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _persist_waiting(
+        self,
+        run: ScanRun,
+        gaps: Sequence[InstrumentDataGap],
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run.id)
+            if locked is None:
+                return
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": ScreeningPreparationStage.BACKFILLING_MARKET_DATA.value,
+                    "current_action": "正在等待MiniQMT返回历史行情",
+                    "downloading_count": len(gaps),
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.updated_at = now
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    @staticmethod
+    def _finalize_gap(
+        gap: InstrumentDataGap,
+        *,
+        backfill_attempted: bool,
+    ) -> InstrumentDataGap:
+        if (
+            backfill_attempted
+            and gap.readiness is ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY
+        ):
+            return InstrumentDataGap(
+                instrument_id=gap.instrument_id,
+                readiness=ScreeningInstrumentReadiness.PROVIDER_FAILED,
+                available_bars=gap.available_bars,
+                required_bars=gap.required_bars,
+                missing_sessions=gap.missing_sessions,
+                reason_code="SCREENING_DATA_STILL_NOT_READY",
+                reason="MiniQMT补数后仍缺少所需历史日线",
+            )
+        return gap
+
+    async def _verify_reference_data(
+        self,
+        spec: ScreeningSpec,
+        instruments: Sequence[Instrument],
+        gaps: Sequence[InstrumentDataGap],
+        plan: DataRequirementPlan,
+    ) -> tuple[InstrumentDataGap, ...]:
+        if spec.price_adjustment_mode is not PriceAdjustmentMode.QFQ:
+            return tuple(gaps)
+        ids = [item.id for item in instruments]
+        async with self._uow_factory() as uow:
+            factors = await uow.adjustment_factors.list(
+                instrument_ids=ids,
+                start=plan.earliest_required_date,
+                end=plan.latest_required_date,
+                source=None,
+                convention=None,
+                limit=max(len(ids) * plan.required_open_sessions, 10_000),
+            )
+        available = {item.instrument_id for item in factors}
+        values: list[InstrumentDataGap] = []
+        for gap in gaps:
+            if (
+                gap.readiness is ScreeningInstrumentReadiness.READY
+                and gap.instrument_id not in available
+            ):
+                values.append(
+                    InstrumentDataGap(
+                        instrument_id=gap.instrument_id,
+                        readiness=ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING,
+                        available_bars=gap.available_bars,
+                        required_bars=gap.required_bars,
+                        reason_code="SCREENING_REFERENCE_DATA_MISSING",
+                        reason="缺少所需复权因子，不能可靠计算前复权条件",
+                    )
+                )
+            else:
+                values.append(gap)
+        return tuple(values)
+
+    async def _persist_readiness(
+        self,
+        run_id: UUID,
+        gaps: Sequence[InstrumentDataGap],
+        *,
+        ready_ids: set[UUID],
+        plan: DataRequirementPlan,
+        bars_by_instrument: Mapping[UUID, Sequence[StrategyBar]],
+    ) -> None:
+        now = datetime.now(UTC)
+        members = await self._members(run_id)
+        by_id = {item.instrument_id: item for item in gaps}
+        for member in members:
+            gap = by_id.get(member.instrument_id)
+            if gap is None:
+                continue
+            member.status = ScanMemberStatus(gap.readiness.value)
+            member.reason_code = gap.reason_code
+            member.reason = gap.reason
+            member.bars_available = gap.available_bars
+            member.required_bars = gap.required_bars
+            member.updated_at = now
+        counts = Counter(item.readiness.value for item in gaps)
+        prior_preparation = self._preparation(await self._get_run(run_id))
+        original_ready_value = prior_preparation.get("original_ready_count")
+        if isinstance(original_ready_value, int):
+            original_ready = original_ready_value
+        else:
+            original_ready = counts[ScreeningInstrumentReadiness.READY.value]
+        raw_original_counts = prior_preparation.get("original_bar_counts", {})
+        original_counts = raw_original_counts if isinstance(raw_original_counts, Mapping) else {}
+        backfilled_bars = sum(
+            max(
+                0,
+                len(bars_by_instrument[item])
+                - int(original_counts.get(str(item), len(bars_by_instrument[item]))),
+            )
+            for item in ready_ids
+        )
+        error_codes: list[str] = []
+        if counts[ScreeningInstrumentReadiness.PROVIDER_FAILED.value]:
+            error_codes.append("SCREENING_BACKFILL_PARTIAL_FAILED")
+        if counts[ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING.value]:
+            error_codes.append("SCREENING_REFERENCE_DATA_MISSING")
+        if counts[ScreeningInstrumentReadiness.QUALITY_FAILED.value]:
+            error_codes.append("SCREENING_DATA_QUALITY_FAILED")
+        if (
+            counts[ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value]
+            and not prior_preparation.get("downloading_count")
+        ):
+            error_codes.append("SCREENING_DATA_STILL_NOT_READY")
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            await uow.scan_run_members.upsert_many(members)
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": ScreeningPreparationStage.VERIFYING_DATA.value,
+                    "current_action": "数据质量检查完成",
+                    "original_ready_count": original_ready,
+                    "ready_count": len(ready_ids),
+                    "downloading_count": 0,
+                    "insufficient_count": counts[
+                        ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value
+                    ],
+                    "indeterminate_count": counts[ScreeningInstrumentReadiness.INDETERMINATE.value],
+                    "provider_failed_count": counts[
+                        ScreeningInstrumentReadiness.PROVIDER_FAILED.value
+                    ],
+                    "quality_failed_count": counts[
+                        ScreeningInstrumentReadiness.QUALITY_FAILED.value
+                    ],
+                    "not_applicable_count": counts[
+                        ScreeningInstrumentReadiness.NOT_APPLICABLE.value
+                    ],
+                    "backfilled_instrument_count": max(
+                        0,
+                        len(ready_ids) - original_ready,
+                    ),
+                    "backfilled_bar_count": backfilled_bars,
+                    "required_open_sessions": plan.required_open_sessions,
+                    "error_codes": error_codes,
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.data_ready_instruments = len(ready_ids)
+            locked.insufficient_history = counts[
+                ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value
+            ]
+            locked.backfill_failed = counts[ScreeningInstrumentReadiness.PROVIDER_FAILED.value]
+            locked.failed_instruments = (
+                counts[ScreeningInstrumentReadiness.PROVIDER_FAILED.value]
+                + counts[ScreeningInstrumentReadiness.QUALITY_FAILED.value]
+                + counts[ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING.value]
+            )
+            locked.mark_phase(ScanRunStatus.VERIFYING_DATA, now, progress_percent=70)
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _persist_prepared(
+        self,
+        run_id: UUID,
+        ready_ids: set[UUID],
+        feature_count: int,
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": ScreeningPreparationStage.SCREENING.value,
+                    "current_action": "正在执行全市场选股",
+                    "feature_prepared_count": feature_count,
+                    "ready_instrument_ids": [str(item) for item in sorted(ready_ids, key=str)],
+                    "prepared": True,
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.mark_phase(ScanRunStatus.SCREENING, now, progress_percent=80)
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _persist_stage(
+        self,
+        run_id: UUID,
+        status: ScanRunStatus,
+        progress: int,
+        action: str,
+    ) -> None:
+        now = datetime.now(UTC)
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": status.value,
+                    "current_action": action,
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.mark_phase(status, now, progress_percent=progress)
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _finish_without_ready(self, run_id: UUID) -> None:
+        now = datetime.now(UTC)
+        async with self._uow_factory() as uow:
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is None:
+                return
+            preparation = self._preparation(locked)
+            preparation.update(
+                {
+                    "stage": ScreeningPreparationStage.PARTIAL_FAILED.value,
+                    "current_action": "数据准备完成，但没有股票达到可计算状态",
+                    "updated_at": now.isoformat(),
+                }
+            )
+            locked.execution_stats = {
+                **locked.execution_stats,
+                "data_preparation": preparation,
+            }
+            locked.mark_phase(ScanRunStatus.SCREENING, now, progress_percent=99)
+            locked.mark_partial_failed(now, 0, 0)
+            await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    async def _members(self, run_id: UUID) -> list[ScanRunMember]:
+        async with self._uow_factory() as uow:
+            return await uow.scan_run_members.list_by_run(run_id)
+
+    async def _cancel(self, run_id: UUID) -> None:
+        async with self._uow_factory() as uow:
+            run = await uow.scan_runs.get_for_update(run_id)
+            if run is not None:
+                run.mark_canceled(datetime.now(UTC))
+                await uow.scan_runs.update(run)
+                await uow.commit()
+
+    @staticmethod
+    def _options(run: ScanRun) -> Mapping[str, object]:
+        value = run.execution_stats.get("preparation_options", {})
+        return value if isinstance(value, Mapping) else {}
+
+    def _retry_ids(self, run: ScanRun) -> set[UUID]:
+        raw = self._options(run).get("retry_instrument_ids", [])
+        if not isinstance(raw, list):
+            return set()
+        values: set[UUID] = set()
+        for item in raw:
+            try:
+                values.add(UUID(str(item)))
+            except ValueError:
+                continue
+        return values
+
+    @staticmethod
+    def _preparation(run: ScanRun) -> dict[str, object]:
+        value = run.execution_stats.get("data_preparation", {})
+        return dict(value) if isinstance(value, Mapping) else {}
 
 
 class RuleBasedScreeningProcessor:
@@ -211,7 +1041,12 @@ class RuleBasedScreeningProcessor:
             uow_factory, source_code=self._source_code
         )
 
-    async def process(self, run_id: UUID) -> None:
+    async def process(
+        self,
+        run_id: UUID,
+        *,
+        feature_store: ScreeningFeatureStore | None = None,
+    ) -> None:
         started = perf_counter()
         run = await self._get_run(run_id)
         if not run.screening_spec:
@@ -224,69 +1059,94 @@ class RuleBasedScreeningProcessor:
         if run.cancel_requested:
             await self._mark_canceled(run.id)
             return
-        await self._mark_phase(run.id, ScanRunStatus.RESOLVING, 5)
         resolution = await self._universe.resolve(spec.as_of_date, spec.universe_spec)
-        if not resolution.included:
+        preparation = run.execution_stats.get("data_preparation", {})
+        prepared = isinstance(preparation, Mapping) and bool(preparation.get("prepared"))
+        ready_ids = (
+            {UUID(str(item)) for item in preparation.get("ready_instrument_ids", [])}
+            if prepared and isinstance(preparation.get("ready_instrument_ids"), list)
+            else set()
+        )
+        included = tuple(
+            item for item in resolution.included if not prepared or item.id in ready_ids
+        )
+        if not included:
             raise ApplicationError("SCREENING_EMPTY_UNIVERSE", "应用排除条件后没有可筛选的A股")
-        members = [
-            ScanRunMember(
-                scan_run_id=run.id,
-                instrument_id=item.id,
-                symbol=item.symbol,
-                exchange=item.exchange,
-                instrument_name=item.name,
-                status=ScanMemberStatus.INCLUDED,
-                required_bars=validated.required_history_bars,
+        if prepared:
+            async with self._uow_factory() as uow:
+                members = await uow.scan_run_members.list_by_run(run.id)
+        else:
+            await self._mark_phase(run.id, ScanRunStatus.RESOLVING, 5)
+            members = [
+                ScanRunMember(
+                    scan_run_id=run.id,
+                    instrument_id=item.id,
+                    symbol=item.symbol,
+                    exchange=item.exchange,
+                    instrument_name=item.name,
+                    status=ScanMemberStatus.INCLUDED,
+                    required_bars=validated.required_history_bars,
+                )
+                for item in included
+            ]
+            members.extend(
+                ScanRunMember(
+                    scan_run_id=run.id,
+                    instrument_id=item.id,
+                    symbol=item.symbol,
+                    exchange=item.exchange,
+                    instrument_name=item.name,
+                    status=ScanMemberStatus.EXCLUDED,
+                    reason_code=reason_code,
+                    reason=reason,
+                    required_bars=validated.required_history_bars,
+                )
+                for item, reason_code, reason in resolution.excluded
             )
-            for item in resolution.included
-        ]
-        members.extend(
-            ScanRunMember(
-                scan_run_id=run.id,
-                instrument_id=item.id,
-                symbol=item.symbol,
-                exchange=item.exchange,
-                instrument_name=item.name,
-                status=ScanMemberStatus.EXCLUDED,
-                reason_code=reason_code,
-                reason=reason,
-                required_bars=validated.required_history_bars,
-            )
-            for item, reason_code, reason in resolution.excluded
+            async with self._uow_factory() as uow:
+                locked = await uow.scan_runs.get_for_update(run.id)
+                if locked is None:
+                    raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+                await uow.scan_run_members.upsert_many(members)
+                locked.instrument_ids = tuple(item.id for item in included)
+                locked.total_instruments = resolution.total
+                locked.excluded_instruments = len(resolution.excluded)
+                locked.query_count = 2
+                locked.mark_phase(
+                    ScanRunStatus.CHECKING_DATA,
+                    datetime.now(UTC),
+                    progress_percent=15,
+                )
+                await uow.scan_runs.update(locked)
+                await uow.commit()
+        run = await self._get_run(run.id)
+        plan = run.execution_stats.get("data_requirement_plan", {})
+        earliest = plan.get("earliest_required_date") if isinstance(plan, Mapping) else None
+        start_at = (
+            datetime.combine(date.fromisoformat(str(earliest)), time.min, SHANGHAI).astimezone(UTC)
+            if earliest is not None
+            else run.as_of - timedelta(days=max(validated.required_history_bars * 3, 180))
         )
         async with self._uow_factory() as uow:
-            locked = await uow.scan_runs.get_for_update(run.id)
-            if locked is None:
-                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
-            await uow.scan_run_members.upsert_many(members)
-            locked.instrument_ids = tuple(item.id for item in resolution.included)
-            locked.total_instruments = resolution.total
-            locked.excluded_instruments = len(resolution.excluded)
-            locked.query_count = 2
-            locked.mark_phase(ScanRunStatus.CHECKING_DATA, datetime.now(UTC), progress_percent=15)
-            await uow.scan_runs.update(locked)
-            await uow.commit()
-        run = await self._get_run(run.id)
-        start_at = run.as_of - timedelta(days=max(validated.required_history_bars * 3, 180))
-        async with self._uow_factory() as uow:
             bars = await uow.historical_bars.list_authoritative_bars(
-                instrument_ids=run.instrument_ids,
+                instrument_ids=tuple(item.id for item in included),
                 timeframe=MarketTimeframe.DAY_1,
                 start_at=start_at,
                 end_at=run.as_of + timedelta(microseconds=1),
                 source_code=self._source_code,
                 price_adjustment_mode=PriceAdjustmentMode.RAW,
             )
-        grouped: dict[UUID, list[StrategyBar]] = {
-            instrument.id: [] for instrument in resolution.included
-        }
+        grouped: dict[UUID, list[StrategyBar]] = {instrument.id: [] for instrument in included}
         for market_bar in bars:
             if market_bar.instrument_id in grouped:
                 grouped[market_bar.instrument_id].append(market_bar)
         for values in grouped.values():
             values.sort(key=lambda market_bar: market_bar.timestamp)
-        await self._mark_running(run.id, bars_read=len(bars))
-        engine = RuleBasedScreeningEngine(self._catalog)
+        if prepared:
+            await self._mark_screening_loaded(run.id, bars_read=len(bars))
+        else:
+            await self._mark_running(run.id, bars_read=len(bars))
+        engine = RuleBasedScreeningEngine(self._catalog, feature_store)
         candidates: list[ScreeningCandidate] = []
         insufficient = 0
         indeterminate = 0
@@ -295,7 +1155,7 @@ class RuleBasedScreeningProcessor:
         processed = 0
         condition_failure_counts: Counter[str] = Counter()
         by_member = {item.instrument_id: item for item in members}
-        included = list(resolution.included)
+        included = list(included)
         for offset in range(0, len(included), self._batch_size):
             batch = included[offset : offset + self._batch_size]
             for instrument in batch:
@@ -419,7 +1279,9 @@ class RuleBasedScreeningProcessor:
             locked.batch_count = max(1, (len(included) + self._batch_size - 1) // self._batch_size)
             locked.query_count = 3
             locked.bars_read = len(bars)
+            preparation_stats = self._preparation_stats(locked)
             locked.execution_stats = {
+                **locked.execution_stats,
                 "as_of_date": spec.as_of_date.isoformat(),
                 "universe_count": resolution.total,
                 "included_count": len(included),
@@ -435,7 +1297,26 @@ class RuleBasedScreeningProcessor:
                 "feature_version": "sc02a-v1",
                 "condition_failure_counts": dict(condition_failure_counts),
             }
-            if insufficient or indeterminate or failed:
+            if preparation_stats:
+                preparation_stats.update(
+                    {
+                        "stage": ScreeningPreparationStage.COMPLETED.value,
+                        "current_action": "全市场选股已完成",
+                        "feature_prepared_count": len(included),
+                        "updated_at": now.isoformat(),
+                    }
+                )
+                locked.execution_stats["data_preparation"] = preparation_stats
+                locked.insufficient_history += int(preparation_stats.get("insufficient_count", 0))
+                locked.indeterminate_count += int(preparation_stats.get("indeterminate_count", 0))
+                locked.failed_instruments += int(
+                    preparation_stats.get("provider_failed_count", 0)
+                ) + int(preparation_stats.get("quality_failed_count", 0))
+            if (
+                locked.insufficient_history
+                or locked.indeterminate_count
+                or locked.failed_instruments
+            ):
                 locked.mark_partial_failed(now, processed, len(results))
             else:
                 locked.mark_completed(now, processed, len(results))
@@ -470,6 +1351,22 @@ class RuleBasedScreeningProcessor:
             await uow.scan_runs.update(run)
             await uow.commit()
 
+    async def _mark_screening_loaded(self, run_id: UUID, *, bars_read: int) -> None:
+        async with self._uow_factory() as uow:
+            run = await uow.scan_runs.get_for_update(run_id)
+            if run is None:
+                raise ApplicationError("SCAN_RUN_NOT_FOUND", "筛选任务不存在")
+            run.mark_phase(ScanRunStatus.SCREENING, datetime.now(UTC), progress_percent=80)
+            run.query_count += 1
+            run.bars_read = bars_read
+            await uow.scan_runs.update(run)
+            await uow.commit()
+
+    @staticmethod
+    def _preparation_stats(run: ScanRun) -> dict[str, object]:
+        value = run.execution_stats.get("data_preparation", {})
+        return dict(value) if isinstance(value, Mapping) else {}
+
     async def _update_progress(
         self,
         run_id: UUID,
@@ -496,7 +1393,10 @@ class RuleBasedScreeningProcessor:
             run.matches_found = matched
             run.batch_count = batch_count
             run.elapsed_ms = elapsed_ms
-            run.progress_percent = 20 + int(processed / max(total, 1) * 79)
+            if run.status is ScanRunStatus.SCREENING:
+                run.progress_percent = 80 + int(processed / max(total, 1) * 19)
+            else:
+                run.progress_percent = 20 + int(processed / max(total, 1) * 79)
             run.updated_at = datetime.now(UTC)
             await uow.scan_runs.update(run)
             await uow.commit()
@@ -518,13 +1418,55 @@ class RuleBasedScreeningProcessor:
                 ScanRunStatus.PARTIAL_FAILED,
                 ScanRunStatus.CANCELED,
             }:
-                run.mark_failed(
-                    datetime.now(UTC),
-                    "SCREENING_RUN_FAILED",
-                    f"规则筛选任务执行失败：{str(exc)[:400]}",
+                code = exc.code if isinstance(exc, ApplicationError) else "SCREENING_RUN_FAILED"
+                message = (
+                    str(exc)
+                    if isinstance(exc, ApplicationError)
+                    else f"规则筛选任务执行失败：{str(exc)[:400]}"
                 )
+                run.mark_failed(datetime.now(UTC), code, message)
+                preparation = self._preparation_stats(run)
+                if preparation:
+                    preparation.update(
+                        {
+                            "stage": ScreeningPreparationStage.FAILED.value,
+                            "current_action": message[:300],
+                            "updated_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    run.execution_stats = {
+                        **run.execution_stats,
+                        "data_preparation": preparation,
+                    }
                 await uow.scan_runs.update(run)
                 await uow.commit()
+
+
+class ScreeningOrchestrationService:
+    """Run the SC02-D preparation pipeline before the immutable SC02 engine."""
+
+    def __init__(
+        self,
+        preparation: ScreeningDataPreparationService,
+        screening: RuleBasedScreeningProcessor,
+    ) -> None:
+        self._preparation = preparation
+        self._screening = screening
+
+    async def process(
+        self,
+        run_id: UUID,
+        enqueue_backfill: BackfillEnqueuer,
+    ) -> None:
+        outcome = await self._preparation.prepare(run_id, enqueue_backfill)
+        if outcome.ready_for_screening:
+            await self._screening.process(
+                run_id,
+                feature_store=outcome.feature_store,
+            )
+
+    async def fail(self, run_id: UUID, exc: Exception) -> None:
+        await self._screening.fail(run_id, exc)
 
 
 class UnifiedScannerWorkerProcessor:
@@ -535,10 +1477,12 @@ class UnifiedScannerWorkerProcessor:
         uow_factory: UnitOfWorkFactory,
         legacy_processor: FullMarketScannerProcessor,
         screening_processor: RuleBasedScreeningProcessor,
+        screening_orchestration: ScreeningOrchestrationService | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._legacy = legacy_processor
         self._screening = screening_processor
+        self._screening_orchestration = screening_orchestration
 
     async def process_next(self, enqueue_backfill: BackfillEnqueuer) -> UUID | None:
         async with self._uow_factory() as uow:
@@ -549,6 +1493,13 @@ class UnifiedScannerWorkerProcessor:
                     ScanRunStatus.CHECKING_DATA,
                     ScanRunStatus.BACKFILLING,
                     ScanRunStatus.RUNNING,
+                    ScanRunStatus.PLANNING,
+                    ScanRunStatus.CHECKING_COVERAGE,
+                    ScanRunStatus.BACKFILLING_MARKET_DATA,
+                    ScanRunStatus.BACKFILLING_REFERENCE_DATA,
+                    ScanRunStatus.VERIFYING_DATA,
+                    ScanRunStatus.PREPARING_FEATURES,
+                    ScanRunStatus.SCREENING,
                 )
             )
             if run is None:
@@ -557,7 +1508,10 @@ class UnifiedScannerWorkerProcessor:
             is_screening = bool(run.screening_spec)
         try:
             if is_screening:
-                await self._screening.process(run_id)
+                if self._screening_orchestration is None:
+                    await self._screening.process(run_id)
+                else:
+                    await self._screening_orchestration.process(run_id, enqueue_backfill)
             else:
                 await self._legacy.process(run_id, enqueue_backfill)
         except Exception as exc:

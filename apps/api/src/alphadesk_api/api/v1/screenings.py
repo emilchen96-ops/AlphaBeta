@@ -32,6 +32,7 @@ from alphadesk_api.schemas.screenings import (
     ScreeningProgressResponse,
     ScreeningResultPageResponse,
     ScreeningResultResponse,
+    ScreeningRetryBody,
     ScreeningRunPageResponse,
     ScreeningRunResponse,
     ScreeningSpecBody,
@@ -63,6 +64,21 @@ from alphadesk_domain.screening import (
 from alphadesk_domain.user_screenings import UserScreeningStatus
 
 router = APIRouter(tags=["research-screenings"])
+
+STAGE_LABELS = {
+    "QUEUED": "等待开始",
+    "PLANNING": "正在分析数据需求",
+    "CHECKING_COVERAGE": "正在检查本地数据",
+    "BACKFILLING_MARKET_DATA": "正在补齐历史行情",
+    "BACKFILLING_REFERENCE_DATA": "正在补齐交易状态",
+    "VERIFYING_DATA": "正在检查数据质量",
+    "PREPARING_FEATURES": "正在准备选股指标",
+    "SCREENING": "正在执行全市场选股",
+    "COMPLETED": "已完成",
+    "PARTIAL_FAILED": "部分完成",
+    "FAILED": "失败",
+    "CANCELED": "已取消",
+}
 
 
 def catalog(request: Request) -> ConditionCatalog:
@@ -115,11 +131,18 @@ def _domain_ranking(body: RankingRuleBody) -> RankingRule:
 
 
 def _run_response(run: ScanRun, *, replayed: bool = False) -> ScreeningRunResponse:
+    preparation = run.execution_stats.get("data_preparation")
+    plan = run.execution_stats.get("data_requirement_plan")
+    stage = (
+        str(preparation.get("stage", run.status.value))
+        if isinstance(preparation, dict)
+        else run.status.value
+    )
     return ScreeningRunResponse(
         screening_id=run.id,
         name=str(run.screening_spec.get("name", run.scanner_key)),
         status=run.status.value,
-        current_phase=run.status.value,
+        current_phase=stage,
         spec=run.screening_spec,
         total_instruments=run.total_instruments,
         processed_instruments=run.instruments_scanned,
@@ -143,6 +166,8 @@ def _run_response(run: ScanRun, *, replayed: bool = False) -> ScreeningRunRespon
         started_at=run.started_at,
         completed_at=run.completed_at,
         replayed=replayed,
+        data_requirement_plan=plan if isinstance(plan, dict) else None,
+        data_preparation=preparation if isinstance(preparation, dict) else None,
     )
 
 
@@ -386,6 +411,7 @@ async def run_user_screening(
             as_of_date=body.as_of_date,
             correlation_id=request_correlation_id(request),
             idempotency_key=body.idempotency_key,
+            use_existing_data_only=body.use_existing_data_only,
         )
         return _run_response(outcome.run, replayed=outcome.replayed)
     except ApplicationError as exc:
@@ -407,6 +433,7 @@ async def create_screening(request: Request, body: ScreeningCreateBody) -> Scree
             _domain_spec(body, catalog(request)),
             correlation_id=request_correlation_id(request),
             idempotency_key=body.idempotency_key,
+            use_existing_data_only=body.use_existing_data_only,
         )
         return _run_response(outcome.run, replayed=outcome.replayed)
     except ScreeningError as exc:
@@ -490,6 +517,10 @@ async def get_screening(request: Request, screening_id: UUID) -> ScreeningRunRes
 )
 async def get_screening_progress(request: Request, screening_id: UUID) -> ScreeningProgressResponse:
     run = await _get_screening(request, screening_id)
+    preparation = run.execution_stats.get("data_preparation", {})
+    if not isinstance(preparation, dict):
+        preparation = {}
+    stage = str(preparation.get("stage", run.status.value))
     return ScreeningProgressResponse(
         screening_id=run.id,
         status=run.status.value,
@@ -502,7 +533,57 @@ async def get_screening_progress(request: Request, screening_id: UUID) -> Screen
         matched_count=run.matches_found,
         progress_percent=run.progress_percent,
         elapsed_ms=run.elapsed_ms,
+        current_stage=stage,
+        stage_label=STAGE_LABELS.get(stage, stage),
+        current_action=str(
+            preparation.get("current_action", STAGE_LABELS.get(stage, stage))
+        ),
+        downloading_count=int(preparation.get("downloading_count", 0)),
+        provider_failed_count=int(preparation.get("provider_failed_count", 0)),
+        quality_failed_count=int(preparation.get("quality_failed_count", 0)),
+        not_applicable_count=int(preparation.get("not_applicable_count", 0)),
     )
+
+
+@router.post(
+    "/research/screenings/{screening_id}/cancel",
+    response_model=ScreeningRunResponse,
+)
+async def cancel_screening(request: Request, screening_id: UUID) -> ScreeningRunResponse:
+    try:
+        run = await ScreeningRunService(
+            uow_factory(request),
+            catalog(request),
+            source_code=request.app.state.settings.authoritative_market_source,
+        ).cancel(screening_id)
+        return _run_response(run)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post(
+    "/research/screenings/{screening_id}/retry-failed",
+    response_model=ScreeningRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_failed_screening(
+    request: Request,
+    screening_id: UUID,
+    body: ScreeningRetryBody,
+) -> ScreeningRunResponse:
+    try:
+        outcome = await ScreeningRunService(
+            uow_factory(request),
+            catalog(request),
+            source_code=request.app.state.settings.authoritative_market_source,
+        ).retry_failed(
+            screening_id,
+            correlation_id=request_correlation_id(request),
+            idempotency_key=body.idempotency_key,
+        )
+        return _run_response(outcome.run, replayed=outcome.replayed)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
 
 
 @router.get(

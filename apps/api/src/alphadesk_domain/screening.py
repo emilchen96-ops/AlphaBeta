@@ -565,8 +565,14 @@ class ScreeningFeatureStore:
 
     feature_version = "sc02a-v1"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        required_condition_keys: Sequence[str] | None = None,
+    ) -> None:
         self._cache: dict[tuple[object, ...], FeatureSnapshot] = {}
+        self._required_condition_keys = (
+            None if required_condition_keys is None else frozenset(required_condition_keys)
+        )
 
     def get(
         self,
@@ -591,23 +597,34 @@ class ScreeningFeatureStore:
             None if not eligible_input else eligible_input[-1].close,
             None if not eligible_input else eligible_input[-1].volume,
         )
-        key = (instrument.id, as_of_date, self.feature_version, *source_signature)
+        key = (
+            instrument.id,
+            as_of_date,
+            self.feature_version,
+            self._required_condition_keys,
+            *source_signature,
+        )
         cached = self._cache.get(key)
         if cached is not None:
             return cached
         eligible = eligible_input
-        prior_60 = eligible[-61:-1] if len(eligible) >= 2 else ()
-        prior_20 = eligible[-21:-1] if len(eligible) >= 2 else ()
-        highest = RollingHighest(60)
-        lowest = RollingLowest(60)
-        average_volume_indicator = RollingAverageVolume(20)
         high = low = average_volume = None
-        for item in prior_60:
-            high = highest.update(item.high)
-            low = lowest.update(item.low)
-        for item in prior_20:
-            average_volume = average_volume_indicator.update(item.volume)
         current = eligible[-1] if eligible else None
+        needs_bottom_features = (
+            self._required_condition_keys is None
+            or "BOTTOM_VOLUME_EXPANSION" in self._required_condition_keys
+        )
+        if needs_bottom_features:
+            prior_60 = eligible[-61:-1] if len(eligible) >= 2 else ()
+            prior_20 = eligible[-21:-1] if len(eligible) >= 2 else ()
+            highest = RollingHighest(60)
+            lowest = RollingLowest(60)
+            average_volume_indicator = RollingAverageVolume(20)
+            for item in prior_60:
+                high = highest.update(item.high)
+                low = lowest.update(item.low)
+            for item in prior_20:
+                average_volume = average_volume_indicator.update(item.volume)
         volume_ratio = (
             current.volume / average_volume
             if current is not None and average_volume is not None and average_volume > 0
@@ -628,7 +645,11 @@ class ScreeningFeatureStore:
             average_volume_20=average_volume,
             volume_ratio_20=volume_ratio,
             range_position_60=range_position,
-            bullish_candle=(None if current is None else current.close > current.open),
+            bullish_candle=(
+                None
+                if current is None or not needs_bottom_features
+                else current.close > current.open
+            ),
         )
         self._cache[key] = snapshot
         return snapshot

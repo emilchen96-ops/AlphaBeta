@@ -99,6 +99,7 @@ export function createScreening(
       parameters: Record<string, string | number | boolean | null>;
     }[];
     idempotency_key: string;
+    use_existing_data_only?: boolean;
   },
 ) {
   return apiRequest<ScreeningRun>("/api/v1/research/screenings", {
@@ -159,16 +160,38 @@ export const restoreUserScreening = (id: string) =>
     method: "POST",
   });
 
-export function runUserScreening(id: string, asOfDate: string) {
+export function runUserScreening(
+  id: string,
+  asOfDate: string,
+  useExistingDataOnly = false,
+) {
   return apiRequest<ScreeningRun>(`/api/v1/user-screenings/${id}/run`, {
     method: "POST",
     headers: jsonHeaders,
     body: JSON.stringify({
       as_of_date: asOfDate,
       idempotency_key: `screening:${crypto.randomUUID()}`,
+      use_existing_data_only: useExistingDataOnly,
     }),
   });
 }
+
+export const cancelScreening = (id: string) =>
+  apiRequest<ScreeningRun>(`/api/v1/research/screenings/${id}/cancel`, {
+    method: "POST",
+  });
+
+export const retryFailedScreening = (id: string) =>
+  apiRequest<ScreeningRun>(
+    `/api/v1/research/screenings/${id}/retry-failed`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        idempotency_key: `screening-retry:${crypto.randomUUID()}`,
+      }),
+    },
+  );
 
 export function addScreeningResultsToWatchlist(
   screeningId: string,

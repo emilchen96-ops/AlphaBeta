@@ -11,7 +11,8 @@ SC02-A 在 SC01-R 的持久化扫描任务和 MiniQMT 本地日线基础上，�
 ConditionCatalog
   -> ScreeningSpec
   -> PointInTimeAshareUniverseService
-  -> PostgreSQL 批量读取 MiniQMT MarketBar
+  -> SC02-D 数据需求规划、缺口补齐与质量复检
+  -> PostgreSQL 批量读取已就绪的 MiniQMT MarketBar
   -> ScreeningFeatureStore
   -> RuleBasedScreeningEngine
   -> ScanRun / ScanResult / 中文入选解释
@@ -20,6 +21,10 @@ ConditionCatalog
 API 只创建后台任务，不等待全市场计算完成。PostgreSQL 是任务、进度、规格快照和结果
 的权威来源；原始 `MarketBar` 是特征的权威来源。执行器每批隔离单股异常，终态支持
 `COMPLETED`、`PARTIAL_FAILED` 和 `FAILED`。
+
+SC02-D 起，后台任务不会直接把本地缺数股票全部计为失败，而是先执行
+[选股数据自动准备与运行编排](sc02_screening_data_preparation.md)。原
+`RuleBasedScreeningEngine` 的规则语义、排序和解释保持不变。
 
 ## ConditionCatalog
 

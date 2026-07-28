@@ -5,6 +5,7 @@ import {
   HeartOutlined,
   ReloadOutlined,
   SaveOutlined,
+  StopOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -35,6 +36,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   addScreeningResultsToWatchlist,
   archiveUserScreening,
+  cancelScreening,
   cloneUserScreening,
   createScreening,
   getScreening,
@@ -47,6 +49,7 @@ import {
   parseScreeningText,
   previewScreeningSpec,
   restoreUserScreening,
+  retryFailedScreening,
   runUserScreening,
   saveUserScreening,
   updateUserScreening,
@@ -79,6 +82,13 @@ const terminalStatuses = new Set<ScreeningStatus>([
 const statusText: Record<ScreeningStatus, string> = {
   CREATED: "已创建",
   QUEUED: "等待后台处理",
+  PLANNING: "正在分析数据需求",
+  CHECKING_COVERAGE: "正在检查本地数据",
+  BACKFILLING_MARKET_DATA: "正在补齐历史行情",
+  BACKFILLING_REFERENCE_DATA: "正在补齐交易状态",
+  VERIFYING_DATA: "正在检查数据质量",
+  PREPARING_FEATURES: "正在准备选股指标",
+  SCREENING: "正在执行全市场选股",
   RESOLVING: "正在还原筛选日股票范围",
   CHECKING_DATA: "正在检查历史数据",
   BACKFILLING: "正在补齐历史数据",
@@ -92,6 +102,13 @@ const statusText: Record<ScreeningStatus, string> = {
 const statusColor: Record<ScreeningStatus, string> = {
   CREATED: "default",
   QUEUED: "processing",
+  PLANNING: "processing",
+  CHECKING_COVERAGE: "processing",
+  BACKFILLING_MARKET_DATA: "processing",
+  BACKFILLING_REFERENCE_DATA: "processing",
+  VERIFYING_DATA: "processing",
+  PREPARING_FEATURES: "processing",
+  SCREENING: "processing",
   RESOLVING: "processing",
   CHECKING_DATA: "processing",
   BACKFILLING: "processing",
@@ -108,6 +125,30 @@ const parseStatusText = {
   AMBIGUOUS: "需要确认几个参数",
   UNSUPPORTED: "当前条件暂不支持",
 } as const;
+
+const screeningErrorAdvice: Record<string, string> = {
+  SCREENING_DATA_PLAN_FAILED:
+    "请确认筛选日期已有交易日历，并重新提交选股任务。",
+  SCREENING_PROVIDER_NOT_AVAILABLE:
+    "请启动并登录MiniQMT行情端和只读行情代理，然后重新尝试失败股票。",
+  SCREENING_BACKFILL_PARTIAL_FAILED:
+    "部分股票的历史行情未能补齐；可保留已完成结果并重新尝试失败股票。",
+  SCREENING_REFERENCE_DATA_MISSING:
+    "缺少交易状态、生命周期或复权资料；请恢复MiniQMT连接后重新尝试。",
+  SCREENING_DATA_QUALITY_FAILED:
+    "部分历史K线未通过质量检查；请重新补齐对应股票后再试。",
+  SCREENING_PREPARATION_CANCELLED:
+    "任务已按请求停止；如需继续，请重新开始选股。",
+  SCREENING_DATA_STILL_NOT_READY:
+    "MiniQMT返回后数据仍不完整；请检查行情端状态并重新尝试失败股票。",
+};
+
+function screeningErrorDescription(code: string) {
+  return (
+    screeningErrorAdvice[code] ??
+    "请检查MiniQMT只读行情连接后重试；问题持续时可保留当前任务记录用于排查。"
+  );
+}
 
 function instrumentText(result: ScreeningResult) {
   const exchange =
@@ -332,6 +373,7 @@ function NaturalLanguageScreeningPane({
   const [newWatchlistName, setNewWatchlistName] = useState("");
   const [realtimeMonitor, setRealtimeMonitor] = useState(false);
   const [savedScreeningId, setSavedScreeningId] = useState(rerunScreeningId);
+  const [useExistingDataOnly, setUseExistingDataOnly] = useState(false);
   const navigate = useNavigate();
 
   const sessionDefault = useQuery({
@@ -437,7 +479,7 @@ function NaturalLanguageScreeningPane({
     }: {
       screeningId: string;
       date: string;
-    }) => runUserScreening(screeningId, date),
+    }) => runUserScreening(screeningId, date, useExistingDataOnly),
     onSuccess: async (run) => {
       setActiveId(run.screening_id);
       await queryClient.invalidateQueries({ queryKey: ["screenings"] });
@@ -467,6 +509,32 @@ function NaturalLanguageScreeningPane({
       setSaveDescription("");
       await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
       void message.success("选股方案已保存");
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: () => {
+      if (!activeId) throw new Error("没有可取消的选股任务");
+      return cancelScreening(activeId);
+    },
+    onSuccess: async () => {
+      await active.refetch();
+      await progress.refetch();
+      void message.success("已提交取消请求");
+    },
+    onError: (error: Error) => void message.error(error.message),
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: () => {
+      if (!activeId) throw new Error("没有可重试的选股任务");
+      return retryFailedScreening(activeId);
+    },
+    onSuccess: async (run) => {
+      setActiveId(run.screening_id);
+      await queryClient.invalidateQueries({ queryKey: ["screenings"] });
+      void message.success("失败股票已重新进入数据准备队列");
     },
     onError: (error: Error) => void message.error(error.message),
   });
@@ -556,7 +624,7 @@ function NaturalLanguageScreeningPane({
       setDraftSpec(validated.screening_spec);
       setPreview(validated.preview);
       if (!validated.can_execute) {
-        void message.error("本地历史日线尚未就绪，暂时不能开始选股");
+        void message.error("当前规则或筛选日期尚未通过校验");
         submissionLock.current = false;
         return;
       }
@@ -574,6 +642,7 @@ function NaturalLanguageScreeningPane({
           parameters: condition.parameters,
         })),
         idempotency_key: idempotencyKey.current,
+        use_existing_data_only: useExistingDataOnly,
       });
     } catch (error) {
       submissionLock.current = false;
@@ -716,6 +785,32 @@ function NaturalLanguageScreeningPane({
             value={draftSpec}
             onChange={updateDraft}
           />
+          <Collapse
+            ghost
+            style={{ marginTop: 12 }}
+            items={[
+              {
+                key: "advanced-data",
+                label: "高级数据设置",
+                children: (
+                  <Space orientation="vertical">
+                    <Checkbox
+                      checked={useExistingDataOnly}
+                      onChange={(event) =>
+                        setUseExistingDataOnly(event.target.checked)
+                      }
+                    >
+                      仅使用当前已有数据运行
+                    </Checkbox>
+                    <Typography.Text type="secondary">
+                      默认会通过MiniQMT只补齐缺失的历史日线；启用后不会下载，
+                      数据不完整的股票将单独标记并跳过。
+                    </Typography.Text>
+                  </Space>
+                ),
+              },
+            ]}
+          />
           <Space style={{ marginTop: 20 }}>
             <Button
               type="primary"
@@ -785,36 +880,108 @@ function NaturalLanguageScreeningPane({
               ]}
               style={{ marginBottom: 12 }}
             />
+            <Alert
+              type="info"
+              showIcon
+              title={
+                progress.data?.stage_label ??
+                statusText[current.status]
+              }
+              description={
+                progress.data?.current_action ??
+                "后台任务正在准备或筛选数据"
+              }
+              style={{ marginBottom: 12 }}
+            />
+            {active.data?.data_requirement_plan ? (
+              <Descriptions
+                size="small"
+                column={{ xs: 1, md: 2, xl: 4 }}
+                items={[
+                  {
+                    key: "estimated",
+                    label: "预计筛选股票",
+                    children: `${String(active.data.data_requirement_plan.universe_count ?? "—")}只`,
+                  },
+                  {
+                    key: "estimated-missing",
+                    label: "预计需补数",
+                    children: `${String(active.data.data_requirement_plan.estimated_missing_instruments ?? "—")}只`,
+                  },
+                  {
+                    key: "range",
+                    label: "预计补数范围",
+                    children: `${String(active.data.data_requirement_plan.earliest_required_date ?? "—")} 至 ${String(active.data.data_requirement_plan.latest_required_date ?? "—")}`,
+                  },
+                  {
+                    key: "provider",
+                    label: "行情提供方",
+                    children: "MiniQMT（只读行情）",
+                  },
+                  {
+                    key: "time",
+                    label: "可能耗时",
+                    children: "取决于缺失股票数和MiniQMT响应速度",
+                  },
+                ]}
+                style={{ marginBottom: 12 }}
+              />
+            ) : null}
             <Progress
               percent={current.progress_percent}
               status={current.status === "FAILED" ? "exception" : "active"}
             />
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-              <Col xs={12} md={6}>
+              <Col xs={12} md={6} xl={3}>
                 <Statistic
                   title="全部股票"
                   value={current.total_instruments}
                   suffix="只"
                 />
               </Col>
-              <Col xs={12} md={6}>
+              <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="已处理"
+                  title="已进入条件计算"
                   value={current.processed_instruments}
                   suffix="只"
                 />
               </Col>
-              <Col xs={12} md={6}>
+              <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="数据不足或无法判定"
-                  value={
-                    current.insufficient_data_count +
-                    current.indeterminate_count
-                  }
+                  title="数据已就绪"
+                  value={current.ready_instruments}
                   suffix="只"
                 />
               </Col>
-              <Col xs={12} md={6}>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="正在下载"
+                  value={progress.data?.downloading_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="历史数据不足"
+                  value={current.insufficient_data_count}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="无法可靠判定"
+                  value={current.indeterminate_count}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="提供方失败"
+                  value={progress.data?.provider_failed_count ?? current.failed_count}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
                 <Statistic
                   title="入选结果"
                   value={current.matched_count}
@@ -822,11 +989,35 @@ function NaturalLanguageScreeningPane({
                 />
               </Col>
             </Row>
+            <Space style={{ marginTop: 16 }}>
+              {!terminal ? (
+                <Button
+                  danger
+                  icon={<StopOutlined />}
+                  loading={cancelMutation.isPending}
+                  onClick={() => cancelMutation.mutate()}
+                >
+                  取消准备和筛选
+                </Button>
+              ) : null}
+              {terminal &&
+              ((progress.data?.provider_failed_count ?? 0) > 0 ||
+                current.failed_count > 0) ? (
+                <Button
+                  icon={<ReloadOutlined />}
+                  loading={retryMutation.isPending}
+                  onClick={() => retryMutation.mutate()}
+                >
+                  重新尝试失败股票
+                </Button>
+              ) : null}
+            </Space>
             {active.data?.error ? (
               <Alert
                 type="error"
                 showIcon
                 title={active.data.error.message}
+                description={screeningErrorDescription(active.data.error.code)}
                 style={{ marginTop: 16 }}
               />
             ) : null}
@@ -851,15 +1042,27 @@ function NaturalLanguageScreeningPane({
                 只无法完成判断。
               </span>
               {failureSummary ? <span>{failureSummary}。</span> : null}
-              <span>
-                可以放宽阈值、减少组合条件，或改用较近的交易日后重新运行。
-              </span>
-              <Button
-                size="small"
-                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              >
-                修改选股条件
-              </Button>
+              {current.insufficient_data_count > 0 &&
+              current.processed_instruments === 0 ? (
+                <span>
+                  请先登录并保持 MiniQMT
+                  运行，然后按原日期重新运行；系统会自动检查并补齐缺失历史日线。
+                </span>
+              ) : (
+                <>
+                  <span>
+                    可以放宽阈值、减少组合条件，或改用较近的交易日后重新运行。
+                  </span>
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      window.scrollTo({ top: 0, behavior: "smooth" })
+                    }
+                  >
+                    修改选股条件
+                  </Button>
+                </>
+              )}
             </Space>
           }
           style={{ marginTop: 16 }}
