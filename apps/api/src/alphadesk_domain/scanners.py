@@ -41,6 +41,7 @@ class ScanRunStatus(StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     PARTIAL = "PARTIAL"
+    PARTIAL_FAILED = "PARTIAL_FAILED"
     FAILED = "FAILED"
     CANCELED = "CANCELED"
 
@@ -58,6 +59,7 @@ class ScanMemberStatus(StrEnum):
     READY = "READY"
     SCANNED = "SCANNED"
     MATCHED = "MATCHED"
+    INDETERMINATE = "INDETERMINATE"
     FAILED = "FAILED"
 
 
@@ -629,6 +631,8 @@ class ScanRun:
     correlation_id: UUID
     price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     universe_filters: dict[str, object] = field(default_factory=dict)
+    screening_spec: dict[str, object] = field(default_factory=dict)
+    execution_stats: dict[str, object] = field(default_factory=dict)
     source_code: str = "MINIQMT"
     total_instruments: int = 0
     excluded_instruments: int = 0
@@ -636,7 +640,12 @@ class ScanRun:
     backfill_requested: int = 0
     backfill_failed: int = 0
     insufficient_history: int = 0
+    indeterminate_count: int = 0
     failed_instruments: int = 0
+    elapsed_ms: int = 0
+    batch_count: int = 0
+    query_count: int = 0
+    bars_read: int = 0
     progress_percent: int = 0
     cancel_requested: bool = False
     backfill_requested_at: datetime | None = None
@@ -677,9 +686,14 @@ class ScanRun:
             self.backfill_requested,
             self.backfill_failed,
             self.insufficient_history,
+            self.indeterminate_count,
             self.instruments_scanned,
             self.matches_found,
             self.failed_instruments,
+            self.elapsed_ms,
+            self.batch_count,
+            self.query_count,
+            self.bars_read,
         )
         if any(value < 0 for value in counters):
             raise ValueError("scan counters must be non-negative")
@@ -744,10 +758,15 @@ class ScanRun:
         self.mark_completed(occurred_at, instruments, matches)
         self.status = ScanRunStatus.PARTIAL
 
+    def mark_partial_failed(self, occurred_at: datetime, instruments: int, matches: int) -> None:
+        self.mark_completed(occurred_at, instruments, matches)
+        self.status = ScanRunStatus.PARTIAL_FAILED
+
     def request_cancel(self, occurred_at: datetime) -> None:
         if self.status in {
             ScanRunStatus.COMPLETED,
             ScanRunStatus.PARTIAL,
+            ScanRunStatus.PARTIAL_FAILED,
             ScanRunStatus.FAILED,
             ScanRunStatus.CANCELED,
         }:

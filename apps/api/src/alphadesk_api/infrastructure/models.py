@@ -1919,7 +1919,9 @@ class ScanRunModel(MutableTimestampedModel, Base):
             "total_instruments >= 0 AND excluded_instruments >= 0 "
             "AND data_ready_instruments >= 0 AND backfill_requested >= 0 "
             "AND backfill_failed >= 0 AND insufficient_history >= 0 "
-            "AND failed_instruments >= 0",
+            "AND indeterminate_count >= 0 AND failed_instruments >= 0 "
+            "AND elapsed_ms >= 0 AND batch_count >= 0 AND query_count >= 0 "
+            "AND bars_read >= 0",
             name="scan_run_progress_counters_valid",
         ),
         CheckConstraint(
@@ -1936,6 +1938,12 @@ class ScanRunModel(MutableTimestampedModel, Base):
     scanner_key: Mapped[str] = mapped_column(String(64), nullable=False)
     scanner_version: Mapped[str] = mapped_column(String(32), nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    screening_spec: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    execution_stats: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
     universe_type: Mapped[str] = mapped_column(String(32), nullable=False)
     universe_filters: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
@@ -1954,9 +1962,14 @@ class ScanRunModel(MutableTimestampedModel, Base):
     backfill_requested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     backfill_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     insufficient_history: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    indeterminate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     instruments_scanned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matches_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_instruments: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    batch_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    query_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bars_read: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     backfill_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

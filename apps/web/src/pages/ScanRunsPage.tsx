@@ -45,6 +45,7 @@ const statusText: Record<string, string> = {
   RUNNING: "正在扫描",
   COMPLETED: "已完成",
   PARTIAL: "部分完成",
+  PARTIAL_FAILED: "部分股票无法判定",
   FAILED: "运行失败",
   CANCELED: "已取消",
   INCLUDED: "已纳入范围",
@@ -54,11 +55,13 @@ const statusText: Record<string, string> = {
   READY: "数据就绪",
   SCANNED: "已扫描未命中",
   MATCHED: "已命中",
+  INDETERMINATE: "数据不可判定",
 };
 
 const terminalStatuses = new Set([
   "COMPLETED",
   "PARTIAL",
+  "PARTIAL_FAILED",
   "FAILED",
   "CANCELED",
 ]);

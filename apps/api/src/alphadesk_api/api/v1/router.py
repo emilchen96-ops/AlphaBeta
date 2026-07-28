@@ -19,6 +19,7 @@ from alphadesk_api.api.v1 import (
     research_backtests,
     risk,
     scanners,
+    screenings,
     simulated_executions,
     strategies,
     strategy_specs,
@@ -41,6 +42,7 @@ api_router.include_router(risk.router)
 api_router.include_router(strategies.router)
 api_router.include_router(strategy_specs.router)
 api_router.include_router(scanners.router)
+api_router.include_router(screenings.router)
 api_router.include_router(information.router)
 api_router.include_router(ai_research.router)
 api_router.include_router(backtests.router)

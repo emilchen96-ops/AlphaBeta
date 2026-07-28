@@ -30,6 +30,7 @@ from alphadesk_api.infrastructure.system_capabilities import (
     UnavailableCapabilityDataProvider,
 )
 from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
+from alphadesk_domain.screening import builtin_condition_catalog
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_examples import register_builtin_strategies
 
@@ -69,6 +70,7 @@ def create_app(
     register_builtin_strategies(strategy_registry)
     scanner_registry = ScannerRegistry()
     register_builtin_scanners(scanner_registry)
+    screening_condition_catalog = builtin_condition_catalog()
     ai_provider = build_ai_research_provider(resolved_settings)
 
     @asynccontextmanager
@@ -116,6 +118,7 @@ def create_app(
     app.state.market_ws_hub = None
     app.state.strategy_registry = strategy_registry
     app.state.scanner_registry = scanner_registry
+    app.state.screening_condition_catalog = screening_condition_catalog
     app.state.ai_research_provider = ai_provider
     app.state.capability_data_provider = (
         SqlAlchemyCapabilityDataProvider(database_service.session_factory)

@@ -1,5 +1,14 @@
 # PostgreSQL 持久化模型
 
+## SC02-A 标准条件筛选
+
+Migration `0024_sc02a_condition_catalog` 为既有 `scan_runs` 增加
+`screening_spec` 与 `execution_stats` JSONB。前者保存经过目录和参数 Schema 校验的
+版本化筛选规格，后者保存批次数、查询数、读取 K 线数、耗时和内存等运行统计。
+`scan_runs.status` 增加 `PARTIAL_FAILED`，`scan_run_members.status` 增加
+`INDETERMINATE`。既有 `scan_results` 继续保存稳定排名、指标和中文入选原因；
+ConditionCatalog 和查询级 FeatureStore 不落库。
+
 ## UX02-B 策略规则表
 
 迁移 `0023_ux02b_strategy_specs.py` 新增 `user_strategy_definitions`、

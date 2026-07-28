@@ -10,12 +10,17 @@ from typing import cast
 from alphadesk_api.application.common import UnitOfWorkFactory
 from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
 from alphadesk_api.application.scanners import FullMarketScannerProcessor
+from alphadesk_api.application.screenings import (
+    RuleBasedScreeningProcessor,
+    UnifiedScannerWorkerProcessor,
+)
 from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
 from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
 from alphadesk_domain.scanners import ScannerRegistry, register_builtin_scanners
+from alphadesk_domain.screening import builtin_condition_catalog
 from alphadesk_domain.values import utc_now
 
 LOGGER = logging.getLogger(__name__)
@@ -34,24 +39,41 @@ class ScannerWorker:
         self._settings = settings
         registry = ScannerRegistry()
         register_builtin_scanners(registry)
-        self._processor = FullMarketScannerProcessor(
-            cast(
-                UnitOfWorkFactory,
-                lambda: SqlAlchemyUnitOfWork(database.session_factory),
-            ),
+        factory = cast(
+            UnitOfWorkFactory,
+            lambda: SqlAlchemyUnitOfWork(database.session_factory),
+        )
+        legacy_processor = FullMarketScannerProcessor(
+            factory,
             registry,
             source_code=settings.authoritative_market_source,
             backfill_batch_size=settings.scanner_backfill_batch_size,
             backfill_wait_seconds=settings.scanner_backfill_wait_seconds,
             scan_batch_size=settings.scanner_scan_batch_size,
         )
+        self._processor = UnifiedScannerWorkerProcessor(
+            factory,
+            legacy_processor,
+            RuleBasedScreeningProcessor(
+                factory,
+                builtin_condition_catalog(),
+                source_code=settings.authoritative_market_source,
+                batch_size=settings.scanner_scan_batch_size,
+            ),
+        )
 
     async def tick(self) -> int:
-        await self._redis.client.set(
-            HEARTBEAT_KEY,
-            utc_now().isoformat(),
-            ex=max(self._settings.scanner_worker_heartbeat_seconds * 3, 15),
-        )
+        try:
+            await self._redis.client.set(
+                HEARTBEAT_KEY,
+                utc_now().isoformat(),
+                ex=max(self._settings.scanner_worker_heartbeat_seconds * 3, 15),
+            )
+        except Exception:
+            LOGGER.warning(
+                "Scanner worker heartbeat unavailable; continuing with PostgreSQL tasks",
+                exc_info=True,
+            )
 
         async def enqueue(payload: dict[str, object]) -> None:
             await self._redis.client.rpush(

@@ -107,6 +107,9 @@ class InstrumentRepository(Protocol):
         limit: int,
         source_code: str | None = None,
     ) -> tuple[list[Instrument], int]: ...
+    async def list_point_in_time_ashares(
+        self, *, as_of_date: date, source_code: str
+    ) -> list[Instrument]: ...
     async def upsert_many(self, entities: list[Instrument]) -> list[Instrument]: ...
 
 

@@ -46,6 +46,7 @@ export interface ScanRun {
     | "RUNNING"
     | "COMPLETED"
     | "PARTIAL"
+    | "PARTIAL_FAILED"
     | "FAILED"
     | "CANCELED";
   current_phase: string;

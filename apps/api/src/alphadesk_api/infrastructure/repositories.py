@@ -1151,6 +1151,50 @@ class SqlAlchemyInstrumentRepository(SqlAlchemyRepository[Instrument, Instrument
         )
         return [entity_from_model(Instrument, row) for row in rows], total
 
+    async def list_point_in_time_ashares(
+        self, *, as_of_date: date, source_code: str
+    ) -> list[Instrument]:
+        """Return one historical A-share universe without current-list survivorship bias."""
+
+        source_instruments = (
+            select(InstrumentMappingModel.instrument_id)
+            .join(
+                MarketDataSourceModel,
+                MarketDataSourceModel.id == InstrumentMappingModel.source_id,
+            )
+            .where(MarketDataSourceModel.source_code == source_code.strip().upper())
+        )
+        historical_bar_exists = (
+            select(MarketBarModel.id)
+            .where(
+                MarketBarModel.instrument_id == InstrumentModel.id,
+                func.date(MarketBarModel.bar_time) <= as_of_date,
+            )
+            .exists()
+        )
+        unknown_listing_is_eligible = (
+            InstrumentModel.is_active if as_of_date >= date.today() else historical_bar_exists
+        )
+        rows = await self._session.scalars(
+            select(InstrumentModel)
+            .where(
+                InstrumentModel.id.in_(source_instruments),
+                InstrumentModel.asset_type.in_(("STOCK", "EQUITY")),
+                InstrumentModel.exchange.in_(("SSE", "SZSE", "BSE")),
+                InstrumentModel.market.in_(("CN", "CN_A")),
+                or_(
+                    InstrumentModel.listed_at <= as_of_date,
+                    InstrumentModel.listed_at.is_(None) & unknown_listing_is_eligible,
+                ),
+                or_(
+                    InstrumentModel.delisted_at.is_(None),
+                    InstrumentModel.delisted_at >= as_of_date,
+                ),
+            )
+            .order_by(InstrumentModel.exchange, InstrumentModel.symbol, InstrumentModel.id)
+        )
+        return [entity_from_model(Instrument, row) for row in rows]
+
     async def upsert_many(self, entities: list[Instrument]) -> list[Instrument]:
         if not entities:
             return []

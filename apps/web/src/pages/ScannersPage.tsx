@@ -1,443 +1,465 @@
-import { FilterOutlined } from "@ant-design/icons";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { FilterOutlined, ReloadOutlined } from "@ant-design/icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   App,
   Button,
   Card,
   Col,
-  Collapse,
   Descriptions,
+  Empty,
   Form,
   Input,
-  InputNumber,
   Modal,
+  Progress,
   Row,
-  Select,
   Space,
+  Statistic,
   Switch,
+  Table,
   Tag,
   Typography,
 } from "antd";
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react";
 
-import { getInstruments } from "../api/market";
+import { getScannerSessionDefault } from "../api/scanners";
 import {
-  createScanRun,
-  getScannerCatalog,
-  getScannerSessionDefault,
-  getScanRuns,
-} from "../api/scanners";
+  createScreening,
+  getScreening,
+  getScreeningProgress,
+  getScreeningResults,
+  getScreeningRuns,
+  getScreeningTemplates,
+} from "../api/screenings";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
-  ScannerParameterDefinition,
-  ScannerParameterValue,
-} from "../types/scanners";
-import {
-  displayParameter,
-  displayScanner,
-  formatInstrument,
-} from "../utils/display";
+  ScreeningResult,
+  ScreeningStatus,
+  ScreeningTemplate,
+} from "../types/screenings";
 
-interface RunFormValues {
-  scanner_key: string;
-  scan_date: string;
-  universe_filters: {
-    exclude_st: boolean;
-    exclude_suspended: boolean;
-    exclude_insufficient_history: boolean;
-    exclude_bse: boolean;
-    exclude_star_market: boolean;
-    exclude_chinext: boolean;
-    minimum_listing_trading_days?: number;
-    excluded_instrument_ids: string[];
-  };
-  parameters: Record<string, ScannerParameterValue | undefined>;
+interface ScreeningFormValues {
+  as_of_date: string;
+  exclude_st: boolean;
+  exclude_bse: boolean;
+  exclude_star_market: boolean;
+  exclude_chinext: boolean;
 }
 
-const percentParameters = new Set([
-  "limit_up_threshold",
-  "baseline_tolerance",
-  "minimum_daily_return",
-  "maximum_daily_return",
+const terminalStatuses = new Set<ScreeningStatus>([
+  "COMPLETED",
+  "PARTIAL_FAILED",
+  "FAILED",
+  "CANCELED",
 ]);
 
-const runStatusText: Record<string, string> = {
-  QUEUED: "等待中",
-  RESOLVING: "正在解析股票范围",
+const statusText: Record<ScreeningStatus, string> = {
+  CREATED: "已创建",
+  QUEUED: "等待后台处理",
+  RESOLVING: "正在解析点时股票池",
   CHECKING_DATA: "正在检查历史数据",
   BACKFILLING: "正在补齐历史数据",
-  RUNNING: "正在扫描",
+  RUNNING: "正在分批筛选",
   COMPLETED: "已完成",
-  PARTIAL: "部分完成",
+  PARTIAL_FAILED: "部分股票无法判定",
   FAILED: "运行失败",
   CANCELED: "已取消",
 };
 
-function parameterDefaultValue(definition: ScannerParameterDefinition) {
-  if (definition.default === null) {
-    return undefined;
-  }
-  return percentParameters.has(definition.name)
-    ? Number(definition.default) * 100
-    : definition.default;
-}
+const statusColor: Record<ScreeningStatus, string> = {
+  CREATED: "default",
+  QUEUED: "processing",
+  RESOLVING: "processing",
+  CHECKING_DATA: "processing",
+  BACKFILLING: "processing",
+  RUNNING: "processing",
+  COMPLETED: "success",
+  PARTIAL_FAILED: "warning",
+  FAILED: "error",
+  CANCELED: "default",
+};
 
-function ParameterInput({
-  definition,
-  value,
-  checked,
-  onChange,
-}: {
-  definition: ScannerParameterDefinition;
-  value?: ScannerParameterValue;
-  checked?: boolean;
-  onChange?: (value: ScannerParameterValue | null) => void;
-}) {
-  if (definition.type === "boolean") {
-    return (
-      <Switch
-        checked={checked}
-        checkedChildren="是"
-        unCheckedChildren="否"
-        onChange={(next) => onChange?.(next)}
-      />
-    );
-  }
-  const percent = percentParameters.has(definition.name);
-  return (
-    <InputNumber
-      value={typeof value === "boolean" || value === null ? undefined : value}
-      onChange={(next) => onChange?.(next)}
-      stringMode={definition.type === "decimal"}
-      precision={definition.type === "integer" ? 0 : undefined}
-      min={
-        definition.min_value === null
-          ? undefined
-          : Number(definition.min_value) * (percent ? 100 : 1)
-      }
-      max={
-        definition.max_value === null
-          ? undefined
-          : Number(definition.max_value) * (percent ? 100 : 1)
-      }
-      suffix={percent ? "%" : definition.unit || undefined}
-      placeholder={definition.nullable ? "可留空，表示不限制" : undefined}
-      style={{ width: "100%" }}
-    />
-  );
+function instrumentText(result: ScreeningResult) {
+  const exchange =
+    result.exchange === "SSE"
+      ? "SH"
+      : result.exchange === "SZSE"
+        ? "SZ"
+        : result.exchange;
+  return `${result.instrument_name}（${result.symbol}.${exchange}）`;
 }
 
 export function ScannersPage() {
   const { message } = App.useApp();
-  const navigate = useNavigate();
-  const [form] = Form.useForm<RunFormValues>();
-  const [selectedKey, setSelectedKey] = useState<string>();
-  const [instrumentSearch, setInstrumentSearch] = useState("");
-  const catalog = useQuery({
-    queryKey: ["scanner-catalog"],
-    queryFn: getScannerCatalog,
+  const queryClient = useQueryClient();
+  const [form] = Form.useForm<ScreeningFormValues>();
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<ScreeningTemplate>();
+  const [activeId, setActiveId] = useState<string>();
+
+  const templates = useQuery({
+    queryKey: ["screening-templates"],
+    queryFn: getScreeningTemplates,
   });
   const sessionDefault = useQuery({
     queryKey: ["scanner-session-default"],
     queryFn: getScannerSessionDefault,
   });
-  const recentRuns = useQuery({
-    queryKey: ["scan-runs", "scanner-cards"],
-    queryFn: () => getScanRuns({ page: 1, page_size: 100 }),
-    refetchInterval: 5000,
+  const runs = useQuery({
+    queryKey: ["screenings"],
+    queryFn: getScreeningRuns,
+    refetchInterval: 5_000,
   });
-  const instruments = useQuery({
-    queryKey: ["scanner-excluded-instruments", instrumentSearch],
-    queryFn: () => getInstruments(instrumentSearch),
-    enabled: Boolean(selectedKey),
+  const effectiveActiveId = activeId ?? runs.data?.items[0]?.screening_id;
+  const active = useQuery({
+    queryKey: ["screening", effectiveActiveId],
+    queryFn: () => getScreening(effectiveActiveId as string),
+    enabled: Boolean(effectiveActiveId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && terminalStatuses.has(status) ? false : 2_000;
+    },
   });
-  const selected = useMemo(
-    () => catalog.data?.find((item) => item.scanner_key === selectedKey),
-    [catalog.data, selectedKey],
-  );
-  const latestByScanner = useMemo(
-    () =>
-      new Map(
-        catalog.data?.map((scanner) => [
-          scanner.scanner_key,
-          recentRuns.data?.items.find(
-            (run) => run.scanner_key === scanner.scanner_key,
-          ),
-        ]) ?? [],
-      ),
-    [catalog.data, recentRuns.data],
-  );
+  const progress = useQuery({
+    queryKey: ["screening-progress", effectiveActiveId],
+    queryFn: () => getScreeningProgress(effectiveActiveId as string),
+    enabled: Boolean(effectiveActiveId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status && terminalStatuses.has(status) ? false : 2_000;
+    },
+  });
+  const results = useQuery({
+    queryKey: ["screening-results", effectiveActiveId],
+    queryFn: () => getScreeningResults(effectiveActiveId as string),
+    enabled: Boolean(effectiveActiveId) && Boolean(active.data),
+    refetchInterval:
+      active.data && !terminalStatuses.has(active.data.status) ? 3_000 : false,
+  });
+
   const mutation = useMutation({
-    mutationFn: createScanRun,
-    onSuccess: (run) => {
-      void message.success(
-        run.replayed ? "已返回相同扫描任务" : "全市场扫描任务已创建",
-      );
-      setSelectedKey(undefined);
+    mutationFn: createScreening,
+    onSuccess: async (run) => {
+      setActiveId(run.screening_id);
+      setSelectedTemplate(undefined);
       form.resetFields();
-      void navigate(`/scan-runs/${run.scan_run_id}`);
+      await queryClient.invalidateQueries({ queryKey: ["screenings"] });
+      void message.success(
+        run.replayed ? "已打开相同筛选任务" : "全A股筛选任务已进入后台队列",
+      );
     },
     onError: (error: Error) => void message.error(error.message),
   });
 
-  const openRun = (key: string) => {
-    const scanner = catalog.data?.find((item) => item.scanner_key === key);
-    setSelectedKey(key);
-    form.resetFields();
+  const openTemplate = (template: ScreeningTemplate) => {
+    setSelectedTemplate(template);
     form.setFieldsValue({
-      scanner_key: key,
-      scan_date: sessionDefault.data?.scan_date,
-      universe_filters: {
-        exclude_st: true,
-        exclude_suspended: true,
-        exclude_insufficient_history: true,
-        exclude_bse: false,
-        exclude_star_market: false,
-        exclude_chinext: false,
-        excluded_instrument_ids: [],
-      },
-      parameters: Object.fromEntries(
-        scanner?.parameters
-          .filter((item) => item.default !== null)
-          .map((item) => [item.name, parameterDefaultValue(item)]) ?? [],
-      ),
+      as_of_date:
+        sessionDefault.data?.scan_date ?? template.spec.as_of_date.slice(0, 10),
+      exclude_st: true,
+      exclude_bse: false,
+      exclude_star_market: false,
+      exclude_chinext: false,
     });
   };
 
   const submit = async () => {
+    if (!selectedTemplate) return;
     const values = await form.validateFields();
+    const spec = selectedTemplate.spec;
+    const filterKey = [
+      values.exclude_st,
+      values.exclude_bse,
+      values.exclude_star_market,
+      values.exclude_chinext,
+    ]
+      .map((value) => (value ? "1" : "0"))
+      .join("");
     mutation.mutate({
-      scanner_key: values.scanner_key,
-      universe_type: "ALL_ACTIVE_A_SHARES",
-      scan_date: values.scan_date,
-      universe_filters: values.universe_filters,
-      parameters: Object.fromEntries(
-        Object.entries(values.parameters ?? {})
-          .filter(([, value]) => value !== "" && value !== undefined)
-          .map(([name, value]) => [
-            name,
-            percentParameters.has(name) && value !== null
-              ? String(Number(value) / 100)
-              : value,
-          ]),
-      ),
+      ...spec,
+      as_of_date: values.as_of_date,
+      universe_spec: {
+        ...spec.universe_spec,
+        exclude_st: values.exclude_st,
+        exclude_bse: values.exclude_bse,
+        exclude_star_market: values.exclude_star_market,
+        exclude_chinext: values.exclude_chinext,
+      },
+      conditions: spec.conditions.map((condition) => ({
+        condition_key: condition.condition_key,
+        parameters: condition.parameters,
+      })),
+      idempotency_key: `sc02a:${selectedTemplate.template_key}:${values.as_of_date}:${filterKey}`,
     });
   };
 
+  const current = progress.data ?? active.data;
+  const execution = active.data?.execution_stats;
+  const noFutureBars = execution?.future_bars_read === 0;
   return (
     <section>
       <PageHeader
-        title="条件扫描器"
-        description="使用MiniQMT历史日线，对全部正常上市A股执行后台批量筛选。"
+        title="智能选股"
+        description="使用标准条件目录和MiniQMT本地历史日线，对指定交易日当时存在的全部A股执行后台筛选。"
+        action={
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => {
+              void templates.refetch();
+              void runs.refetch();
+              if (effectiveActiveId) {
+                void active.refetch();
+                void progress.refetch();
+                void results.refetch();
+              }
+            }}
+          >
+            刷新
+          </Button>
+        }
       />
-      <Space wrap style={{ marginBottom: 16 }}>
-        <Button onClick={() => void navigate("/scan-runs")}>
-          查看扫描运行
-        </Button>
-        <Button onClick={() => void navigate("/market")}>查看行情</Button>
-      </Space>
-      <Space orientation="vertical" size="middle" style={{ display: "flex" }}>
-        {catalog.data?.map((item) => {
-          const latest = latestByScanner.get(item.scanner_key);
-          return (
+
+      <Alert
+        type="info"
+        showIcon
+        title="SC02-A标准形态验收页"
+        description="本页只创建研究筛选任务，不创建研究信号、订单或成交，也不会调用券商交易能力。"
+        style={{ marginBottom: 16 }}
+      />
+
+      <Row gutter={[16, 16]}>
+        {templates.data?.map((template) => (
+          <Col xs={24} lg={12} key={template.template_key}>
             <Card
-              key={item.scanner_key}
-              title={displayScanner(item.scanner_key)}
+              title={template.display_name}
               extra={
                 <Button
                   type="primary"
                   icon={<FilterOutlined />}
-                  onClick={() => openRun(item.scanner_key)}
+                  onClick={() => openTemplate(template)}
                 >
-                  开始全市场扫描
+                  开始筛选
                 </Button>
               }
             >
-              <Typography.Paragraph>{item.description}</Typography.Paragraph>
+              <Typography.Paragraph>{template.description}</Typography.Paragraph>
               <Space wrap>
-                <Tag color="green">数据来源：MiniQMT</Tag>
-                <Tag color="blue">范围：全部A股</Tag>
-                <Tag>周期：日线</Tag>
-                <Tag>后台批量运行</Tag>
-                <Tag color="purple">v{item.version}</Tag>
+                <Tag color="blue">全部A股</Tag>
+                <Tag color="green">MiniQMT本地日线</Tag>
+                <Tag>不复权</Tag>
+                <Tag>点时股票池</Tag>
               </Space>
-              <Descriptions
-                size="small"
-                column={{ xs: 1, sm: 3 }}
-                style={{ marginTop: 16 }}
-                items={[
-                  {
-                    key: "latest-status",
-                    label: "最近状态",
-                    children: latest
-                      ? (runStatusText[latest.status] ?? latest.status)
-                      : "尚未运行",
-                  },
-                  {
-                    key: "latest-date",
-                    label: "最近扫描日期",
-                    children: latest?.as_of.slice(0, 10) ?? "—",
-                  },
-                  {
-                    key: "latest-matches",
-                    label: "最近命中",
-                    children: latest ? `${latest.matches_found}只` : "—",
-                  },
-                ]}
-              />
             </Card>
-          );
-        })}
-      </Space>
+          </Col>
+        ))}
+      </Row>
+
+      <Card title="最近筛选运行" style={{ marginTop: 16 }}>
+        <Table
+          rowKey="screening_id"
+          size="small"
+          pagination={false}
+          loading={runs.isLoading}
+          dataSource={runs.data?.items ?? []}
+          onRow={(record) => ({
+            onClick: () => setActiveId(record.screening_id),
+            style: { cursor: "pointer" },
+          })}
+          columns={[
+            {
+              title: "筛选名称",
+              dataIndex: "name",
+            },
+            {
+              title: "筛选日期",
+              render: (_, record) => record.spec.as_of_date,
+            },
+            {
+              title: "状态",
+              render: (_, record) => (
+                <Tag color={statusColor[record.status]}>
+                  {statusText[record.status]}
+                </Tag>
+              ),
+            },
+            {
+              title: "进度",
+              render: (_, record) => `${record.progress_percent}%`,
+            },
+            {
+              title: "入选",
+              render: (_, record) => `${record.matched_count}只`,
+            },
+          ]}
+          locale={{ emptyText: <Empty description="尚无筛选运行" /> }}
+        />
+      </Card>
+
+      {current ? (
+        <Card
+          title={`运行详情：${active.data?.name ?? "正在加载"}`}
+          style={{ marginTop: 16 }}
+          extra={
+            <Tag color={statusColor[current.status]}>
+              {statusText[current.status]}
+            </Tag>
+          }
+        >
+          <Progress
+            percent={current.progress_percent}
+            status={current.status === "FAILED" ? "exception" : "active"}
+          />
+          <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="总股票数"
+                value={current.total_instruments}
+                suffix="只"
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="已处理"
+                value={current.processed_instruments}
+                suffix="只"
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="数据不足/无法判定"
+                value={
+                  current.insufficient_data_count + current.indeterminate_count
+                }
+                suffix="只"
+              />
+            </Col>
+            <Col xs={12} md={6}>
+              <Statistic
+                title="入选结果"
+                value={current.matched_count}
+                suffix="只"
+              />
+            </Col>
+          </Row>
+          {active.data?.error ? (
+            <Alert
+              type="error"
+              showIcon
+              title={active.data.error.message}
+              style={{ marginTop: 16 }}
+            />
+          ) : null}
+          {active.data?.completed_at ? (
+            <Descriptions
+              size="small"
+              column={{ xs: 1, sm: 3 }}
+              style={{ marginTop: 16 }}
+              items={[
+                {
+                  key: "elapsed",
+                  label: "耗时",
+                  children: `${active.data.elapsed_ms}毫秒`,
+                },
+                {
+                  key: "batches",
+                  label: "处理批次",
+                  children: active.data.batch_count,
+                },
+                {
+                  key: "no-future",
+                  label: "未来数据检查",
+                  children: noFutureBars ? "通过（读取0条未来K线）" : "未确认",
+                },
+              ]}
+            />
+          ) : null}
+        </Card>
+      ) : null}
+
+      {effectiveActiveId ? (
+        <Card title="筛选结果与入选原因" style={{ marginTop: 16 }}>
+          <Table<ScreeningResult>
+            rowKey="result_id"
+            size="small"
+            pagination={{ pageSize: 20 }}
+            loading={results.isLoading}
+            dataSource={results.data?.items ?? []}
+            columns={[
+              { title: "排名", dataIndex: "rank", width: 80 },
+              {
+                title: "股票",
+                render: (_, record) => instrumentText(record),
+              },
+              {
+                title: "参考价",
+                render: (_, record) => `${record.reference_price}元`,
+              },
+              { title: "入选原因", dataIndex: "reason" },
+            ]}
+            locale={{
+              emptyText: (
+                <Empty
+                  description={
+                    current && !terminalStatuses.has(current.status)
+                      ? "任务运行中，结果将自动刷新"
+                      : "本次没有股票满足条件"
+                  }
+                />
+              ),
+            }}
+          />
+        </Card>
+      ) : null}
+
       <Modal
-        open={Boolean(selected)}
+        open={Boolean(selectedTemplate)}
         title={
-          selected
-            ? `${displayScanner(selected.scanner_key)}：全A股扫描`
-            : "全A股扫描"
+          selectedTemplate
+            ? `运行“${selectedTemplate.display_name}”全A股筛选`
+            : "运行全A股筛选"
         }
-        width={860}
-        okText="开始扫描"
+        okText="开始筛选"
         cancelText="取消"
         confirmLoading={mutation.isPending}
+        onOk={() => void submit()}
         onCancel={() => {
-          setSelectedKey(undefined);
+          setSelectedTemplate(undefined);
           form.resetFields();
         }}
-        onOk={() => void submit()}
         destroyOnHidden
       >
-        {selected ? (
-          <Form form={form} layout="vertical">
-            <Form.Item name="scanner_key" hidden>
-              <Input />
-            </Form.Item>
-            <Descriptions
-              bordered
-              size="small"
-              column={2}
-              style={{ marginBottom: 20 }}
-              items={[
-                {
-                  key: "universe",
-                  label: "扫描范围",
-                  children: "全部正常上市A股",
-                },
-                {
-                  key: "source",
-                  label: "数据来源",
-                  children: "MiniQMT",
-                },
-                {
-                  key: "timeframe",
-                  label: "数据周期",
-                  children: "日线",
-                },
-                {
-                  key: "execution",
-                  label: "运行方式",
-                  children: "后台分批运行",
-                },
-              ]}
-            />
-            <Form.Item
-              name="scan_date"
-              label="扫描日期"
-              rules={[{ required: true, message: "请选择扫描日期" }]}
-              tooltip="默认为最近一个已经完成的A股交易日"
-            >
-              <Input type="date" />
-            </Form.Item>
-            <Typography.Title level={5}>排除条件</Typography.Title>
-            <Row gutter={16}>
-              {[
-                ["exclude_st", "排除ST及*ST股票"],
-                ["exclude_suspended", "排除扫描日停牌股票"],
-                ["exclude_insufficient_history", "排除历史数据不足股票"],
-                ["exclude_bse", "排除北交所股票"],
-                ["exclude_star_market", "排除科创板股票"],
-                ["exclude_chinext", "排除创业板股票"],
-              ].map(([name, label]) => (
-                <Col xs={24} md={12} key={name}>
-                  <Form.Item
-                    name={["universe_filters", name]}
-                    label={label}
-                    valuePropName="checked"
-                  >
-                    <Switch checkedChildren="是" unCheckedChildren="否" />
-                  </Form.Item>
-                </Col>
-              ))}
-            </Row>
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="as_of_date"
+            label="筛选日期"
+            rules={[{ required: true, message: "请选择筛选日期" }]}
+            tooltip="系统只读取该日期及以前的数据，不读取未来K线"
+          >
+            <Input type="date" />
+          </Form.Item>
+          <Typography.Title level={5}>股票范围：当日全部A股</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            系统按筛选日期还原沪深北股票目录，不以今天的在市名单替代历史名单。
+          </Typography.Paragraph>
+          <Row gutter={16}>
+            {[
+              ["exclude_st", "排除ST及*ST"],
+              ["exclude_bse", "排除北交所"],
+              ["exclude_star_market", "排除科创板"],
+              ["exclude_chinext", "排除创业板"],
+            ].map(([name, label]) => (
+              <Col xs={24} sm={12} key={name}>
                 <Form.Item
-                  name={["universe_filters", "minimum_listing_trading_days"]}
-                  label="排除上市不足指定交易日的股票"
-                  tooltip="留空表示不按上市时间排除"
+                  name={name}
+                  label={label}
+                  valuePropName="checked"
                 >
-                  <InputNumber
-                    min={1}
-                    max={5000}
-                    precision={0}
-                    suffix="交易日"
-                    placeholder="可留空"
-                    style={{ width: "100%" }}
-                  />
+                  <Switch checkedChildren="是" unCheckedChildren="否" />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={12}>
-                <Form.Item
-                  name={["universe_filters", "excluded_instrument_ids"]}
-                  label="手动排除股票"
-                  tooltip="按代码或名称搜索；这里只排除，不需要建立研究股票池"
-                >
-                  <Select
-                    mode="multiple"
-                    showSearch
-                    filterOption={false}
-                    onSearch={setInstrumentSearch}
-                    options={instruments.data?.items.map((item) => ({
-                      value: item.id,
-                      label: formatInstrument(item),
-                    }))}
-                    placeholder="可选：搜索需要排除的股票"
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Collapse
-              items={[
-                {
-                  key: "advanced",
-                  label: "高级参数（已填入推荐默认值）",
-                  children: (
-                    <Row gutter={16}>
-                      {selected.parameters.map((definition) => (
-                        <Col xs={24} md={12} key={definition.name}>
-                          <Form.Item
-                            name={["parameters", definition.name]}
-                            initialValue={parameterDefaultValue(definition)}
-                            label={`${definition.display_name || displayParameter(definition.name)}（${definition.name}）`}
-                            tooltip={definition.description}
-                            valuePropName={
-                              definition.type === "boolean"
-                                ? "checked"
-                                : "value"
-                            }
-                          >
-                            <ParameterInput definition={definition} />
-                          </Form.Item>
-                        </Col>
-                      ))}
-                    </Row>
-                  ),
-                },
-              ]}
-            />
-          </Form>
-        ) : null}
+            ))}
+          </Row>
+        </Form>
       </Modal>
     </section>
   );

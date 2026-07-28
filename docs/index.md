@@ -43,7 +43,10 @@
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
-> 当前研究工具里程碑为 **SC01-R 完成**：两个既有规则已升级为 MiniQMT 全 A 股日线后台扫描，包含数据预检、分批补数、范围快照和中文进度页面，详见 [scanners.md](scanners.md)。结果不会创建 Signal 或订单。
+> 当前研究工具里程碑为 **SC02-A 完成**：标准条件目录、安全 ScreeningSpec、历史点时
+> 全 A 股股票池、批量规则引擎和两个标准形态见
+> [SC02-A 选股引擎](sc02_screening_engine.md)。SC01-R 后台补数与旧接口继续兼容，见
+> [扫描器说明](scanners.md)。结果不会创建 Signal 或订单。
 
 > 当前执行里程碑为 **B01 完成开发，等待最终环境验收**：B01-A Broker 契约与确定性计算见
 > [simulated_broker.md](simulated_broker.md)；B01-B Attempt、Fill、M04 原子记账、Command 消费和
@@ -105,7 +108,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |
 | L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md` |
-| SC01 历史日线扫描器             | `scanners.md`、`market_data.md`、`database_schema.md`、ADR 0007–0008                     |
+| SC02 标准条件选股引擎           | `sc02_screening_engine.md`、`scanners.md`、`market_data.md`、`database_schema.md`         |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
