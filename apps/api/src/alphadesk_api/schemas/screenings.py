@@ -22,6 +22,7 @@ class UniverseSpecBody(StrictBody):
 
 class ScreeningConditionBody(StrictBody):
     condition_key: str = Field(min_length=2, max_length=64, pattern=r"^[A-Z][A-Z0-9_]+$")
+    condition_version: str | None = Field(default=None, min_length=1, max_length=32)
     parameters: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
 
 
@@ -36,10 +37,17 @@ class RankingRuleBody(StrictBody):
     direction: Literal["ASC", "DESC"] = "DESC"
 
 
-class ScreeningCreateBody(StrictBody):
+class ScreeningSpecPayload(StrictBody):
     schema_version: Literal[1] = 1
     name: str = Field(min_length=1, max_length=128)
-    origin: Literal["USER_STRUCTURED", "BUILTIN_TEMPLATE", "API"] = "USER_STRUCTURED"
+    origin: Literal[
+        "USER_STRUCTURED",
+        "USER_CORRECTED",
+        "NATURAL_LANGUAGE",
+        "AI_ASSISTED",
+        "BUILTIN_TEMPLATE",
+        "API",
+    ] = "USER_STRUCTURED"
     universe_spec: UniverseSpecBody = Field(default_factory=UniverseSpecBody)
     as_of_date: date
     timeframe: Literal["DAY_1"] = "DAY_1"
@@ -48,7 +56,78 @@ class ScreeningCreateBody(StrictBody):
     ranking_rules: list[RankingRuleBody] = Field(default_factory=list, max_length=8)
     top_n: int | None = Field(default=None, ge=1, le=10_000)
     price_adjustment_mode: Literal["RAW"] = "RAW"
+
+
+class ScreeningCreateBody(ScreeningSpecPayload):
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class ScreeningTextParseBody(StrictBody):
+    text: str = Field(min_length=1, max_length=1000)
+    as_of_date: date | None = None
+    universe: UniverseSpecBody | None = None
+    allow_ai_assistance: bool = True
+
+
+class ScreeningSpecBody(StrictBody):
+    screening_spec: ScreeningSpecPayload
+
+
+class RecognizedConditionResponse(BaseModel):
+    condition_key: str
+    display_name: str
+    matched_expression: str
+
+
+class AppliedDefaultResponse(BaseModel):
+    condition_key: str
+    parameter_name: str
+    display_name: str
+    value: str | int | bool | None
+    explanation: str
+
+
+class ScreeningPreviewResponse(BaseModel):
+    summary: str
+    universe: str
+    conditions: list[str]
+    screening_time: str
+    ranking: list[str]
+    defaults: list[str]
+    data_requirements: list[str]
+    parser_source: str
+    no_future_data_rule: str
+    data_ready: bool
+    data_readiness_message: str
+    can_execute: bool
+    notices: list[str]
+
+
+class ScreeningParseResponse(BaseModel):
+    parse_status: Literal["COMPLETE", "PARTIAL", "AMBIGUOUS", "UNSUPPORTED"]
+    parser_source: Literal["LOCAL_RULES", "AI_ASSISTED"]
+    screening_spec: dict[str, Any] | None
+    recognized_conditions: list[RecognizedConditionResponse]
+    ambiguities: list[str]
+    unsupported_fragments: list[str]
+    defaults_applied: list[AppliedDefaultResponse]
+    preview: ScreeningPreviewResponse | None
+    can_execute: bool
+
+
+class ScreeningValidationResponse(BaseModel):
+    valid: bool
+    parse_status: Literal["COMPLETE"]
+    screening_spec: dict[str, Any]
+    recognized_conditions: list[RecognizedConditionResponse]
+    preview: ScreeningPreviewResponse
+    can_execute: bool
+
+
+class ScreeningPreviewEnvelopeResponse(BaseModel):
+    screening_spec: dict[str, Any]
+    preview: ScreeningPreviewResponse
+    can_execute: bool
 
 
 class ConditionParameterResponse(BaseModel):

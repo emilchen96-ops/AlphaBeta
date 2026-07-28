@@ -15,18 +15,24 @@ from alphadesk_api.api.v1.market_common import (
 )
 from alphadesk_api.application.common import ApplicationError
 from alphadesk_api.application.scanners import ScannerQueryService
+from alphadesk_api.application.screening_specs import ScreeningSpecService
 from alphadesk_api.application.screenings import ScreeningRunService
 from alphadesk_api.schemas.screenings import (
     ConditionDefinitionResponse,
     RankingRuleBody,
     ScreeningConditionBody,
     ScreeningCreateBody,
+    ScreeningParseResponse,
+    ScreeningPreviewEnvelopeResponse,
     ScreeningProgressResponse,
     ScreeningResultPageResponse,
     ScreeningResultResponse,
     ScreeningRunPageResponse,
     ScreeningRunResponse,
+    ScreeningSpecBody,
     ScreeningTemplateResponse,
+    ScreeningTextParseBody,
+    ScreeningValidationResponse,
     UniverseSpecBody,
 )
 from alphadesk_domain.enums import MarketTimeframe
@@ -50,7 +56,14 @@ def catalog(request: Request) -> ConditionCatalog:
     return cast(ConditionCatalog, request.app.state.screening_condition_catalog)
 
 
-def _domain_spec(body: ScreeningCreateBody) -> ScreeningSpec:
+def _domain_spec(body: ScreeningCreateBody, condition_catalog: ConditionCatalog) -> ScreeningSpec:
+    for item in body.conditions:
+        definition = condition_catalog.get(item.condition_key)
+        if item.condition_version is not None and item.condition_version != definition.version:
+            raise ScreeningError(
+                "SCREENING_CONDITION_VERSION_MISMATCH",
+                f"{definition.display_name}的条件版本已更新，请重新解析或确认条件",
+            )
     return ScreeningSpec(
         schema_version=body.schema_version,
         name=body.name,
@@ -131,6 +144,66 @@ async def list_screening_conditions(request: Request) -> list[ConditionDefinitio
     ]
 
 
+def _spec_service(request: Request) -> ScreeningSpecService:
+    return ScreeningSpecService(
+        uow_factory(request),
+        catalog(request),
+        ai_provider=request.app.state.ai_research_provider,
+    )
+
+
+@router.post(
+    "/screening-specs/parse",
+    response_model=ScreeningParseResponse,
+)
+async def parse_screening_spec(
+    request: Request,
+    body: ScreeningTextParseBody,
+) -> ScreeningParseResponse:
+    try:
+        result = await _spec_service(request).parse(
+            text=body.text,
+            as_of_date=body.as_of_date,
+            universe=(None if body.universe is None else _domain_universe(body.universe)),
+            allow_ai_assistance=body.allow_ai_assistance,
+        )
+        return ScreeningParseResponse.model_validate(result)
+    except ScreeningError as exc:
+        raise to_app_error(ApplicationError(exc.code, str(exc))) from exc
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post(
+    "/screening-specs/validate",
+    response_model=ScreeningValidationResponse,
+)
+async def validate_screening_spec(
+    request: Request,
+    body: ScreeningSpecBody,
+) -> ScreeningValidationResponse:
+    try:
+        result = await _spec_service(request).validate(body.screening_spec.model_dump(mode="json"))
+        return ScreeningValidationResponse.model_validate(result)
+    except ScreeningError as exc:
+        raise to_app_error(ApplicationError(exc.code, str(exc))) from exc
+
+
+@router.post(
+    "/screening-specs/preview",
+    response_model=ScreeningPreviewEnvelopeResponse,
+)
+async def preview_screening_spec(
+    request: Request,
+    body: ScreeningSpecBody,
+) -> ScreeningPreviewEnvelopeResponse:
+    try:
+        result = await _spec_service(request).preview(body.screening_spec.model_dump(mode="json"))
+        return ScreeningPreviewEnvelopeResponse.model_validate(result)
+    except ScreeningError as exc:
+        raise to_app_error(ApplicationError(exc.code, str(exc))) from exc
+
+
 @router.get(
     "/screening-templates",
     response_model=list[ScreeningTemplateResponse],
@@ -167,7 +240,7 @@ async def create_screening(request: Request, body: ScreeningCreateBody) -> Scree
             catalog(request),
             source_code=request.app.state.settings.authoritative_market_source,
         ).enqueue(
-            _domain_spec(body),
+            _domain_spec(body, catalog(request)),
             correlation_id=request_correlation_id(request),
             idempotency_key=body.idempotency_key,
         )

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { healthyStatus, renderRoute } from "./test-utils";
 
@@ -119,6 +119,162 @@ const screeningTemplates = [
     },
   },
 ];
+const screeningConditions = [
+  {
+    condition_key: "LIMIT_UP_PULLBACK",
+    display_name: "涨停回踩",
+    description: "最近涨停后回踩起涨锚点且成交量显著收缩",
+    category: "PATTERN",
+    parameter_schema: [
+      {
+        name: "lookback_days",
+        display_name: "回看交易日数",
+        type: "integer",
+        description: "向前寻找涨停事件的交易日数量",
+        default: 20,
+        required: true,
+        nullable: false,
+        min_value: "2",
+        max_value: "250",
+        enum_values: [],
+        unit: "交易日",
+      },
+      {
+        name: "event_selection",
+        display_name: "涨停事件选择",
+        type: "enum",
+        description: "多次涨停时选择最近且数据完整的事件",
+        default: "LATEST_VALID",
+        required: true,
+        nullable: false,
+        min_value: null,
+        max_value: null,
+        enum_values: ["LATEST_VALID"],
+        unit: null,
+      },
+      {
+        name: "anchor_price",
+        display_name: "起涨价格定义",
+        type: "enum",
+        description: "涨停前一交易日收盘价",
+        default: "PRE_LIMIT_PREVIOUS_CLOSE",
+        required: true,
+        nullable: false,
+        min_value: null,
+        max_value: null,
+        enum_values: ["PRE_LIMIT_PREVIOUS_CLOSE"],
+        unit: null,
+      },
+      {
+        name: "maximum_distance_pct",
+        display_name: "回踩距离",
+        type: "decimal",
+        description: "当前收盘价距离起涨价格的最大比例",
+        default: "0.03",
+        required: true,
+        nullable: false,
+        min_value: "0",
+        max_value: "1",
+        enum_values: [],
+        unit: null,
+      },
+      {
+        name: "minimum_price_ratio_to_anchor",
+        display_name: "最低保护比例",
+        type: "decimal",
+        description: "当前价格不得低于起涨价格的比例",
+        default: "0.98",
+        required: true,
+        nullable: false,
+        min_value: "0",
+        max_value: "2",
+        enum_values: [],
+        unit: null,
+      },
+      {
+        name: "volume_reference",
+        display_name: "成交量参考",
+        type: "enum",
+        description: "使用涨停日成交量作为参照",
+        default: "LIMIT_UP_DAY_VOLUME",
+        required: true,
+        nullable: false,
+        min_value: null,
+        max_value: null,
+        enum_values: ["LIMIT_UP_DAY_VOLUME"],
+        unit: null,
+      },
+      {
+        name: "maximum_volume_ratio",
+        display_name: "最大成交量比例",
+        type: "decimal",
+        description: "当前成交量不得超过涨停日成交量的比例",
+        default: "0.50",
+        required: true,
+        nullable: false,
+        min_value: "0",
+        max_value: "10",
+        enum_values: [],
+        unit: null,
+      },
+    ],
+    required_fields: ["open", "high", "low", "close", "volume", "price_limit"],
+    required_history_bars: 22,
+    supported_timeframes: ["DAY_1"],
+    price_adjustment_mode: "RAW",
+    version: "1.0.0",
+    enabled: true,
+  },
+];
+const naturalSpec = {
+  ...screeningTemplates[0].spec,
+  name: "自然语言选股：涨停回踩",
+  origin: "NATURAL_LANGUAGE",
+  conditions: [
+    {
+      condition_key: "LIMIT_UP_PULLBACK",
+      condition_version: "1.0.0",
+      parameters: {
+        lookback_days: 20,
+        event_selection: "LATEST_VALID",
+        anchor_price: "PRE_LIMIT_PREVIOUS_CLOSE",
+        maximum_distance_pct: "0.03",
+        minimum_price_ratio_to_anchor: "0.98",
+        volume_reference: "LIMIT_UP_DAY_VOLUME",
+        maximum_volume_ratio: "0.50",
+      },
+    },
+  ],
+};
+function previewFor(spec = naturalSpec) {
+  const lookback = spec.conditions[0].parameters.lookback_days;
+  return {
+    summary: "自然语言选股：涨停回踩，共1项标准条件。",
+    universe: "筛选日期当时存在的全部A股（沪、深、北）。",
+    conditions: [
+      `过去${lookback}个交易日内出现过涨停。`,
+      "当前收盘价距离起涨价格不超过3%。",
+      "当前收盘价不低于起涨价格的98%。",
+      "当前成交量不超过涨停日成交量的50%。",
+    ],
+    screening_time: "2026-07-22收盘后（已完成交易日）。",
+    ranking: ["按标准条件得分从高到低排序。"],
+    defaults: [
+      "系统暂按不低于起涨价的98%理解。",
+      "系统暂按当前成交量不超过涨停日成交量的50%理解。",
+    ],
+    data_requirements: [
+      "涨停回踩：至少22根日K线；需要开盘价、最高价、最低价、收盘价、成交量。",
+    ],
+    parser_source: "本地确定性规则",
+    no_future_data_rule:
+      "只读取筛选日期及以前的本地历史日线，不会读取未来数据。",
+    data_ready: true,
+    data_readiness_message: "本地历史日线已就绪。",
+    can_execute: true,
+    notices: [],
+  };
+}
 const run = {
   scan_run_id: runId,
   scanner_key: "volume_anomaly",
@@ -228,6 +384,8 @@ const result = {
 };
 
 let createPayload: Record<string, unknown> | undefined;
+let createRequests = 0;
+let lastPreviewLookback: unknown;
 
 function installFetch() {
   vi.stubGlobal(
@@ -241,7 +399,88 @@ function installFetch() {
             : input.url;
       let body: unknown = healthyStatus;
       let status = 200;
-      if (url.includes("/screening-templates")) body = screeningTemplates;
+      if (url.includes("/screening-conditions")) body = screeningConditions;
+      else if (
+        url.endsWith("/screening-specs/parse") &&
+        init?.method === "POST"
+      ) {
+        if (typeof init.body !== "string") {
+          throw new Error("expected JSON request body");
+        }
+        const request = JSON.parse(init.body) as { text: string };
+        const ambiguous = request.text.includes("低位放量");
+        body = {
+          parse_status: ambiguous ? "AMBIGUOUS" : "COMPLETE",
+          parser_source: "LOCAL_RULES",
+          screening_spec: naturalSpec,
+          recognized_conditions: [
+            {
+              condition_key: "LIMIT_UP_PULLBACK",
+              display_name: "涨停回踩",
+              matched_expression: "涨停回踩与缩量",
+            },
+          ],
+          ambiguities: ambiguous
+            ? [
+                "系统无法确定“低位”的观察周期和范围，也无法确定“放量”的倍数。请确认以下参数。",
+              ]
+            : [],
+          unsupported_fragments: [],
+          defaults_applied: [
+            {
+              condition_key: "LIMIT_UP_PULLBACK",
+              parameter_name: "minimum_price_ratio_to_anchor",
+              display_name: "最低保护比例",
+              value: "0.98",
+              explanation: "系统暂按不低于起涨价的98%理解。",
+            },
+          ],
+          preview: previewFor(),
+          can_execute: !ambiguous,
+        };
+      } else if (
+        url.endsWith("/screening-specs/preview") &&
+        init?.method === "POST"
+      ) {
+        if (typeof init.body !== "string") {
+          throw new Error("expected JSON request body");
+        }
+        const request = JSON.parse(init.body) as {
+          screening_spec: typeof naturalSpec;
+        };
+        lastPreviewLookback =
+          request.screening_spec.conditions[0].parameters.lookback_days;
+        body = {
+          screening_spec: request.screening_spec,
+          preview: previewFor(request.screening_spec),
+          can_execute: true,
+        };
+      } else if (
+        url.endsWith("/screening-specs/validate") &&
+        init?.method === "POST"
+      ) {
+        if (typeof init.body !== "string") {
+          throw new Error("expected JSON request body");
+        }
+        const request = JSON.parse(init.body) as {
+          screening_spec: typeof naturalSpec;
+        };
+        body = {
+          valid: true,
+          parse_status: "COMPLETE",
+          screening_spec: request.screening_spec,
+          recognized_conditions: [
+            {
+              condition_key: "LIMIT_UP_PULLBACK",
+              display_name: "涨停回踩",
+              matched_expression: "涨停回踩与缩量",
+            },
+          ],
+          preview: previewFor(request.screening_spec),
+          can_execute: true,
+        };
+      } else if (url.includes("/screening-templates"))
+        body = screeningTemplates;
       else if (
         url.endsWith("/research/screenings") &&
         init?.method === "POST"
@@ -249,6 +488,7 @@ function installFetch() {
         if (typeof init.body !== "string") {
           throw new Error("expected JSON request body");
         }
+        createRequests += 1;
         createPayload = JSON.parse(init.body) as Record<string, unknown>;
         body = { ...screeningRun, status: "QUEUED", current_phase: "QUEUED" };
         status = 202;
@@ -326,57 +566,92 @@ function installFetch() {
 
 beforeEach(() => {
   createPayload = undefined;
+  createRequests = 0;
+  lastPreviewLookback = undefined;
   vi.stubGlobal("WebSocket", undefined);
   installFetch();
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test("SC02-A页面用两个标准模板创建点时全A股筛选并解释结果", async () => {
+test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭环", async () => {
   renderRoute("/scanners");
-  expect(await screen.findByText("涨停回踩")).toBeInTheDocument();
-  expect(screen.getAllByText("底部放倍量").length).toBeGreaterThan(0);
-  expect(screen.queryByText(/自然语言|AI解析|我的选股方案/)).not.toBeInTheDocument();
-  expect(await screen.findByText(/浦发银行（600000.SH）/)).toBeInTheDocument();
-  expect(screen.getByText(/成交量为此前20日均量的3.5倍/)).toBeInTheDocument();
-
-  const bottomCard = screen
-    .getAllByText("底部放倍量")[0]
-    .closest(".ant-card");
-  expect(bottomCard).not.toBeNull();
-  fireEvent.click(
-    within(bottomCard as HTMLElement).getByRole("button", {
-      name: /开始筛选/,
-    }),
-  );
-  const dialog = screen.getByRole("dialog");
-  expect(within(dialog).getByText("股票范围：当日全部A股")).toBeInTheDocument();
-  expect(within(dialog).queryByText(/研究股票池/)).not.toBeInTheDocument();
-  expect(within(dialog).queryByText("DAY_1")).not.toBeInTheDocument();
-
-  fireEvent.click(within(dialog).getByRole("button", { name: "开始筛选" }));
-  await waitFor(() => expect(createPayload).toBeDefined());
-  expect(createPayload).toMatchObject({
-    name: "底部放倍量",
-    as_of_date: "2026-07-22",
-    timeframe: "DAY_1",
-    universe_spec: {
-      universe_key: "ALL_A_SHARES",
-      exclude_st: true,
+  expect(await screen.findByText("自然语言选股")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("选股描述"), {
+    target: {
+      value:
+        "找过去20日涨停过，目前回踩到涨停前收盘价附近3%，并且明显缩量的股票。",
     },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
+
+  expect(await screen.findByText("条件已识别，可以确认")).toBeInTheDocument();
+  expect(screen.getByText("中文规则预览")).toBeInTheDocument();
+  expect(
+    screen.getAllByText(/系统暂按不低于起涨价的98%理解/).length,
+  ).toBeGreaterThan(0);
+  expect(screen.getByLabelText("回看交易日数")).toHaveValue("20");
+  expect(screen.queryByText("lookback_days")).not.toBeInTheDocument();
+  expect(screen.queryByText(runId)).not.toBeInTheDocument();
+
+  const lookbackInput = screen.getByLabelText("回看交易日数");
+  fireEvent.change(lookbackInput, {
+    target: { value: "25" },
+  });
+  fireEvent.blur(lookbackInput);
+  await waitFor(() => expect(lastPreviewLookback).toBe(25));
+  await waitFor(() =>
+    expect(document.body).toHaveTextContent("过去25个交易日内出现过涨停"),
+  );
+  fireEvent.change(screen.getByLabelText("回看交易日数"), {
+    target: { value: "20" },
+  });
+  await waitFor(() => expect(lastPreviewLookback).toBe(20));
+  await waitFor(() =>
+    expect(document.body).toHaveTextContent("过去20个交易日内出现过涨停"),
+  );
+
+  const startButton = screen.getByRole("button", { name: /开始选股/ });
+  fireEvent.click(startButton);
+  fireEvent.click(startButton);
+  await waitFor(() => expect(createPayload).toBeDefined());
+  expect(createRequests).toBe(1);
+  expect(createPayload).toMatchObject({
+    name: "自然语言选股：涨停回踩",
+    as_of_date: "2026-07-22",
+    universe_spec: { universe_key: "ALL_A_SHARES" },
     conditions: [
       {
-        condition_key: "BOTTOM_VOLUME_EXPANSION",
-        parameters: { minimum_volume_multiple: "2" },
+        condition_key: "LIMIT_UP_PULLBACK",
+        parameters: { lookback_days: 20 },
       },
     ],
   });
+  expect(createPayload?.idempotency_key).toEqual(
+    expect.stringMatching(/^screening:/),
+  );
+  expect(await screen.findByText(/浦发银行（600000.SH）/)).toBeInTheDocument();
+  expect(screen.getByText(/成交量为此前20日均量的3.5倍/)).toBeInTheDocument();
+  expect(document.body).not.toHaveTextContent(runId);
+  expect(document.body).not.toHaveTextContent("idempotency");
+  expect(document.body).not.toHaveTextContent("ScreeningSpec");
+});
+
+test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async () => {
+  renderRoute("/scanners");
+  await screen.findByText("自然语言选股");
+  fireEvent.change(screen.getByLabelText("选股描述"), {
+    target: { value: "找低位放量的股票" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
+
+  expect(await screen.findByText("需要确认几个参数")).toBeInTheDocument();
   expect(
-    (
-      createPayload?.conditions as {
-        condition_version?: string;
-      }[]
-    )[0],
-  ).not.toHaveProperty("condition_version");
+    screen.getByText(
+      "系统无法确定“低位”的观察周期和范围，也无法确定“放量”的倍数。请确认以下参数。",
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByText("确认或修改条件")).toBeInTheDocument();
+  expect(screen.getByLabelText("回看交易日数")).toBeInTheDocument();
 });
 
 test("扫描运行列表用中文展示全市场范围和任务状态", async () => {

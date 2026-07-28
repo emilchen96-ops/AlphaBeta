@@ -38,7 +38,13 @@ export interface ScreeningRankingRule {
 export interface ScreeningSpecSnapshot {
   schema_version: 1;
   name: string;
-  origin: "USER_STRUCTURED" | "BUILTIN_TEMPLATE" | "API";
+  origin:
+    | "USER_STRUCTURED"
+    | "USER_CORRECTED"
+    | "NATURAL_LANGUAGE"
+    | "AI_ASSISTED"
+    | "BUILTIN_TEMPLATE"
+    | "API";
   universe_spec: ScreeningUniverseSpec;
   as_of_date: string;
   timeframe: "DAY_1";
@@ -124,4 +130,88 @@ export interface ScreeningResultPage {
   page: number;
   page_size: number;
   total: number;
+}
+
+export type ScreeningParseStatus =
+  "COMPLETE" | "PARTIAL" | "AMBIGUOUS" | "UNSUPPORTED";
+
+export interface ScreeningParameterDefinition {
+  name: string;
+  display_name: string;
+  type: "integer" | "decimal" | "boolean" | "enum";
+  description: string;
+  default: string | number | boolean | null;
+  required: boolean;
+  nullable: boolean;
+  min_value: string | null;
+  max_value: string | null;
+  enum_values: string[];
+  unit: string | null;
+}
+
+export interface ScreeningConditionDefinition {
+  condition_key: string;
+  display_name: string;
+  description: string;
+  category: string;
+  parameter_schema: ScreeningParameterDefinition[];
+  required_fields: string[];
+  required_history_bars: number;
+  supported_timeframes: string[];
+  price_adjustment_mode: string;
+  version: string;
+  enabled: boolean;
+}
+
+export interface ScreeningPreview {
+  summary: string;
+  universe: string;
+  conditions: string[];
+  screening_time: string;
+  ranking: string[];
+  defaults: string[];
+  data_requirements: string[];
+  parser_source: string;
+  no_future_data_rule: string;
+  data_ready: boolean;
+  data_readiness_message: string;
+  can_execute: boolean;
+  notices: string[];
+}
+
+export interface ScreeningParseResult {
+  parse_status: ScreeningParseStatus;
+  parser_source: "LOCAL_RULES" | "AI_ASSISTED";
+  screening_spec: ScreeningSpecSnapshot | null;
+  recognized_conditions: {
+    condition_key: string;
+    display_name: string;
+    matched_expression: string;
+  }[];
+  ambiguities: string[];
+  unsupported_fragments: string[];
+  defaults_applied: {
+    condition_key: string;
+    parameter_name: string;
+    display_name: string;
+    value: string | number | boolean | null;
+    explanation: string;
+  }[];
+  preview: ScreeningPreview | null;
+  can_execute: boolean;
+}
+
+export interface ScreeningValidationResult {
+  valid: boolean;
+  parse_status: "COMPLETE";
+  screening_spec: ScreeningSpecSnapshot;
+  recognized_conditions: ScreeningParseResult["recognized_conditions"];
+  preview: ScreeningPreview;
+  can_execute: boolean;
+}
+
+export interface ScreeningPreviewResult {
+  screening_spec: ScreeningSpecSnapshot;
+  preview: ScreeningPreview;
+  can_execute: boolean;
 }
