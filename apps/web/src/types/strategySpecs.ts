@@ -93,9 +93,7 @@ export interface QuickBacktestRequest {
   slippage_basis_points: string;
   maximum_volume_participation: string | null;
   execution_price_mode:
-    | "NEXT_OPEN"
-    | "SIGNAL_CLOSE_LIMIT"
-    | "SAME_DAY_NEXT_MINUTE";
+    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
   position_size_ratio: string | null;
   maximum_entry_gap_ratio: string | null;
   time_in_force: "DAY" | "GTC";

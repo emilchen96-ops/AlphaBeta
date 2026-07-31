@@ -458,9 +458,7 @@ export function AIAnalysisDetailPage() {
         title={
           run.data?.insight?.title ??
           run.data?.user_question ??
-          (run.data
-            ? analysisTypeText[run.data.analysis_type]
-            : "AI 调研报告")
+          (run.data ? analysisTypeText[run.data.analysis_type] : "AI 调研报告")
         }
         description="查看调研结论、引用资料与证据链。"
       />

@@ -12,9 +12,7 @@ import { GettingStartedPage } from "../pages/GettingStartedPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import { ReplayRunDetailPage, ReplayRunsPage } from "../pages/ReplayPages";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
-import {
-  InformationDetailPage,
-} from "../pages/InformationPages";
+import { InformationDetailPage } from "../pages/InformationPages";
 import { OrdersPage } from "../pages/OrdersPage";
 import {
   AIAnalysisDetailPage,

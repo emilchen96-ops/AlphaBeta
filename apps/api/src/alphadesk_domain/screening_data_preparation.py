@@ -333,6 +333,8 @@ class ScreeningDataGapService:
                     if latest_bar_date is None or item > latest_bar_date
                 ]
             )
+            reason_code: str | None
+            reason: str | None
             if missing:
                 readiness = ScreeningInstrumentReadiness.DATA_GAP
                 reason_code = "OPEN_SESSION_DATA_GAP"
@@ -347,7 +349,8 @@ class ScreeningDataGapService:
                 reason = "筛选截止日当前停牌。仅完成研究计算。不作为可执行结果"
             else:
                 readiness = ScreeningInstrumentReadiness.READY
-                reason_code = reason = None
+                reason_code = None
+                reason = None
             values.append(
                 InstrumentDataGap(
                     instrument_id=instrument.id,

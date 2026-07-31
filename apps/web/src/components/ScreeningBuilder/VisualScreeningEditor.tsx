@@ -105,10 +105,7 @@ function isGroup(
 function replaceNode(
   group: ScreeningConditionGroupSpec,
   path: number[],
-  replacement:
-    | ScreeningConditionSpec
-    | ScreeningConditionGroupSpec
-    | null,
+  replacement: ScreeningConditionSpec | ScreeningConditionGroupSpec | null,
 ): ScreeningConditionGroupSpec {
   if (path.length === 1) {
     return {
@@ -158,8 +155,7 @@ function countAtoms(group: ScreeningConditionGroupSpec): number {
 
 function canRepresentAsFlatAnd(group: ScreeningConditionGroupSpec): boolean {
   return (
-    group.operator === "AND" &&
-    group.children.every((child) => !isGroup(child))
+    group.operator === "AND" && group.children.every((child) => !isGroup(child))
   );
 }
 
@@ -238,7 +234,9 @@ function ConditionCard({
       title={
         <Space wrap>
           <span>{definition.display_name}</span>
-          <Tag>{categoryLabels[definition.category] ?? definition.category}</Tag>
+          <Tag>
+            {categoryLabels[definition.category] ?? definition.category}
+          </Tag>
           <Typography.Text type="secondary">
             {definition.condition_key}
           </Typography.Text>
@@ -500,10 +498,7 @@ export function VisualScreeningEditor({
   const byKey = useMemo(
     () =>
       new Map(
-        definitions.map((definition) => [
-          definition.condition_key,
-          definition,
-        ]),
+        definitions.map((definition) => [definition.condition_key, definition]),
       ),
     [definitions],
   );
@@ -582,10 +577,7 @@ export function VisualScreeningEditor({
   };
   const updateUniverse = (
     name:
-      | "exclude_st"
-      | "exclude_bse"
-      | "exclude_star_market"
-      | "exclude_chinext",
+      "exclude_st" | "exclude_bse" | "exclude_star_market" | "exclude_chinext",
     checked: boolean,
   ) =>
     onChange({
@@ -641,7 +633,9 @@ export function VisualScreeningEditor({
         path={[]}
         depth={1}
         definitions={byKey}
-        onGroupChange={(path, updater) => emit(updateGroup(root, path, updater))}
+        onGroupChange={(path, updater) =>
+          emit(updateGroup(root, path, updater))
+        }
         onReplace={(path, replacement) =>
           emit(replaceNode(root, path, replacement))
         }
@@ -649,7 +643,9 @@ export function VisualScreeningEditor({
 
       <Card size="small" title="实时中文规则预览">
         <Typography.Paragraph style={{ marginBottom: 0 }}>
-          {root.children.length ? previewNode(root) : "请至少添加一个原子条件。"}
+          {root.children.length
+            ? previewNode(root)
+            : "请至少添加一个原子条件。"}
         </Typography.Paragraph>
       </Card>
 

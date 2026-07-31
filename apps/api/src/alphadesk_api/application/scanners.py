@@ -369,7 +369,12 @@ class FullMarketScannerProcessor:
                 )
                 open_sessions = [item.session_date for item in sessions if item.is_open]
         filters = run.universe_filters
-        manual = {UUID(str(item)) for item in filters.get("excluded_instrument_ids", [])}
+        raw_manual = filters.get("excluded_instrument_ids", [])
+        manual = (
+            {UUID(str(item)) for item in raw_manual}
+            if isinstance(raw_manual, (list, tuple))
+            else set()
+        )
         members: list[ScanRunMember] = []
         included: list[UUID] = []
         for instrument in instruments:

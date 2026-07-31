@@ -257,10 +257,18 @@ export function BacktestBatchPage() {
                       style={{ width: "100%", minHeight: 220 }}
                     >
                       <line x1="42" y1="10" x2="42" y2="210" stroke="#d9d9d9" />
-                      <line x1="42" y1="210" x2="630" y2="210" stroke="#d9d9d9" />
+                      <line
+                        x1="42"
+                        y1="210"
+                        x2="630"
+                        y2="210"
+                        stroke="#d9d9d9"
+                      />
                       {summary.data.return_drawdown_scatter.map((point) => {
                         const returns = Number(point.total_return);
-                        const drawdown = Math.abs(Number(point.maximum_drawdown));
+                        const drawdown = Math.abs(
+                          Number(point.maximum_drawdown),
+                        );
                         const x = 42 + Math.min(1, drawdown) * 570;
                         const y = 110 - Math.max(-1, Math.min(1, returns)) * 95;
                         return (

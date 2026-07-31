@@ -14,9 +14,15 @@ from alphadesk_api.application.backtest_batches import (
 from alphadesk_api.application.research_backtests import (
     QuickBacktestRequest,
     QuickBacktestService,
+    _readable_strategy_name,
 )
 
 CORE_TEXT = "10日价格突破 + 1.2倍成交量，5日均线退出，单只股票、两年日线"  # noqa: RUF001
+
+
+def test_historical_mojibake_strategy_name_uses_readable_fallback() -> None:
+    assert _readable_strategy_name("10æbroken", "user_spec_123") == "自定义规则策略"
+    assert _readable_strategy_name("放量突破策略", "volume_breakout") == "放量突破策略"
 
 
 def test_openapi_exposes_product_quick_backtest_endpoints(client: TestClient) -> None:

@@ -182,16 +182,13 @@ export const cancelScreening = (id: string) =>
   });
 
 export const retryFailedScreening = (id: string) =>
-  apiRequest<ScreeningRun>(
-    `/api/v1/research/screenings/${id}/retry-failed`,
-    {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({
-        idempotency_key: `screening-retry:${crypto.randomUUID()}`,
-      }),
-    },
-  );
+  apiRequest<ScreeningRun>(`/api/v1/research/screenings/${id}/retry-failed`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      idempotency_key: `screening-retry:${crypto.randomUUID()}`,
+    }),
+  });
 
 export function addScreeningResultsToWatchlist(
   screeningId: string,

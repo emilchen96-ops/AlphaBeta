@@ -115,7 +115,10 @@ async def create_replay(request: Request, body: ReplayCreateBody) -> ReplayRunRe
                 time_in_force=TimeInForce(body.time_in_force),
                 fee_configuration=AshareSimpleFeeModel(
                     commission_rate=_decimal(fee.commission_rate, "commission_rate"),
-                    minimum_commission=_decimal(fee.minimum_commission, "minimum_commission"),
+                    minimum_commission=_decimal(
+                        fee.minimum_commission if fee.minimum_commission is not None else "5",
+                        "minimum_commission",
+                    ),
                     stamp_duty_rate=_decimal(fee.stamp_duty_rate, "stamp_duty_rate"),
                     transfer_fee_rate=_decimal(fee.transfer_fee_rate, "transfer_fee_rate"),
                 ),

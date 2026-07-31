@@ -12,7 +12,6 @@ from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_domain.ai_research import AIResearchError
 from alphadesk_domain.screening import ConditionCatalog, ScreeningError, ScreeningSpec, UniverseSpec
 from alphadesk_domain.screening_specs import (
-    AppliedScreeningDefault,
     LocalScreeningParseResult,
     NaturalLanguageScreeningParser,
     RecognizedScreeningCondition,
@@ -297,10 +296,7 @@ class ScreeningSpecService:
             ],
             "ambiguities": list(result.ambiguities),
             "unsupported_fragments": list(result.unsupported_fragments),
-            "defaults_applied": [
-                cast(AppliedScreeningDefault, item).response_dict()
-                for item in result.defaults_applied
-            ],
+            "defaults_applied": [item.response_dict() for item in result.defaults_applied],
             "preview": preview,
             "can_execute": can_execute,
         }

@@ -221,9 +221,7 @@ interface BacktestFormValues {
   order_type: "MARKET" | "LIMIT";
   time_in_force: "DAY" | "GTC";
   execution_price_mode:
-    | "NEXT_OPEN"
-    | "SIGNAL_CLOSE_LIMIT"
-    | "SAME_DAY_NEXT_MINUTE";
+    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
   maximum_entry_gap_percent?: string | null;
   commission_rate: string;
   minimum_commission: string;
@@ -1082,7 +1080,7 @@ export function BacktestDetailPage() {
               ? "下一交易日开盘价（另计滑点）"
               : executionPriceMode === "SAME_DAY_NEXT_MINUTE"
                 ? "14:55前可见数据判断，下一分钟开盘价"
-              : "信号日收盘价限价"}
+                : "信号日收盘价限价"}
           </Descriptions.Item>
           <Descriptions.Item label="单次买入仓位">
             {positionSizeRatio === null || positionSizeRatio === undefined

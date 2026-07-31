@@ -487,43 +487,41 @@ let screeningProgressOverride: Record<string, unknown> | undefined;
 
 test("版本2组合条件按实际原子条件数量显示", () => {
   expect(
-    screeningConditionCount(
-      {
-        ...naturalSpec,
-        schema_version: 2,
-        conditions: [],
-        root_group: {
-          node_type: "GROUP",
-          operator: "AND",
-          children: [
-            {
-              node_type: "CONDITION",
-              condition_key: "AMOUNT_THRESHOLD",
-              condition_version: "1.0.0",
-              parameters: { minimum_amount: "5000000000" },
-            },
-            {
-              node_type: "GROUP",
-              operator: "OR",
-              children: [
-                {
-                  node_type: "CONDITION",
-                  condition_key: "N_DAY_HIGH_BREAKOUT",
-                  condition_version: "1.0.0",
-                  parameters: { window: 20 },
-                },
-                {
-                  node_type: "CONDITION",
-                  condition_key: "BULLISH_CANDLE",
-                  condition_version: "1.0.0",
-                  parameters: {},
-                },
-              ],
-            },
-          ],
-        },
-      } as ScreeningSpecSnapshot,
-    ),
+    screeningConditionCount({
+      ...naturalSpec,
+      schema_version: 2,
+      conditions: [],
+      root_group: {
+        node_type: "GROUP",
+        operator: "AND",
+        children: [
+          {
+            node_type: "CONDITION",
+            condition_key: "AMOUNT_THRESHOLD",
+            condition_version: "1.0.0",
+            parameters: { minimum_amount: "5000000000" },
+          },
+          {
+            node_type: "GROUP",
+            operator: "OR",
+            children: [
+              {
+                node_type: "CONDITION",
+                condition_key: "N_DAY_HIGH_BREAKOUT",
+                condition_version: "1.0.0",
+                parameters: { window: 20 },
+              },
+              {
+                node_type: "CONDITION",
+                condition_key: "BULLISH_CANDLE",
+                condition_version: "1.0.0",
+                parameters: {},
+              },
+            ],
+          },
+        ],
+      },
+    } as ScreeningSpecSnapshot),
   ).toBe(3);
 });
 

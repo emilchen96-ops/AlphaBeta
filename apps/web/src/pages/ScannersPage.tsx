@@ -159,13 +159,10 @@ export function screeningConditionCount(
   const countGroup = (group: ScreeningConditionGroupSpec): number =>
     group.children.reduce(
       (total, child) =>
-        total +
-        (child.node_type === "GROUP" ? countGroup(child) : 1),
+        total + (child.node_type === "GROUP" ? countGroup(child) : 1),
       0,
     );
-  return spec.root_group
-    ? countGroup(spec.root_group)
-    : spec.conditions.length;
+  return spec.root_group ? countGroup(spec.root_group) : spec.conditions.length;
 }
 
 const screeningErrorAdvice: Record<string, string> = {
@@ -682,10 +679,7 @@ function NaturalLanguageScreeningPane({
       ) {
         return draftSpec.name;
       }
-      const labels = [
-        ...addedConditionKeys,
-        definition.condition_key,
-      ]
+      const labels = [...addedConditionKeys, definition.condition_key]
         .map(
           (key) =>
             definitions.data?.find((item) => item.condition_key === key)
@@ -1272,7 +1266,8 @@ function NaturalLanguageScreeningPane({
             <Space orientation="vertical" size={6}>
               <span>
                 已处理{current.processed_instruments}只，其中
-                {progress.data?.listing_history_short_count ?? 0}只上市历史不足、
+                {progress.data?.listing_history_short_count ?? 0}
+                只上市历史不足、
                 {progress.data?.currently_suspended_count ?? 0}只当前停牌、
                 {progress.data?.stale_data_count ?? 0}只数据过旧、
                 {progress.data?.data_gap_count ?? 0}只正常交易日行情缺失、
@@ -1450,16 +1445,17 @@ function NaturalLanguageScreeningPane({
                   : [];
                 return (
                   <Space orientation="vertical" size={8}>
-                    <Typography.Text strong>
-                      原子条件逐项判断
-                    </Typography.Text>
+                    <Typography.Text strong>原子条件逐项判断</Typography.Text>
                     {evaluations.map((item, index) => {
                       const detail =
                         typeof item === "object" && item !== null
                           ? (item as Record<string, unknown>)
                           : {};
                       return (
-                        <Space key={`${String(detail.condition_key)}-${index}`} wrap>
+                        <Space
+                          key={`${String(detail.condition_key)}-${index}`}
+                          wrap
+                        >
                           <Tag
                             color={
                               detail.outcome === "MATCHED"

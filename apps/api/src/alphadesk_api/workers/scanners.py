@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable
 from typing import cast
 from uuid import UUID
 
@@ -97,7 +98,10 @@ class ScannerWorker:
             )
 
         async def enqueue(payload: dict[str, object]) -> int:
-            raw_status = await self._redis.client.get(AGENT_STATUS_KEY)
+            raw_status = await cast(
+                Awaitable[object],
+                self._redis.client.get(AGENT_STATUS_KEY),
+            )
             try:
                 agent_status = json.loads(str(raw_status)) if raw_status is not None else {}
             except (TypeError, ValueError):
@@ -105,15 +109,21 @@ class ScannerWorker:
             if agent_status.get("state") != "CONNECTED":
                 raise RuntimeError("MINIQMT_AGENT_NOT_CONNECTED")
             return int(
-                await self._redis.client.rpush(
-                    HISTORY_QUEUE_KEY,
-                    json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                await cast(
+                    Awaitable[int],
+                    self._redis.client.rpush(
+                        HISTORY_QUEUE_KEY,
+                        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                    ),
                 )
             )
 
         async def pending_backfill_batches(scan_run_id: UUID) -> int | None:
             try:
-                raw_items = await self._redis.client.lrange(HISTORY_QUEUE_KEY, 0, -1)
+                raw_items = await cast(
+                    Awaitable[list[object]],
+                    self._redis.client.lrange(HISTORY_QUEUE_KEY, 0, -1),
+                )
             except Exception:
                 LOGGER.warning(
                     "MiniQMT history queue status unavailable; using bounded wait fallback",

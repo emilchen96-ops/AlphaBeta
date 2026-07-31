@@ -17,7 +17,6 @@ from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.application.scanners import (
     BackfillEnqueuer,
     FullMarketScannerProcessor,
-    miniqmt_provider_symbol,
 )
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
@@ -26,6 +25,7 @@ from alphadesk_domain.market_reference import (
     InstrumentTradingStatus,
     PriceAdjustmentMode,
 )
+from alphadesk_domain.miniqmt_market import miniqmt_provider_symbol
 from alphadesk_domain.scanners import (
     ScanMemberStatus,
     ScanResult,
@@ -68,6 +68,11 @@ BACKFILL_SECONDS_PER_BATCH = 30
 MAX_BACKFILL_WAIT_SECONDS = 8 * 60 * 60
 BACKFILL_QUEUE_DRAIN_GRACE_SECONDS = 30
 BackfillPendingCounter = Callable[[UUID], Awaitable[int | None]]
+
+
+def _integer_stat(values: Mapping[str, object], key: str) -> int:
+    value = values.get(key, 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -671,14 +676,14 @@ class ScreeningDataPreparationService:
         instruments: Sequence[Instrument],
         plan: DataRequirementPlan,
         open_sessions: Sequence[date],
-    ) -> tuple[dict[UUID, list[StrategyBar]], list[object]]:
+    ) -> tuple[dict[UUID, list[StrategyBar]], list[InstrumentTradingStatus]]:
         start_at = datetime.combine(plan.earliest_fetch_date, time.min, SHANGHAI).astimezone(UTC)
         end_at = datetime.combine(
             plan.latest_required_date + timedelta(days=1),
             time.min,
             SHANGHAI,
         ).astimezone(UTC)
-        instrument_ids = [item.id for item in instruments]
+        instrument_ids = tuple(item.id for item in instruments)
         async with self._uow_factory() as uow:
             bars = await uow.historical_bars.list_authoritative_bars(
                 instrument_ids=instrument_ids,
@@ -689,12 +694,12 @@ class ScreeningDataPreparationService:
                 price_adjustment_mode=plan.price_adjustment_mode,
             )
             statuses = await uow.instrument_trading_statuses.list(
-                instrument_ids=instrument_ids,
+                instrument_ids=list(instrument_ids),
                 start=open_sessions[0],
                 end=open_sessions[-1],
                 limit=max(len(instrument_ids) * len(open_sessions), 10_000),
             )
-        grouped = {item.id: [] for item in instruments}
+        grouped: dict[UUID, list[StrategyBar]] = {item.id: [] for item in instruments}
         for bar in bars:
             if bar.instrument_id in grouped:
                 grouped[bar.instrument_id].append(bar)
@@ -781,8 +786,8 @@ class ScreeningDataPreparationService:
         members = await self._members(run.id)
         gap_by_id = {item.instrument_id: item for item in gaps}
         for member in members:
-            gap = gap_by_id.get(member.instrument_id)
-            if gap is None or not gap.needs_backfill:
+            member_gap = gap_by_id.get(member.instrument_id)
+            if member_gap is None or not member_gap.needs_backfill:
                 continue
             member.status = (
                 ScanMemberStatus.PROVIDER_FAILED
@@ -799,8 +804,8 @@ class ScreeningDataPreparationService:
                 if member.instrument_id in queue_failed_ids
                 else "正在通过MiniQMT补齐缺失的历史日线区间"
             )
-            member.bars_available = gap.available_bars
-            member.required_bars = gap.required_bars
+            member.bars_available = member_gap.available_bars
+            member.required_bars = member_gap.required_bars
             member.updated_at = now
         async with self._uow_factory() as uow:
             locked = await uow.scan_runs.get_for_update(run.id)
@@ -1366,8 +1371,9 @@ class RuleBasedScreeningProcessor:
             await self._mark_canceled(run.id)
             return
         resolution = await self._universe.resolve(spec.as_of_date, spec.universe_spec)
-        preparation = run.execution_stats.get("data_preparation", {})
-        prepared = isinstance(preparation, Mapping) and bool(preparation.get("prepared"))
+        raw_preparation = run.execution_stats.get("data_preparation", {})
+        preparation = dict(raw_preparation) if isinstance(raw_preparation, Mapping) else {}
+        prepared = bool(preparation.get("prepared"))
         ready_ids = (
             {UUID(str(item)) for item in preparation.get("ready_instrument_ids", [])}
             if prepared and isinstance(preparation.get("ready_instrument_ids"), list)
@@ -1465,9 +1471,9 @@ class RuleBasedScreeningProcessor:
         processed = 0
         condition_failure_counts: Counter[str] = Counter()
         by_member = {item.instrument_id: item for item in members}
-        included = list(included)
-        for offset in range(0, len(included), self._batch_size):
-            batch = included[offset : offset + self._batch_size]
+        included_list = list(included)
+        for offset in range(0, len(included_list), self._batch_size):
+            batch = included_list[offset : offset + self._batch_size]
             for instrument in batch:
                 item_bars = grouped[instrument.id]
                 member = by_member[instrument.id]
@@ -1539,7 +1545,7 @@ class RuleBasedScreeningProcessor:
             await self._update_progress(
                 run.id,
                 processed=processed,
-                total=len(included),
+                total=len(included_list),
                 ready=ready,
                 insufficient=insufficient,
                 indeterminate=indeterminate,
@@ -1596,7 +1602,10 @@ class RuleBasedScreeningProcessor:
             locked.instruments_scanned = processed
             locked.matches_found = len(results)
             locked.elapsed_ms = elapsed_ms
-            locked.batch_count = max(1, (len(included) + self._batch_size - 1) // self._batch_size)
+            locked.batch_count = max(
+                1,
+                (len(included_list) + self._batch_size - 1) // self._batch_size,
+            )
             locked.query_count = 3
             locked.bars_read = len(bars)
             preparation_stats = self._preparation_stats(locked)
@@ -1605,16 +1614,19 @@ class RuleBasedScreeningProcessor:
             preparation_failed = 0
             if preparation_stats:
                 preparation_insufficient = (
-                    int(preparation_stats.get("insufficient_count", 0))
-                    + int(preparation_stats.get("listing_history_short_count", 0))
-                    + int(preparation_stats.get("data_gap_count", 0))
+                    _integer_stat(preparation_stats, "insufficient_count")
+                    + _integer_stat(preparation_stats, "listing_history_short_count")
+                    + _integer_stat(preparation_stats, "data_gap_count")
                 )
-                preparation_indeterminate = int(preparation_stats.get("indeterminate_count", 0))
+                preparation_indeterminate = _integer_stat(
+                    preparation_stats,
+                    "indeterminate_count",
+                )
                 preparation_failed = (
-                    int(preparation_stats.get("provider_failed_count", 0))
-                    + int(preparation_stats.get("quality_failed_count", 0))
-                    + int(preparation_stats.get("reference_data_missing_count", 0))
-                    + int(preparation_stats.get("calendar_mismatch_count", 0))
+                    _integer_stat(preparation_stats, "provider_failed_count")
+                    + _integer_stat(preparation_stats, "quality_failed_count")
+                    + _integer_stat(preparation_stats, "reference_data_missing_count")
+                    + _integer_stat(preparation_stats, "calendar_mismatch_count")
                 )
             locked.insufficient_history = insufficient + preparation_insufficient
             locked.indeterminate_count = indeterminate + preparation_indeterminate
@@ -1623,7 +1635,7 @@ class RuleBasedScreeningProcessor:
                 **locked.execution_stats,
                 "as_of_date": spec.as_of_date.isoformat(),
                 "universe_count": resolution.total,
-                "included_count": len(included),
+                "included_count": len(included_list),
                 "market_bar_query_count": 1,
                 "universe_query_count": 2,
                 "query_count": 3,
@@ -1641,7 +1653,7 @@ class RuleBasedScreeningProcessor:
                     {
                         "stage": ScreeningPreparationStage.COMPLETED.value,
                         "current_action": "全市场选股已完成",
-                        "feature_prepared_count": len(included),
+                        "feature_prepared_count": len(included_list),
                         "updated_at": now.isoformat(),
                     }
                 )

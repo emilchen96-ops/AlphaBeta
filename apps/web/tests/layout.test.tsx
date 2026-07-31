@@ -78,7 +78,9 @@ test("研究档案只保留三个独立业务入口并兼容旧的全部档案�
   for (const label of ["策略回测", "智能选股", "AI 调研"]) {
     expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
   }
-  expect(screen.queryByRole("tab", { name: "全部档案" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("tab", { name: "全部档案" }),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "策略回测" })).toHaveAttribute(
     "aria-selected",
     "true",

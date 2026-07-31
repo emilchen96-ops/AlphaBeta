@@ -65,9 +65,7 @@ interface BacktestFormValues {
   slippage_basis_points: number | null;
   maximum_volume_participation: number | null;
   execution_price_mode:
-    | "NEXT_OPEN"
-    | "SIGNAL_CLOSE_LIMIT"
-    | "SAME_DAY_NEXT_MINUTE";
+    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
   maximum_entry_gap_percent: number | null;
   time_in_force: "DAY" | "GTC";
 }

@@ -245,9 +245,7 @@ test("回测列表展示配置入口、时间规则和本地运行记录", async
 
 test("回测详情展示指标、曲线、事实与完整性状态", async () => {
   renderRoute(`/backtest/${runId}`);
-  expect(
-    await screen.findByText(/回测详情.*均线交叉策略/),
-  ).toBeInTheDocument();
+  expect(await screen.findByText(/回测详情.*均线交叉策略/)).toBeInTheDocument();
   expect(screen.getByText("完整性检查：通过")).toBeInTheDocument();
   expect(screen.getByText("权益曲线")).toBeInTheDocument();
   expect(screen.getByText("回撤曲线")).toBeInTheDocument();

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import builtins
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -181,17 +182,29 @@ class ResearchBacktestQueryService:
         async with self._uow_factory() as uow:
             snapshot = await uow.research_backtest_specs.get_by_run(run_id)
             parent = await uow.backtest_batches.get_parent_for_run(run_id)
-            configuration = detail.get("configuration") or {}
-            instrument_ids = [UUID(str(value)) for value in configuration.get("instrument_ids", [])]
+            raw_configuration = detail.get("configuration")
+            configuration = (
+                dict(raw_configuration) if isinstance(raw_configuration, Mapping) else {}
+            )
+            raw_instrument_ids = configuration.get("instrument_ids", [])
+            instrument_ids = (
+                [UUID(str(value)) for value in raw_instrument_ids]
+                if isinstance(raw_instrument_ids, (list, tuple))
+                else []
+            )
             instruments = await uow.instruments.get_many(instrument_ids)
         if snapshot is not None:
             detail["strategy_spec"] = strategy_spec_to_dict(snapshot.spec)
             detail["strategy_preview"] = strategy_spec_preview(snapshot.spec)
-        preview = list(detail.get("strategy_preview", []))
+        raw_preview = detail.get("strategy_preview", [])
+        preview = (
+            [str(value) for value in raw_preview] if isinstance(raw_preview, (list, tuple)) else []
+        )
+        strategy_key = str(detail.get("strategy_key", ""))
         strategy_name = (
-            snapshot.spec.name
+            _readable_strategy_name(snapshot.spec.name, strategy_key)
             if snapshot is not None
-            else _strategy_fallback_name(str(detail.get("strategy_key", "")))
+            else _strategy_fallback_name(strategy_key)
         )
         strategy_summary = (
             "；".join(preview[:2]) if preview else "历史策略回测（旧记录未保存完整策略快照）"
@@ -277,3 +290,11 @@ def _strategy_fallback_name(strategy_key: str) -> str:
     if strategy_key.startswith("user_spec_"):
         return "自定义规则策略"
     return "历史策略回测"
+
+
+def _readable_strategy_name(name: str, strategy_key: str) -> str:
+    normalized = name.strip()
+    mojibake_markers = ("Ã", "Â", "â", "æ", "ç", "å", "ä", "é", "è", "ï¿½", "�")
+    if not normalized or any(marker in normalized for marker in mojibake_markers):
+        return _strategy_fallback_name(strategy_key)
+    return normalized

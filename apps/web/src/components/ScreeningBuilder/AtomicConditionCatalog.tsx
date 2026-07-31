@@ -80,10 +80,7 @@ function fragments(value: string) {
   return [...new Set(words)];
 }
 
-function relevance(
-  definition: ScreeningConditionDefinition,
-  phrase: string,
-) {
+function relevance(definition: ScreeningConditionDefinition, phrase: string) {
   if (!phrase.trim()) return 0;
   const haystack = normalize(
     [

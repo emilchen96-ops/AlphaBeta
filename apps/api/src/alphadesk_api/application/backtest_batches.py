@@ -519,7 +519,9 @@ def _ratio(numerator: int, denominator: int) -> str | None:
     return _decimal_text(Decimal(numerator) / Decimal(denominator))
 
 
-def _decimal_text(value: Decimal) -> str:
+def _decimal_text(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
     normalized = value.normalize()
     return "0" if normalized == 0 else format(normalized, "f")
 

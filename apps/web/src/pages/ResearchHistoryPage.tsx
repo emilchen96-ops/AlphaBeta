@@ -174,7 +174,8 @@ export function ResearchHistoryPage() {
         status: item.status,
         createdAt: item.completed_at ?? item.created_at,
         href: `/ai-analyses/${item.analysis_id}`,
-        result: item.insight?.summary ?? (item.error?.message || "查看调研报告"),
+        result:
+          item.insight?.summary ?? (item.error?.message || "查看调研报告"),
       })),
     [analyses.data],
   );

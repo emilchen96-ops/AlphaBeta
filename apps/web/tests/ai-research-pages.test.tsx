@@ -211,9 +211,7 @@ test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", as
 
 test("分析详情区分 AI 推断、不确定性和可追溯原始证据", async () => {
   renderRoute(`/ai-analyses/${analysisId}`);
-  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(
-    0,
-  );
+  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(0);
   expect(screen.getByText("AI 摘要 / 推断")).toBeInTheDocument();
   expect(screen.getByText("仍需交叉验证。")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "打开原始事实" })).toHaveAttribute(
@@ -280,9 +278,7 @@ test("ResearchInsight 目录和证据详情均为只读研究页面", async () =
 
 test("ResearchInsight 详情保留版本化结构与来源证据", async () => {
   renderRoute(`/research-insights/${insightId}`);
-  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(
-    0,
-  );
+  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(0);
   expect(screen.getByText("原始来源证据（需人工核对）")).toBeInTheDocument();
   expect(screen.getByText("selected information item")).toBeInTheDocument();
 });

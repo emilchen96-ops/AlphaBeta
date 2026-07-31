@@ -1030,7 +1030,11 @@ class BacktestService:
                                 "instrument_id": str(signal.instrument_id),
                                 "side": signal.side.value,
                                 "decision_time": decision_time.isoformat(),
-                                "execution_timing": config.execution_price_mode.value,
+                                "execution_timing": (
+                                    config.execution_price_mode.value
+                                    if config.execution_price_mode is not None
+                                    else BacktestExecutionPriceMode.NEXT_OPEN.value
+                                ),
                             },
                         )
                         following_date = (

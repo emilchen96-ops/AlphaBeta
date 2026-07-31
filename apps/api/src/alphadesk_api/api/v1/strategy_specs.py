@@ -24,7 +24,7 @@ from alphadesk_api.schemas.strategy_specs import (
     UserStrategyWriteBody,
 )
 from alphadesk_domain.strategy import StrategyRegistry
-from alphadesk_domain.strategy_spec import StrategySpecError, strategy_spec_from_dict
+from alphadesk_domain.strategy_spec import StrategySpec, StrategySpecError, strategy_spec_from_dict
 
 router = APIRouter(tags=["strategy-builder"])
 
@@ -33,7 +33,7 @@ def _registry(request: Request) -> StrategyRegistry:
     return cast(StrategyRegistry, request.app.state.strategy_registry)
 
 
-def _spec(data: dict[str, Any]):
+def _spec(data: dict[str, Any]) -> StrategySpec:
     try:
         return strategy_spec_from_dict(data)
     except StrategySpecError as exc:

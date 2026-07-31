@@ -110,7 +110,9 @@ test("旧市场事件入口收口到 AI 调研资料", async () => {
   renderRoute("/market-events");
   expect(await screen.findByText("调研资料与来源")).toBeInTheDocument();
   expect((await screen.findAllByText("公司公告")).length).toBeGreaterThan(0);
-  expect(screen.queryByRole("heading", { name: "市场事件" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("heading", { name: "市场事件" }),
+  ).not.toBeInTheDocument();
 });
 
 test("资讯详情保留原始内容并区分发布时间与接收时间", async () => {
@@ -126,17 +128,14 @@ test.each([
   "/information",
   "/market-events",
   `/information/${itemId}`,
-])(
-  "%s 没有 AI 冒充或交易动作",
-  async (route) => {
-    renderRoute(route);
-    expect(
-      (await screen.findAllByText(/资讯|事件|AI 分析/)).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.queryByRole("button", {
-        name: /AI分析|买入|卖出|下单|创建订单|自动交易/,
-      }),
-    ).not.toBeInTheDocument();
-  },
-);
+])("%s 没有 AI 冒充或交易动作", async (route) => {
+  renderRoute(route);
+  expect(
+    (await screen.findAllByText(/资讯|事件|AI 分析/)).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.queryByRole("button", {
+      name: /AI分析|买入|卖出|下单|创建订单|自动交易/,
+    }),
+  ).not.toBeInTheDocument();
+});
