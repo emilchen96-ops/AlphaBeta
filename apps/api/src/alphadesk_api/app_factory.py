@@ -23,6 +23,7 @@ from alphadesk_api.infrastructure.ai_research_provider import (
     OpenAICompatibleResearchProvider,
     build_ai_research_provider,
 )
+from alphadesk_api.infrastructure.ai_workbench_provider import build_ai_workbench_provider
 from alphadesk_api.infrastructure.database import DatabaseService
 from alphadesk_api.infrastructure.redis import RedisService
 from alphadesk_api.infrastructure.system_capabilities import (
@@ -72,6 +73,7 @@ def create_app(
     register_builtin_scanners(scanner_registry)
     screening_condition_catalog = builtin_condition_catalog()
     ai_provider = build_ai_research_provider(resolved_settings)
+    ai_workbench_provider = build_ai_workbench_provider(ai_provider)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -120,6 +122,7 @@ def create_app(
     app.state.scanner_registry = scanner_registry
     app.state.screening_condition_catalog = screening_condition_catalog
     app.state.ai_research_provider = ai_provider
+    app.state.ai_workbench_provider = ai_workbench_provider
     app.state.capability_data_provider = (
         SqlAlchemyCapabilityDataProvider(database_service.session_factory)
         if isinstance(database_service, DatabaseService)

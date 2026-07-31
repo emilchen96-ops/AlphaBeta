@@ -115,3 +115,93 @@ export interface AIAnalysisCreateBody {
   question: string | null;
   idempotency_key: string;
 }
+
+export type AIResearchDepth = "FAST" | "STANDARD" | "DEEP";
+export type AIResearchTaskStatus =
+  | "CREATED"
+  | "PREPARING_DATA"
+  | "RUNNING_AGENTS"
+  | "DEBATING"
+  | "RISK_REVIEW"
+  | "GENERATING_REPORT"
+  | "COMPLETED"
+  | "PARTIALLY_COMPLETED"
+  | "FAILED"
+  | "CANCELED";
+
+export interface AIResearchAgentStep {
+  step_id: string;
+  role: string;
+  role_label: string;
+  ordinal: number;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "SKIPPED";
+  title: string;
+  summary: string;
+  structured_output: Record<string, unknown>;
+  citations: Array<Record<string, unknown>>;
+  input_token_count: number | null;
+  output_token_count: number | null;
+  error: { code: string; message: string } | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface AIResearchReportSummary {
+  report_id: string;
+  title: string;
+  executive_summary: string;
+  stance: string;
+  confidence: string;
+  schema_version: number;
+  created_at: string;
+}
+
+export interface AIResearchTask {
+  task_id: string;
+  instrument: { id: string; symbol: string; exchange: string; name: string };
+  question: string;
+  depth: AIResearchDepth;
+  start_date: string;
+  end_date: string;
+  provider_key: string;
+  model_name: string;
+  is_real_provider: boolean;
+  status: AIResearchTaskStatus;
+  progress_percent: number;
+  current_stage: string;
+  warnings: string[];
+  error: { code: string; message: string } | null;
+  correlation_id: string;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  steps: AIResearchAgentStep[];
+  report: AIResearchReportSummary | null;
+  capabilities: Record<string, boolean>;
+}
+
+export interface AIResearchTaskPage {
+  items: AIResearchTask[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+export interface AIResearchReport extends AIResearchReportSummary {
+  task_id: string;
+  sections: Record<string, unknown>;
+  citations: Array<Record<string, unknown>>;
+  limitations: string[];
+  markdown: string;
+  disclaimer: string;
+}
+
+export interface AIResearchTaskCreateBody {
+  instrument_id: string;
+  question: string;
+  depth: AIResearchDepth;
+  start_date: string;
+  end_date: string;
+  idempotency_key: string;
+}

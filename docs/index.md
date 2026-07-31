@@ -101,6 +101,10 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 
 ## 阅读顺序
 
+> TA01 已建立 [多智能体 AI 调研工作台](ai_research_workbench.md)、
+> [角色与持久化流程](ai_multi_agent_workflow.md)、[模型服务配置](ai_provider_configuration.md)
+> 和 [结构化报告 Schema](ai_report_schema.md)。其运行时不依赖 TradingAgents 目录，且不具备任何交易能力。
+
 1. [架构总览](architecture.md)：系统边界、依赖方向与两条交易链路。
 2. [开发路线图](development_roadmap.md)：M00–M14 的交付顺序和验收门槛。
 3. [领域模型](domain_model.md) 与 [事件模型](event_model.md)：统一语言、事实与审计基础。
@@ -123,7 +127,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md` |
 | SC02/SC03 标准条件选股闭环      | `sc02_screening_engine.md`、`sc02_natural_language_screening.md`、`sc02_screening_data_preparation.md`、`sc03_atomic_condition_builder.md`、`screening_templates.md`、`user_screening_definitions.md`、`screening_history.md`、`screening_to_watchlist.md`、`screening_to_backtest.md` |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
-| A01 AI 研究助手                 | `ai_research_assistant.md`、`real_ai_provider.md`、`information_event_center.md`、`database_schema.md`、`security.md` |
+| A01/TA01 AI 调研               | `ai_research_workbench.md`、`ai_multi_agent_workflow.md`、`ai_provider_configuration.md`、`ai_report_schema.md`、`ai_research_assistant.md`、`real_ai_provider.md`、`database_schema.md`、`security.md` |
 | 订单、成交、执行器              | `order_state_machine.md`、`reliable_messaging.md`、`risk_model.md`、`security.md`         |
 | M05 手工订单、确认与本地 Outbox | `orders.md`、`order_confirmation.md`、`transactional_outbox.md`、ADR 0015–0016            |
 | B01 模拟 Broker 与执行事实 | `simulated_broker.md`、`simulated_execution_pipeline.md`、`accounting.md`、`order_state_machine.md` |

@@ -97,8 +97,9 @@ Provider 返回 usage 时，保存 input、output 和 total Token。若没有 to
 
 ## 运行真实研究
 
-确认状态为 `REAL_AVAILABLE` 后，在 `/ai-research` 选择至少一条资讯或市场事件，再发起四种既有
-分析类型之一。命令行示例：
+TA01 的主要入口已经改为 `/ai-research` 多智能体调研工作台。用户只选择一只股票、研究问题、调研深度和资料时间范围；旧 A01 的事件分析入口仅保留兼容。详细配置见 [TA01 模型服务配置](ai_provider_configuration.md)，持久化执行见 [多智能体调研流程](ai_multi_agent_workflow.md)。
+
+以下旧 A01 CLI 仅用于兼容和审计，不是 TA01 的主要操作方式：
 
 ```powershell
 docker compose exec api python -m alphadesk_api.cli.ai analyze `

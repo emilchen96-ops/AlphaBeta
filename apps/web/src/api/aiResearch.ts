@@ -7,6 +7,10 @@ import type {
   AIProviderTestResult,
   ResearchInsight,
   ResearchInsightPage,
+  AIResearchReport,
+  AIResearchTask,
+  AIResearchTaskCreateBody,
+  AIResearchTaskPage,
 } from "../types/aiResearch";
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -52,3 +56,40 @@ export function getResearchInsights(page = 1, pageSize = 20) {
 
 export const getResearchInsight = (id: string) =>
   apiRequest<ResearchInsight>(`/api/v1/research-insights/${id}`);
+
+export const createAIResearchTask = (body: AIResearchTaskCreateBody) =>
+  apiRequest<AIResearchTask>("/api/v1/ai/research-tasks", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(body),
+  }, 15_000);
+
+export function getAIResearchTasks(page = 1, pageSize = 20) {
+  return apiRequest<AIResearchTaskPage>(
+    `/api/v1/ai/research-tasks?page=${page}&page_size=${pageSize}`,
+  );
+}
+
+export const getAIResearchTask = (id: string) =>
+  apiRequest<AIResearchTask>(`/api/v1/ai/research-tasks/${id}`);
+
+export const cancelAIResearchTask = (id: string) =>
+  apiRequest<AIResearchTask>(`/api/v1/ai/research-tasks/${id}/cancel`, {
+    method: "POST",
+  });
+
+export const retryAIResearchTask = (id: string) =>
+  apiRequest<AIResearchTask>(`/api/v1/ai/research-tasks/${id}/retry`, {
+    method: "POST",
+  });
+
+export const getAIResearchReport = (id: string) =>
+  apiRequest<AIResearchReport>(`/api/v1/ai/research-tasks/${id}/report`);
+
+export function getAIResearchExportUrl(id: string, format: "markdown" | "pdf") {
+  const base = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(
+    /\/$/,
+    "",
+  );
+  return `${base}/api/v1/ai/research-tasks/${id}/report/${format}`;
+}

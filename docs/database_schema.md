@@ -130,6 +130,9 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `ai_analysis_runs` | AI 研究运行与审计状态 | `idempotency_key` 唯一；请求指纹、状态、Prompt 版本、Token/成本和输入 ID 受约束 |
 | `research_insights` | 追加式结构化 AI 研究输出 | 每个 AnalysisRun 至多一个；重要度 0–100、置信度 0–1、schema 版本受约束 |
 | `research_evidence` | Insight 的来源证据 | 每条证据只能关联 InformationItem 或 MarketEvent 之一；证据文本长度受限 |
+| `ai_research_tasks` | TA01 持久化多智能体调研任务 | 幂等键唯一；保存股票、问题、深度、时间范围、阶段、进度、请求/资料快照与稳定错误码 |
+| `ai_research_agent_runs` | TA01 角色执行步骤 | `(task_id, ordinal)` 唯一；按任务保存角色状态、结构化输出、引用、Token 与错误摘要 |
+| `ai_research_reports` | TA01 不可变结构化报告 | 每个任务至多一份；保存十章节、引用、限制、Markdown 快照与 Schema 版本 |
 
 ## 关系概览
 
@@ -165,6 +168,9 @@ erDiagram
   RESEARCH_INSIGHTS ||--o{ RESEARCH_EVIDENCE : cites
   INFORMATION_ITEMS ||--o{ RESEARCH_EVIDENCE : supports
   MARKET_EVENTS ||--o{ RESEARCH_EVIDENCE : supports
+  INSTRUMENTS ||--o{ AI_RESEARCH_TASKS : researched
+  AI_RESEARCH_TASKS ||--o{ AI_RESEARCH_AGENT_RUNS : executes
+  AI_RESEARCH_TASKS ||--o| AI_RESEARCH_REPORTS : produces
 ```
 
 ## 可变状态与追加事实

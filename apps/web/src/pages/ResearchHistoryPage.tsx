@@ -15,7 +15,7 @@ import dayjs, { type Dayjs } from "dayjs";
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { getAIAnalyses } from "../api/aiResearch";
+import { getAIResearchTasks } from "../api/aiResearch";
 import { listBacktests } from "../api/backtests";
 import { getScreeningRuns } from "../api/screenings";
 import { listBacktestBatches } from "../api/strategySpecs";
@@ -38,13 +38,6 @@ const statusText: Record<string, string> = {
   FAILED: "失败",
   CANCELED: "已取消",
   CANCELLED: "已取消",
-};
-
-const aiTypeText: Record<string, string> = {
-  EVENT_SUMMARY: "事件摘要调研",
-  INSTRUMENT_IMPACT: "个股影响分析",
-  MULTI_EVENT_SYNTHESIS: "多事件综合分析",
-  RESEARCH_QUESTION: "自定义问题调研",
 };
 
 type ArchiveKind = "backtest" | "batch" | "screening" | "ai";
@@ -105,7 +98,7 @@ export function ResearchHistoryPage() {
   });
   const analyses = useQuery({
     queryKey: ["research-archive", "ai"],
-    queryFn: () => getAIAnalyses({ page: 1, page_size: 100 }),
+    queryFn: () => getAIResearchTasks(1, 100),
   });
 
   const singleRows = useMemo<ArchiveRow[]>(
@@ -161,21 +154,18 @@ export function ResearchHistoryPage() {
   const aiRows = useMemo<ArchiveRow[]>(
     () =>
       (analyses.data?.items ?? []).map((item) => ({
-        key: `ai-${item.analysis_id}`,
+        key: `ai-${item.task_id}`,
         kind: "ai",
-        title:
-          item.insight?.title ??
-          item.user_question ??
-          aiTypeText[item.analysis_type] ??
-          "AI 调研",
-        subtitle: `${aiTypeText[item.analysis_type] ?? item.analysis_type} · ${
-          item.input_document_ids.length
-        } 份资料 · ${item.input_event_ids.length} 个事件`,
+        title: item.report?.title ?? `${item.instrument.name} · AI 调研`,
+        subtitle: `${item.instrument.name}（${item.instrument.symbol}.${item.instrument.exchange}） · ${
+          { FAST: "快速", STANDARD: "标准", DEEP: "深度" }[item.depth]
+        }调研 · ${item.question}`,
         status: item.status,
         createdAt: item.completed_at ?? item.created_at,
-        href: `/ai-analyses/${item.analysis_id}`,
-        result:
-          item.insight?.summary ?? (item.error?.message || "查看调研报告"),
+        href: item.report
+          ? `/ai-research/tasks/${item.task_id}/report`
+          : `/ai-research/tasks/${item.task_id}`,
+        result: item.report?.executive_summary ?? item.error?.message ?? item.current_stage,
       })),
     [analyses.data],
   );

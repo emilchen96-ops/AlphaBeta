@@ -27,6 +27,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from alphadesk_api.infrastructure.database import Base
 from alphadesk_domain.ai_research import AIAnalysisStatus, AIAnalysisType, AIImpactDirection
+from alphadesk_domain.ai_workbench import (
+    ResearchAgentRole,
+    ResearchAgentStatus,
+    ResearchDepth,
+    ResearchTaskStatus,
+)
 from alphadesk_domain.backtest import BacktestEventType, BacktestRunStatus
 from alphadesk_domain.backtest_batches import (
     BacktestBatchItemStatus,
@@ -2412,6 +2418,113 @@ class ResearchEvidenceModel(TimestampedModel, Base):
     )
     evidence_text: Mapped[str] = mapped_column(String(2000), nullable=False)
     evidence_location: Mapped[str | None] = mapped_column(String(512))
+
+
+class MultiAgentResearchTaskModel(MutableTimestampedModel, Base):
+    __tablename__ = "ai_research_tasks"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_ai_research_tasks_idempotency_key"),
+        CheckConstraint(
+            f"depth IN ({enum_values(ResearchDepth)})", name="ai_research_task_depth_valid"
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(ResearchTaskStatus)})",
+            name="ai_research_task_status_valid",
+        ),
+        CheckConstraint(
+            "progress_percent >= 0 AND progress_percent <= 100",
+            name="ai_research_task_progress_range",
+        ),
+        CheckConstraint("start_date <= end_date", name="ai_research_task_date_range_valid"),
+        Index("ix_ai_research_tasks_status_created", "status", "created_at"),
+        Index("ix_ai_research_tasks_instrument_created", "instrument_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    depth: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_stage: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    data_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    warnings: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(1000))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MultiAgentResearchStepModel(MutableTimestampedModel, Base):
+    __tablename__ = "ai_research_agent_runs"
+    __table_args__ = (
+        UniqueConstraint("task_id", "role", name="uq_ai_research_agent_runs_task_role"),
+        CheckConstraint(
+            f"role IN ({enum_values(ResearchAgentRole)})", name="ai_research_agent_role_valid"
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(ResearchAgentStatus)})",
+            name="ai_research_agent_status_valid",
+        ),
+        CheckConstraint("ordinal >= 0", name="ai_research_agent_ordinal_non_negative"),
+        Index("ix_ai_research_agent_runs_task_ordinal", "task_id", "ordinal"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ai_research_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    structured_output: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    input_token_count: Mapped[int | None] = mapped_column(Integer)
+    output_token_count: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(1000))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MultiAgentResearchReportModel(TimestampedModel, Base):
+    __tablename__ = "ai_research_reports"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_ai_research_reports_task"),
+        CheckConstraint("schema_version >= 1", name="ai_research_report_schema_positive"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ai_research_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    executive_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    stance: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(32), nullable=False)
+    sections: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    limitations: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
 class BacktestRunModel(MutableTimestampedModel, Base):

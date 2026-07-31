@@ -273,6 +273,53 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  ai_research_worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "alphadesk_api.workers.ai_research"]
+    environment:
+      ALPHADESK_ENVIRONMENT: ${ALPHADESK_ENVIRONMENT:-development}
+      ALPHADESK_POSTGRES_HOST: postgres
+      ALPHADESK_POSTGRES_PORT: 5432
+      ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+      ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_REDIS_HOST: redis
+      ALPHADESK_REDIS_PORT: 6379
+      ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
+      ALPHADESK_AI_RESEARCH_PROVIDER: ${ALPHADESK_AI_RESEARCH_PROVIDER:-disabled}
+      ALPHADESK_AI_BASE_URL: ${ALPHADESK_AI_BASE_URL:-}
+      ALPHADESK_AI_API_KEY: ${ALPHADESK_AI_API_KEY:-}
+      ALPHADESK_AI_MODEL: ${ALPHADESK_AI_MODEL:-}
+      ALPHADESK_AI_REQUEST_TIMEOUT_SECONDS: ${ALPHADESK_AI_REQUEST_TIMEOUT_SECONDS:-30}
+      ALPHADESK_AI_MAX_RETRIES: ${ALPHADESK_AI_MAX_RETRIES:-1}
+      ALPHADESK_AI_MAX_INPUT_CHARACTERS: ${ALPHADESK_AI_MAX_INPUT_CHARACTERS:-50000}
+      ALPHADESK_AI_MAX_OUTPUT_TOKENS: ${ALPHADESK_AI_MAX_OUTPUT_TOKENS:-2000}
+      ALPHADESK_AI_TEMPERATURE: ${ALPHADESK_AI_TEMPERATURE:-0.1}
+      ALPHADESK_AI_COST_INPUT_PER_MILLION: ${ALPHADESK_AI_COST_INPUT_PER_MILLION:-}
+      ALPHADESK_AI_COST_OUTPUT_PER_MILLION: ${ALPHADESK_AI_COST_OUTPUT_PER_MILLION:-}
+      ALPHADESK_AI_STRUCTURED_OUTPUT_ENABLED: ${ALPHADESK_AI_STRUCTURED_OUTPUT_ENABLED:-true}
+      ALPHADESK_AI_RESEARCH_WORKER_POLL_MS: ${ALPHADESK_AI_RESEARCH_WORKER_POLL_MS:-1000}
+      ALPHADESK_AI_RESEARCH_TASK_STALE_SECONDS: ${ALPHADESK_AI_RESEARCH_TASK_STALE_SECONDS:-300}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:ai-research:v1:worker:heartbeat'); x.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   web:
     build:
       context: ./apps/web

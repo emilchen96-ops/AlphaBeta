@@ -38,6 +38,9 @@ from alphadesk_domain.repositories import (
     MarketEventRepository,
     MarketRealtimeRunRepository,
     MarketSyncRunRepository,
+    MultiAgentResearchReportRepository,
+    MultiAgentResearchStepRepository,
+    MultiAgentResearchTaskRepository,
     OrderActionRepository,
     OrderCommandRepository,
     OrderRepository,
@@ -101,6 +104,9 @@ class UnitOfWork(Protocol):
     ai_analysis_runs: AIAnalysisRunRepository
     research_insights: ResearchInsightRepository
     research_evidence: ResearchEvidenceRepository
+    ai_research_tasks: MultiAgentResearchTaskRepository
+    ai_research_steps: MultiAgentResearchStepRepository
+    ai_research_reports: MultiAgentResearchReportRepository
     user_strategies: UserStrategyRepository
     user_screenings: UserScreeningRepository
     research_backtest_specs: ResearchBacktestSpecRepository

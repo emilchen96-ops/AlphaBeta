@@ -63,6 +63,9 @@ from alphadesk_api.infrastructure.models import (
     MarketEventModel,
     MarketRealtimeRunModel,
     MarketSyncRunModel,
+    MultiAgentResearchReportModel,
+    MultiAgentResearchStepModel,
+    MultiAgentResearchTaskModel,
     OrderActionModel,
     OrderCommandModel,
     OrderModel,
@@ -108,6 +111,12 @@ from alphadesk_domain.accounting import (
     PositionLedgerEntry,
 )
 from alphadesk_domain.ai_research import AIAnalysisRun, ResearchEvidence, ResearchInsight
+from alphadesk_domain.ai_workbench import (
+    MultiAgentResearchReport,
+    MultiAgentResearchStep,
+    MultiAgentResearchTask,
+    ResearchTaskStatus,
+)
 from alphadesk_domain.backtest import (
     BacktestEquityPoint,
     BacktestEvent,
@@ -2914,6 +2923,130 @@ class SqlAlchemyResearchEvidenceRepository:
             .order_by(ResearchEvidenceModel.created_at, ResearchEvidenceModel.id)
         )
         return [entity_from_model(ResearchEvidence, row) for row in rows]
+
+
+class SqlAlchemyMultiAgentResearchTaskRepository(
+    SqlAlchemyRepository[MultiAgentResearchTask, MultiAgentResearchTaskModel]
+):
+    entity_type = MultiAgentResearchTask
+    model_type = MultiAgentResearchTaskModel
+
+    async def add(self, entity: MultiAgentResearchTask) -> None:
+        await self._add(entity)
+
+    async def update(self, entity: MultiAgentResearchTask) -> None:
+        values = model_values(model_from_entity(MultiAgentResearchTaskModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(MultiAgentResearchTaskModel)
+            .where(MultiAgentResearchTaskModel.id == entity.id)
+            .values(**values)
+        )
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> MultiAgentResearchTask | None:
+        return await self._get_by_id(entity_id)
+
+    async def get_by_idempotency_key(self, key: str) -> MultiAgentResearchTask | None:
+        row = await self._session.scalar(
+            select(MultiAgentResearchTaskModel).where(
+                MultiAgentResearchTaskModel.idempotency_key == key
+            )
+        )
+        return None if row is None else entity_from_model(MultiAgentResearchTask, row)
+
+    async def list(
+        self, *, status: str | None, offset: int, limit: int
+    ) -> tuple[list[MultiAgentResearchTask], int]:
+        conditions = [] if status is None else [MultiAgentResearchTaskModel.status == status]
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(MultiAgentResearchTaskModel).where(*conditions)
+            )
+            or 0
+        )
+        rows = await self._session.scalars(
+            select(MultiAgentResearchTaskModel)
+            .where(*conditions)
+            .order_by(
+                MultiAgentResearchTaskModel.created_at.desc(),
+                MultiAgentResearchTaskModel.id,
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+        return [entity_from_model(MultiAgentResearchTask, row) for row in rows], total
+
+    async def claim_next(self, *, stale_before: datetime) -> MultiAgentResearchTask | None:
+        terminal = [
+            ResearchTaskStatus.COMPLETED.value,
+            ResearchTaskStatus.PARTIALLY_COMPLETED.value,
+            ResearchTaskStatus.FAILED.value,
+            ResearchTaskStatus.CANCELED.value,
+        ]
+        row = await self._session.scalar(
+            select(MultiAgentResearchTaskModel)
+            .where(
+                or_(
+                    MultiAgentResearchTaskModel.status == ResearchTaskStatus.CREATED.value,
+                    (
+                        MultiAgentResearchTaskModel.status.not_in(terminal)
+                        & (MultiAgentResearchTaskModel.updated_at < stale_before)
+                    ),
+                )
+            )
+            .order_by(MultiAgentResearchTaskModel.created_at, MultiAgentResearchTaskModel.id)
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        return None if row is None else entity_from_model(MultiAgentResearchTask, row)
+
+
+class SqlAlchemyMultiAgentResearchStepRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_many(self, entities: list[MultiAgentResearchStep]) -> None:
+        self._session.add_all(
+            [model_from_entity(MultiAgentResearchStepModel, entity) for entity in entities]
+        )
+        await self._session.flush()
+
+    async def update(self, entity: MultiAgentResearchStep) -> None:
+        values = model_values(model_from_entity(MultiAgentResearchStepModel, entity))
+        values.pop("id", None)
+        await self._session.execute(
+            update(MultiAgentResearchStepModel)
+            .where(MultiAgentResearchStepModel.id == entity.id)
+            .values(**values)
+        )
+        await self._session.flush()
+
+    async def list_by_task(self, task_id: UUID) -> list[MultiAgentResearchStep]:
+        rows = await self._session.scalars(
+            select(MultiAgentResearchStepModel)
+            .where(MultiAgentResearchStepModel.task_id == task_id)
+            .order_by(MultiAgentResearchStepModel.ordinal, MultiAgentResearchStepModel.id)
+        )
+        return [entity_from_model(MultiAgentResearchStep, row) for row in rows]
+
+
+class SqlAlchemyMultiAgentResearchReportRepository(
+    SqlAlchemyRepository[MultiAgentResearchReport, MultiAgentResearchReportModel]
+):
+    entity_type = MultiAgentResearchReport
+    model_type = MultiAgentResearchReportModel
+
+    async def add(self, entity: MultiAgentResearchReport) -> None:
+        await self._add(entity)
+
+    async def get_by_task(self, task_id: UUID) -> MultiAgentResearchReport | None:
+        row = await self._session.scalar(
+            select(MultiAgentResearchReportModel).where(
+                MultiAgentResearchReportModel.task_id == task_id
+            )
+        )
+        return None if row is None else entity_from_model(MultiAgentResearchReport, row)
 
 
 class SqlAlchemyStrategyExperimentRepository(

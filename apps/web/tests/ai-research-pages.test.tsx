@@ -7,6 +7,8 @@ const itemId = "11111111-1111-4111-8111-111111111111";
 const eventId = "22222222-2222-4222-8222-222222222222";
 const analysisId = "33333333-3333-4333-8333-333333333333";
 const insightId = "44444444-4444-4444-8444-444444444444";
+const taskId = "99999999-9999-4999-8999-999999999999";
+const instrumentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const information = {
   item_id: itemId,
   raw_document_id: "55555555-5555-4555-8555-555555555555",
@@ -98,6 +100,60 @@ const run = {
     modifies_portfolio: false,
   },
 };
+const task = {
+  task_id: taskId,
+  instrument: {
+    id: instrumentId,
+    symbol: "300088",
+    exchange: "SZSE",
+    name: "长信科技",
+  },
+  question: "分析长信科技当前基本面、技术面和主要风险",
+  depth: "STANDARD",
+  start_date: "2026-04-21",
+  end_date: "2026-07-21",
+  provider_key: "openai_compatible",
+  model_name: "research-model",
+  is_real_provider: true,
+  status: "COMPLETED",
+  progress_percent: 100,
+  current_stage: "结构化报告已经生成",
+  warnings: [],
+  error: null,
+  correlation_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  started_at: "2026-07-21T01:00:00Z",
+  completed_at: "2026-07-21T01:02:00Z",
+  created_at: "2026-07-21T01:00:00Z",
+  updated_at: "2026-07-21T01:02:00Z",
+  steps: [
+    {
+      step_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      role: "TECHNICAL_ANALYST",
+      role_label: "技术面分析师",
+      ordinal: 0,
+      status: "COMPLETED",
+      title: "技术面分析",
+      summary: "趋势与波动分析完成",
+      structured_output: {},
+      citations: [],
+      input_token_count: 100,
+      output_token_count: 80,
+      error: null,
+      started_at: "2026-07-21T01:00:00Z",
+      completed_at: "2026-07-21T01:01:00Z",
+    },
+  ],
+  report: {
+    report_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    title: "长信科技多智能体调研报告",
+    executive_summary: "多角色分析后的中性结论。",
+    stance: "中性",
+    confidence: "中等",
+    schema_version: 1,
+    created_at: "2026-07-21T01:02:00Z",
+  },
+  capabilities: {},
+};
 
 function installFetch(
   providerMode:
@@ -167,7 +223,51 @@ function installFetch(
       else if (url.includes("/market-events?"))
         body = { items: [information], page: 1, page_size: 50, total: 1 };
       else if (url.includes("/instruments?"))
-        body = { items: [], page: 1, page_size: 50, total: 0 };
+        body = {
+          items: [
+            {
+              id: instrumentId,
+              symbol: "300088",
+              exchange: "SZSE",
+              name: "长信科技",
+            },
+          ],
+          page: 1,
+          page_size: 50,
+          total: 1,
+        };
+      else if (url.endsWith(`/ai/research-tasks/${taskId}/report`))
+        body = {
+          ...task.report,
+          task_id: taskId,
+          sections: {
+            sources: {
+              items: [
+                {
+                  title: "最近一根本地历史日线",
+                  source_id: "market-bar:2026-07-21",
+                  source_type: "MARKET_BAR",
+                },
+              ],
+            },
+            conclusion: { summary: "综合结论" },
+            research_overview: { summary: "调研概览内容" },
+            market_environment: { summary: "市场环境内容" },
+            technical_analysis: { summary: "技术面内容" },
+            fundamental_analysis: { summary: "基本面内容" },
+            news_events: { summary: "资讯与事件内容" },
+            bull_case: { summary: "看多论证内容" },
+            bear_case: { summary: "看空论证内容" },
+            risk_review: { summary: "风险复核内容" },
+          },
+          citations: [],
+          limitations: ["依赖本地历史资料"],
+          markdown: "# 长信科技多智能体调研报告",
+          disclaimer: "AI 生成，仅供研究参考，不构成投资建议。",
+        };
+      else if (url.endsWith(`/ai/research-tasks/${taskId}`)) body = task;
+      else if (url.includes("/ai/research-tasks?"))
+        body = { items: [task], page: 1, page_size: 10, total: 1 };
       else if (url.endsWith(`/ai/analyses/${analysisId}`)) body = run;
       else if (url.includes("/ai/analyses?"))
         body = { items: [run], page: 1, page_size: 20, total: 1 };
@@ -190,19 +290,19 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", async () => {
+test("AI调研主界面只保留股票、问题、深度与资料范围", async () => {
   renderRoute("/ai-research");
   expect(
     await screen.findByText(/真实 AI Provider 尚未配置/),
   ).toBeInTheDocument();
-  expect(screen.getAllByText("AI生成，仅供研究参考。").length).toBeGreaterThan(
-    0,
-  );
-  expect(screen.getByText("资讯原始事实")).toBeInTheDocument();
-  expect(screen.getByText("市场事件事实")).toBeInTheDocument();
-  expect(screen.getAllByText("单事件摘要").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("研究股票").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("研究问题").length).toBeGreaterThan(0);
+  expect(screen.getByText("调研深度")).toBeInTheDocument();
+  expect(screen.getByText("资料时间范围")).toBeInTheDocument();
+  expect(screen.queryByText("资讯原始事实")).not.toBeInTheDocument();
+  expect(screen.queryByText("市场事件事实")).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: /创建真实研究分析/ }),
+    screen.getByRole("button", { name: /开始 AI 调研/ }),
   ).toBeDisabled();
   expect(
     screen.queryByRole("button", { name: /买入|卖出|下单|自动交易/ }),
@@ -227,18 +327,14 @@ test("分析详情区分 AI 推断、不确定性和可追溯原始证据", asyn
 test("真实 Provider 可用时显示安全端点并允许连接测试", async () => {
   installFetch("REAL_AVAILABLE");
   renderRoute("/ai-research");
-  expect(await screen.findByText(/最近连通成功/)).toBeInTheDocument();
-  await userEvent.click(screen.getByText("技术详情"));
+  expect(await screen.findByText("AI 模型服务已就绪")).toBeInTheDocument();
   expect(
-    screen.getByText("接口地址：https://ai.example.test"),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: /创建真实研究分析/ }),
+    screen.getByRole("button", { name: /开始 AI 调研/ }),
   ).toBeEnabled();
   await userEvent.click(
-    screen.getByRole("button", { name: "测试真实模型服务连通性" }),
+    screen.getByRole("button", { name: "测试模型连接" }),
   );
-  expect(await screen.findByText(/模型服务连通成功/)).toBeInTheDocument();
+  expect((await screen.findAllByText(/AI 模型服务可用/)).length).toBeGreaterThan(0);
   expect(screen.queryByText(/super-secret|api_key/i)).not.toBeInTheDocument();
 });
 
@@ -246,10 +342,10 @@ test("Fake 模式明确标为演示并保留独立入口", async () => {
   installFetch("FAKE");
   renderRoute("/ai-research");
   expect(
-    await screen.findByText(/Fake Provider 仅用于测试/),
+    await screen.findByText(/确定性测试模型/),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: /运行 Fake AI 演示/ }),
+    screen.getByRole("button", { name: /开始 AI 调研/ }),
   ).toBeEnabled();
   expect(
     screen.queryByText(/真实 Provider 已配置且最近连通成功/),
@@ -259,12 +355,46 @@ test("Fake 模式明确标为演示并保留独立入口", async () => {
 test("真实 Provider 不可用时禁用分析且只显示稳定错误码", async () => {
   installFetch("REAL_UNAVAILABLE");
   renderRoute("/ai-research");
-  expect(await screen.findByText(/最近连通失败/)).toBeInTheDocument();
-  await userEvent.click(screen.getByText("技术详情"));
-  expect(screen.getByText(/AI_PROVIDER_TIMEOUT/)).toBeInTheDocument();
+  expect(await screen.findByText("AI 模型服务尚未就绪")).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: /创建真实研究分析/ }),
+    screen.getByRole("button", { name: /开始 AI 调研/ }),
   ).toBeDisabled();
+});
+
+test("持久化任务进度与完整报告均可追溯", async () => {
+  installFetch("REAL_AVAILABLE");
+  renderRoute(`/ai-research/tasks/${taskId}`);
+  expect(await screen.findByText("技术面分析师")).toBeInTheDocument();
+  expect(screen.getByText("趋势与波动分析完成")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "查看完整报告" })).toHaveAttribute(
+    "href",
+    `/ai-research/tasks/${taskId}/report`,
+  );
+});
+
+test("结构化报告固定按一至十展示并格式化来源证据", async () => {
+  renderRoute(`/ai-research/tasks/${taskId}/report`);
+  expect(await screen.findByText("长信科技多智能体调研报告")).toBeInTheDocument();
+  const pageText = document.body.textContent ?? "";
+  const headings = [
+    "一、调研概览",
+    "二、市场环境",
+    "三、技术面",
+    "四、基本面",
+    "五、资讯与事件",
+    "六、看多论证",
+    "七、看空论证",
+    "八、风险与不确定性",
+    "九、综合结论",
+    "十、资料来源",
+  ];
+  const positions = headings.map((heading) => pageText.indexOf(heading));
+  expect(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1]))).toBe(true);
+  expect(
+    screen.getByText(/最近一根本地历史日线 · 类型：MARKET_BAR · 编号：market-bar:2026-07-21/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /下载 Markdown/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /下载 PDF/ })).toBeInTheDocument();
 });
 
 test("ResearchInsight 目录和证据详情均为只读研究页面", async () => {

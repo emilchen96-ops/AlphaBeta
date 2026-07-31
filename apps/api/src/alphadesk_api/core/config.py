@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     backtest_batch_max_instruments: int = Field(default=6_000, ge=1, le=10_000)
     backtest_batch_worker_poll_ms: int = Field(default=500, ge=100, le=60_000)
     backtest_batch_item_stale_seconds: int = Field(default=1_800, ge=60, le=86_400)
+    ai_research_worker_poll_ms: int = Field(default=1_000, ge=100, le=60_000)
+    ai_research_task_stale_seconds: int = Field(default=300, ge=60, le=86_400)
     replay_interval_x1_ms: int = Field(default=1000, ge=100, le=60_000)
     replay_interval_x10_ms: int = Field(default=250, ge=25, le=10_000)
     replay_interval_x100_ms: int = Field(default=50, ge=10, le=1_000)

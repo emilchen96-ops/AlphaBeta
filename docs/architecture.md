@@ -235,3 +235,8 @@ M01 当前的可运行拓扑已通过真实 Docker Compose 验证：浏览器只
 M02 新增独立的 `alphadesk_domain` 纯 Python 包，以及位于 `alphadesk_api.infrastructure` 的 SQLAlchemy Model、Mapper、Repository 和 Unit of Work。依赖只允许从 API/基础设施指向领域协议；领域包不得导入 FastAPI、SQLAlchemy、Redis、XtQuant 或具体 Broker。PostgreSQL 现包含 18 张核心表，结构见 `database_schema.md`。
 
 这一阶段没有增加公开业务 API、网页功能、Redis Streams、Outbox 发布器、订单状态机服务、风控执行或 Broker 调用。Web 与既有健康接口的 M01 行为保持不变。
+# TA01 增量架构
+
+TA01 在 FastAPI 与 PostgreSQL 之间增加持久化调研任务、角色步骤和报告，在独立 `ai_research_worker` 中执行模型调用。Redis 仅提供 Worker 心跳/运行可观测性；数据库是恢复与幂等的权威来源。Web 只创建任务、轮询状态和读取报告，不直接调用模型。
+
+`D:\QTM\TradingAgents` 只用于设计审计。AlphaDesk 借鉴其多角色研究、辩论和风险复核概念，不导入该目录、不执行其 CLI，也不读取其配置或 Secret。

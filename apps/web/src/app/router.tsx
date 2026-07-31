@@ -16,10 +16,14 @@ import { InformationDetailPage } from "../pages/InformationPages";
 import { OrdersPage } from "../pages/OrdersPage";
 import {
   AIAnalysisDetailPage,
-  AIResearchPage,
   ResearchInsightDetailPage,
   ResearchInsightsPage,
 } from "../pages/AIResearchPages";
+import {
+  AIResearchReportPage,
+  AIResearchTaskPage,
+  AIResearchWorkbenchPage,
+} from "../pages/AIWorkbenchPages";
 import { PortfolioPage } from "../pages/PortfolioPage";
 import {
   RiskDecisionDetailPage,
@@ -117,7 +121,9 @@ export const routes: RouteObject[] = [
         path: "market-events/:eventId",
         element: <InformationDetailPage eventMode />,
       },
-      { path: "ai-research", element: <AIResearchPage /> },
+      { path: "ai-research", element: <AIResearchWorkbenchPage /> },
+      { path: "ai-research/tasks/:taskId", element: <AIResearchTaskPage /> },
+      { path: "ai-research/tasks/:taskId/report", element: <AIResearchReportPage /> },
       { path: "ai-analyses/:analysisId", element: <AIAnalysisDetailPage /> },
       { path: "research-insights", element: <ResearchInsightsPage /> },
       {

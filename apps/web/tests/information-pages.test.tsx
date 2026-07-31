@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 
 import { healthyStatus, renderRoute } from "./test-utils";
 
@@ -84,32 +84,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test("资讯中心展示来源、双时间和安全边界", async () => {
+test("旧调研资料查询参数收口到新的 AI 调研工作台", async () => {
   renderRoute("/ai-research?tab=materials");
-  expect(await screen.findByText("调研资料与来源")).toBeInTheDocument();
-  expect((await screen.findAllByText("公司公告")).length).toBeGreaterThan(0);
-  expect(screen.getByText(/尚未经过 AI 分析/)).toBeInTheDocument();
-  expect(screen.getByText("发布时间")).toBeInTheDocument();
-  expect(screen.getByText("接收时间")).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /原始来源/ })).toHaveAttribute(
-    "href",
-    "https://example.test/news/1",
-  );
+  expect(await screen.findByRole("heading", { name: "AI 调研" })).toBeInTheDocument();
+  expect(screen.getByText("创建 AI 调研")).toBeInTheDocument();
+  expect(screen.queryByText("调研资料与来源")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /添加调研资料/ })).not.toBeInTheDocument();
 });
 
-test("手工录入表单支持来源、正文、Instrument与主题", async () => {
-  renderRoute("/ai-research?tab=materials");
-  fireEvent.click(screen.getByRole("button", { name: /添加调研资料/ }));
-  expect(await screen.findByLabelText("来源名称")).toBeInTheDocument();
-  expect(screen.getByLabelText("正文")).toBeInTheDocument();
-  expect(screen.getByText("关联标的")).toBeInTheDocument();
-  expect(screen.getByLabelText("主题 key")).toBeInTheDocument();
-});
-
-test("旧市场事件入口收口到 AI 调研资料", async () => {
+test("旧市场事件入口收口到新的 AI 调研工作台", async () => {
   renderRoute("/market-events");
-  expect(await screen.findByText("调研资料与来源")).toBeInTheDocument();
-  expect((await screen.findAllByText("公司公告")).length).toBeGreaterThan(0);
+  expect(await screen.findByRole("heading", { name: "AI 调研" })).toBeInTheDocument();
   expect(
     screen.queryByRole("heading", { name: "市场事件" }),
   ).not.toBeInTheDocument();
@@ -127,12 +112,19 @@ test.each([
   "/ai-research?tab=materials",
   "/information",
   "/market-events",
-  `/information/${itemId}`,
-])("%s 没有 AI 冒充或交易动作", async (route) => {
+])("%s 的兼容入口只展示新的 AI 调研工作台", async (route) => {
   renderRoute(route);
+  expect(await screen.findByRole("heading", { name: "AI 调研" })).toBeInTheDocument();
   expect(
-    (await screen.findAllByText(/资讯|事件|AI 分析/)).length,
-  ).toBeGreaterThan(0);
+    screen.queryByRole("button", {
+      name: /AI分析|买入|卖出|下单|创建订单|自动交易/,
+    }),
+  ).not.toBeInTheDocument();
+});
+
+test("原始证据详情没有交易动作", async () => {
+  renderRoute(`/information/${itemId}`);
+  expect(await screen.findByText("规范化正文")).toBeInTheDocument();
   expect(
     screen.queryByRole("button", {
       name: /AI分析|买入|卖出|下单|创建订单|自动交易/,
