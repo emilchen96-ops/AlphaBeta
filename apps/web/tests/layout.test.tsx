@@ -70,6 +70,21 @@ test("策略回测以快速回测为主入口并保留统一工作区标签", as
   expect(screen.getByRole("button", { name: /开始回测$/ })).toBeInTheDocument();
 });
 
+test("研究档案只保留三个独立业务入口并兼容旧的全部档案链接", async () => {
+  renderRoute("/research/archive?tab=all");
+  expect(
+    await screen.findByRole("heading", { name: "研究档案" }),
+  ).toBeInTheDocument();
+  for (const label of ["策略回测", "智能选股", "AI 调研"]) {
+    expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
+  }
+  expect(screen.queryByRole("tab", { name: "全部档案" })).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "策略回测" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
 test("研究模式阻止直接打开交易页面", async () => {
   renderRoute("/orders");
   expect(

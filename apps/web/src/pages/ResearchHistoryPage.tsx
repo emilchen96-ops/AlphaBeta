@@ -74,7 +74,10 @@ function backtestTitle(item: BacktestRun) {
 
 export function ResearchHistoryPage() {
   const [search, setSearch] = useSearchParams();
-  const active = search.get("tab") ?? "all";
+  const requestedTab = search.get("tab");
+  const active = ["backtests", "scans", "ai"].includes(requestedTab ?? "")
+    ? requestedTab!
+    : "backtests";
   const [backtestMode, setBacktestMode] = useState<"single" | "batch">(
     (search.get("mode") as "single" | "batch") ?? "single",
   );
@@ -197,13 +200,6 @@ export function ResearchHistoryPage() {
       return true;
     });
 
-  const allRows = filterRows([
-    ...singleRows,
-    ...batchRows,
-    ...scanRows,
-    ...aiRows,
-  ]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
   const archiveTable = (rows: ArchiveRow[], loading: boolean) => (
     <Table<ArchiveRow>
       rowKey="key"
@@ -251,12 +247,6 @@ export function ResearchHistoryPage() {
     />
   );
 
-  const loading =
-    backtests.isLoading ||
-    batches.isLoading ||
-    scans.isLoading ||
-    analyses.isLoading;
-
   return (
     <section>
       <PageHeader
@@ -291,11 +281,6 @@ export function ResearchHistoryPage() {
         activeKey={active}
         onChange={(tab) => setSearch({ tab })}
         items={[
-          {
-            key: "all",
-            label: "全部档案",
-            children: archiveTable(allRows, loading),
-          },
           {
             key: "backtests",
             label: "策略回测",
