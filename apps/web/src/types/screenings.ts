@@ -27,9 +27,16 @@ export interface ScreeningUniverseSpec {
 }
 
 export interface ScreeningConditionSpec {
+  node_type?: "CONDITION";
   condition_key: string;
   condition_version?: string;
   parameters: Record<string, string | number | boolean | null>;
+}
+
+export interface ScreeningConditionGroupSpec {
+  node_type: "GROUP";
+  operator: "AND" | "OR";
+  children: (ScreeningConditionSpec | ScreeningConditionGroupSpec)[];
 }
 
 export interface ScreeningRankingRule {
@@ -43,7 +50,7 @@ export interface ScreeningRankingRule {
 }
 
 export interface ScreeningSpecSnapshot {
-  schema_version: 1;
+  schema_version: 1 | 2;
   name: string;
   origin:
     | "USER_STRUCTURED"
@@ -56,6 +63,7 @@ export interface ScreeningSpecSnapshot {
   as_of_date: string;
   timeframe: "DAY_1";
   conditions: ScreeningConditionSpec[];
+  root_group?: ScreeningConditionGroupSpec | null;
   exclusions: Record<string, unknown>;
   ranking_rules: ScreeningRankingRule[];
   top_n: number | null;
@@ -155,6 +163,18 @@ export interface ScreeningProgress {
   provider_failed_count: number;
   quality_failed_count: number;
   not_applicable_count: number;
+  listing_history_short_count: number;
+  currently_suspended_count: number;
+  stale_data_count: number;
+  data_gap_count: number;
+  calendar_mismatch_count: number;
+  calendar_mismatch_dates: string[];
+  excluded_count: number;
+  backfill_total_batches: number;
+  backfill_pending_batches: number | null;
+  backfill_processed_batches: number;
+  backfill_progress_percent: number | null;
+  backfill_estimated_remaining_seconds: number | null;
 }
 
 export interface ScreeningResult {
@@ -186,7 +206,14 @@ export type ScreeningParseStatus =
 export interface ScreeningParameterDefinition {
   name: string;
   display_name: string;
-  type: "integer" | "decimal" | "boolean" | "enum";
+  type:
+    | "integer"
+    | "decimal"
+    | "boolean"
+    | "enum"
+    | "percentage"
+    | "amount"
+    | "trading_day_window";
   description: string;
   default: string | number | boolean | null;
   required: boolean;
@@ -195,6 +222,10 @@ export interface ScreeningParameterDefinition {
   max_value: string | null;
   enum_values: string[];
   unit: string | null;
+  display_unit: string | null;
+  precision: number | null;
+  placeholder: string | null;
+  help_text: string | null;
 }
 
 export interface ScreeningConditionDefinition {
@@ -209,6 +240,9 @@ export interface ScreeningConditionDefinition {
   price_adjustment_mode: string;
   version: string;
   enabled: boolean;
+  aliases: string[];
+  deprecated: boolean;
+  replacement_condition_key: string | null;
 }
 
 export interface ScreeningPreview {

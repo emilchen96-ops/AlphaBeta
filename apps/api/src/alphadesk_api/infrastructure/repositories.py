@@ -33,6 +33,8 @@ from alphadesk_api.infrastructure.models import (
     AdjustmentFactorModel,
     AIAnalysisRunModel,
     AuditLogModel,
+    BacktestBatchItemModel,
+    BacktestBatchModel,
     BacktestEquityPointModel,
     BacktestEventModel,
     BacktestMetricModel,
@@ -116,6 +118,14 @@ from alphadesk_domain.backtest import (
     backtest_configuration_from_dict,
     backtest_configuration_to_dict,
     backtest_request_fingerprint,
+)
+from alphadesk_domain.backtest_batches import (
+    BacktestBatch,
+    BacktestBatchItem,
+    BacktestBatchItemStatus,
+    BacktestBatchResultRow,
+    BacktestBatchScope,
+    BacktestBatchStatus,
 )
 from alphadesk_domain.entities import (
     AuditLog,
@@ -357,6 +367,13 @@ class SqlAlchemyBacktestRunRepository:
         self, *, status: str | None, offset: int, limit: int
     ) -> tuple[list[BacktestRun], int]:
         conditions = [] if status is None else [BacktestRunModel.status == status]
+        # Batch children remain traceable from their parent batch report, but must
+        # not flood the ordinary single-run archive.
+        conditions.append(
+            ~select(BacktestBatchItemModel.id)
+            .where(BacktestBatchItemModel.backtest_run_id == BacktestRunModel.id)
+            .exists()
+        )
         total = int(
             await self._session.scalar(
                 select(func.count()).select_from(BacktestRunModel).where(*conditions)
@@ -373,6 +390,341 @@ class SqlAlchemyBacktestRunRepository:
         return [
             _backtest_run_from_model(row, tolerate_fingerprint_mismatch=True) for row in rows
         ], total
+
+
+def _backtest_batch_from_model(model: BacktestBatchModel) -> BacktestBatch:
+    return BacktestBatch(
+        id=model.id,
+        idempotency_key=model.idempotency_key,
+        request_fingerprint=model.request_fingerprint,
+        scope=BacktestBatchScope(model.scope),
+        name=model.name,
+        configuration=dict(model.configuration),
+        watchlist_id=model.watchlist_id,
+        status=BacktestBatchStatus(model.status),
+        total_count=model.total_count,
+        pending_count=model.pending_count,
+        running_count=model.running_count,
+        completed_count=model.completed_count,
+        failed_count=model.failed_count,
+        cancelled_count=model.cancelled_count,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        correlation_id=model.correlation_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+def _backtest_batch_item_from_model(
+    model: BacktestBatchItemModel,
+) -> BacktestBatchItem:
+    return BacktestBatchItem(
+        id=model.id,
+        batch_id=model.batch_id,
+        instrument_id=model.instrument_id,
+        ordinal=model.ordinal,
+        status=BacktestBatchItemStatus(model.status),
+        backtest_run_id=model.backtest_run_id,
+        attempt_count=model.attempt_count,
+        started_at=model.started_at,
+        completed_at=model.completed_at,
+        error_code=model.error_code,
+        error_message=model.error_message,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+class SqlAlchemyBacktestBatchRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def lock_idempotency_key(self, key: str) -> None:
+        await self._session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"backtest-batch:{key}", 0)))
+        )
+
+    async def add(self, entity: BacktestBatch) -> None:
+        self._session.add(
+            BacktestBatchModel(
+                id=entity.id,
+                idempotency_key=entity.idempotency_key,
+                request_fingerprint=entity.request_fingerprint,
+                scope=entity.scope.value,
+                name=entity.name,
+                configuration=entity.configuration,
+                watchlist_id=entity.watchlist_id,
+                status=entity.status.value,
+                total_count=entity.total_count,
+                pending_count=entity.pending_count,
+                running_count=entity.running_count,
+                completed_count=entity.completed_count,
+                failed_count=entity.failed_count,
+                cancelled_count=entity.cancelled_count,
+                started_at=entity.started_at,
+                completed_at=entity.completed_at,
+                error_code=entity.error_code,
+                error_message=entity.error_message,
+                correlation_id=entity.correlation_id,
+                created_at=entity.created_at,
+                updated_at=entity.updated_at,
+            )
+        )
+        await self._session.flush()
+
+    async def add_items(self, entities: list[BacktestBatchItem]) -> None:
+        self._session.add_all(
+            [
+                BacktestBatchItemModel(
+                    id=item.id,
+                    batch_id=item.batch_id,
+                    instrument_id=item.instrument_id,
+                    ordinal=item.ordinal,
+                    status=item.status.value,
+                    backtest_run_id=item.backtest_run_id,
+                    attempt_count=item.attempt_count,
+                    started_at=item.started_at,
+                    completed_at=item.completed_at,
+                    error_code=item.error_code,
+                    error_message=item.error_message,
+                    created_at=item.created_at,
+                    updated_at=item.updated_at,
+                )
+                for item in entities
+            ]
+        )
+        await self._session.flush()
+
+    async def get_by_id(self, entity_id: UUID) -> BacktestBatch | None:
+        row = await self._session.get(BacktestBatchModel, entity_id)
+        return None if row is None else _backtest_batch_from_model(row)
+
+    async def get_by_idempotency_key(self, key: str) -> BacktestBatch | None:
+        row = await self._session.scalar(
+            select(BacktestBatchModel).where(BacktestBatchModel.idempotency_key == key)
+        )
+        return None if row is None else _backtest_batch_from_model(row)
+
+    async def list(self, *, offset: int, limit: int) -> tuple[list[BacktestBatch], int]:
+        total = int(
+            await self._session.scalar(select(func.count()).select_from(BacktestBatchModel)) or 0
+        )
+        rows = await self._session.scalars(
+            select(BacktestBatchModel)
+            .order_by(BacktestBatchModel.created_at.desc(), BacktestBatchModel.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [_backtest_batch_from_model(row) for row in rows], total
+
+    async def claim_next(
+        self, *, stale_before: datetime
+    ) -> tuple[BacktestBatch, BacktestBatchItem] | None:
+        row = await self._session.scalar(
+            select(BacktestBatchItemModel)
+            .join(
+                BacktestBatchModel,
+                BacktestBatchModel.id == BacktestBatchItemModel.batch_id,
+            )
+            .where(
+                BacktestBatchModel.status.in_(("CREATED", "RUNNING")),
+                or_(
+                    BacktestBatchItemModel.status == BacktestBatchItemStatus.PENDING.value,
+                    (
+                        (BacktestBatchItemModel.status == BacktestBatchItemStatus.RUNNING.value)
+                        & (BacktestBatchItemModel.updated_at <= stale_before)
+                    ),
+                ),
+            )
+            .order_by(
+                BacktestBatchModel.created_at,
+                BacktestBatchItemModel.ordinal,
+            )
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        if row is None:
+            return None
+        batch_model = await self._session.scalar(
+            select(BacktestBatchModel)
+            .where(BacktestBatchModel.id == row.batch_id)
+            .with_for_update()
+        )
+        if batch_model is None:
+            return None
+        now = datetime.now(row.created_at.tzinfo)
+        reclaiming = row.status == BacktestBatchItemStatus.RUNNING.value
+        row.status = BacktestBatchItemStatus.RUNNING.value
+        row.attempt_count += 1
+        row.started_at = row.started_at or now
+        row.updated_at = now
+        if not reclaiming:
+            batch_model.pending_count -= 1
+            batch_model.running_count += 1
+        batch_model.status = BacktestBatchStatus.RUNNING.value
+        batch_model.started_at = batch_model.started_at or now
+        batch_model.updated_at = now
+        await self._session.flush()
+        return (
+            _backtest_batch_from_model(batch_model),
+            _backtest_batch_item_from_model(row),
+        )
+
+    async def finish_item(self, entity: BacktestBatchItem) -> BacktestBatch:
+        row = await self._session.scalar(
+            select(BacktestBatchItemModel)
+            .where(BacktestBatchItemModel.id == entity.id)
+            .with_for_update()
+        )
+        if row is None:
+            raise LookupError("backtest batch item not found")
+        row.status = entity.status.value
+        row.backtest_run_id = entity.backtest_run_id
+        row.completed_at = entity.completed_at
+        row.error_code = entity.error_code
+        row.error_message = entity.error_message
+        row.updated_at = entity.updated_at
+        batch_model = await self._session.scalar(
+            select(BacktestBatchModel)
+            .where(BacktestBatchModel.id == entity.batch_id)
+            .with_for_update()
+        )
+        if batch_model is None:
+            raise LookupError("backtest batch not found")
+        counts = {
+            status: int(count)
+            for status, count in (
+                await self._session.execute(
+                    select(
+                        BacktestBatchItemModel.status,
+                        func.count(BacktestBatchItemModel.id),
+                    )
+                    .where(BacktestBatchItemModel.batch_id == entity.batch_id)
+                    .group_by(BacktestBatchItemModel.status)
+                )
+            ).all()
+        }
+        batch_model.pending_count = counts.get("PENDING", 0)
+        batch_model.running_count = counts.get("RUNNING", 0)
+        batch_model.completed_count = counts.get("COMPLETED", 0)
+        batch_model.failed_count = counts.get("FAILED", 0)
+        batch_model.cancelled_count = counts.get("CANCELLED", 0)
+        finished = (
+            batch_model.completed_count + batch_model.failed_count + batch_model.cancelled_count
+        )
+        if finished == batch_model.total_count:
+            if batch_model.completed_count == batch_model.total_count:
+                batch_model.status = BacktestBatchStatus.COMPLETED.value
+            elif batch_model.completed_count == 0:
+                batch_model.status = BacktestBatchStatus.FAILED.value
+            else:
+                batch_model.status = BacktestBatchStatus.PARTIAL_FAILED.value
+            batch_model.completed_at = entity.updated_at
+        else:
+            batch_model.status = BacktestBatchStatus.RUNNING.value
+        batch_model.updated_at = entity.updated_at
+        await self._session.flush()
+        return _backtest_batch_from_model(batch_model)
+
+    async def list_results(
+        self, batch_id: UUID, *, offset: int, limit: int
+    ) -> tuple[builtins.list[BacktestBatchResultRow], int]:
+        total = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(BacktestBatchItemModel)
+                .where(BacktestBatchItemModel.batch_id == batch_id)
+            )
+            or 0
+        )
+        rows = (
+            await self._session.execute(
+                select(
+                    BacktestBatchItemModel,
+                    InstrumentModel,
+                    BacktestMetricModel,
+                )
+                .join(
+                    InstrumentModel,
+                    InstrumentModel.id == BacktestBatchItemModel.instrument_id,
+                )
+                .outerjoin(
+                    BacktestMetricModel,
+                    BacktestMetricModel.run_id == BacktestBatchItemModel.backtest_run_id,
+                )
+                .where(BacktestBatchItemModel.batch_id == batch_id)
+                .order_by(
+                    case(
+                        (
+                            BacktestBatchItemModel.status
+                            == BacktestBatchItemStatus.COMPLETED.value,
+                            0,
+                        ),
+                        (
+                            BacktestBatchItemModel.status == BacktestBatchItemStatus.FAILED.value,
+                            1,
+                        ),
+                        else_=2,
+                    ),
+                    BacktestMetricModel.total_return.desc().nullslast(),
+                    BacktestBatchItemModel.ordinal,
+                )
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+        return [
+            BacktestBatchResultRow(
+                item_id=item.id,
+                instrument_id=instrument.id,
+                symbol=instrument.symbol,
+                exchange=instrument.exchange,
+                name=instrument.name,
+                status=BacktestBatchItemStatus(item.status),
+                backtest_run_id=item.backtest_run_id,
+                total_return=(None if metric is None else format(metric.total_return, "f")),
+                annualized_return=(
+                    None
+                    if metric is None or metric.annualized_return is None
+                    else format(metric.annualized_return, "f")
+                ),
+                maximum_drawdown=(None if metric is None else format(metric.maximum_drawdown, "f")),
+                sharpe_ratio=(
+                    None
+                    if metric is None or metric.sharpe_ratio is None
+                    else format(metric.sharpe_ratio, "f")
+                ),
+                fill_count=None if metric is None else metric.fill_count,
+                error_code=item.error_code,
+                error_message=item.error_message,
+            )
+            for item, instrument, metric in rows
+        ], total
+
+    async def list_all_results(self, batch_id: UUID) -> builtins.list[BacktestBatchResultRow]:
+        rows, _ = await self.list_results(batch_id, offset=0, limit=100_000)
+        return rows
+
+    async def get_parent_for_run(
+        self, run_id: UUID
+    ) -> tuple[BacktestBatch, BacktestBatchItem] | None:
+        row = (
+            await self._session.execute(
+                select(BacktestBatchModel, BacktestBatchItemModel)
+                .join(
+                    BacktestBatchItemModel,
+                    BacktestBatchItemModel.batch_id == BacktestBatchModel.id,
+                )
+                .where(BacktestBatchItemModel.backtest_run_id == run_id)
+            )
+        ).one_or_none()
+        if row is None:
+            return None
+        batch, item = row
+        return _backtest_batch_from_model(batch), _backtest_batch_item_from_model(item)
 
 
 def _user_strategy_definition_from_model(

@@ -27,7 +27,7 @@ export function ProductModeRoute({ children }: { children: ReactNode }) {
           }
           action={
             <Link to="/research/backtest">
-              <Button type="primary">返回策略研究</Button>
+              <Button type="primary">返回策略回测</Button>
             </Link>
           }
         />

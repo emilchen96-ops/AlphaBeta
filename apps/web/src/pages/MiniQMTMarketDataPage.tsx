@@ -115,7 +115,7 @@ export function MiniQMTMarketDataPage() {
     <div>
       <PageHeader
         title="MiniQMT 实时行情"
-        description="只读连接MiniQMT行情，服务于自选股、条件扫描、策略研究和历史数据积累。"
+        description="只读连接 MiniQMT 行情，服务于自选股、条件扫描、策略回测和历史数据积累。"
         action={
           <Space>
             <Button

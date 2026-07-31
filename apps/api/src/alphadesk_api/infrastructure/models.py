@@ -28,6 +28,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 from alphadesk_api.infrastructure.database import Base
 from alphadesk_domain.ai_research import AIAnalysisStatus, AIAnalysisType, AIImpactDirection
 from alphadesk_domain.backtest import BacktestEventType, BacktestRunStatus
+from alphadesk_domain.backtest_batches import (
+    BacktestBatchItemStatus,
+    BacktestBatchScope,
+    BacktestBatchStatus,
+)
 from alphadesk_domain.broker import BrokerExecutionMode, BrokerExecutionStatus
 from alphadesk_domain.enums import (
     AccountStatus,
@@ -2460,6 +2465,98 @@ class BacktestRunModel(MutableTimestampedModel, Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(String(512))
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class BacktestBatchModel(MutableTimestampedModel, Base):
+    __tablename__ = "backtest_batches"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_backtest_batches_idempotency_key"),
+        CheckConstraint(
+            f"scope IN ({enum_values(BacktestBatchScope)})",
+            name="backtest_batch_scope_valid",
+        ),
+        CheckConstraint(
+            f"status IN ({enum_values(BacktestBatchStatus)})",
+            name="backtest_batch_status_valid",
+        ),
+        CheckConstraint(
+            "length(request_fingerprint) = 64", name="backtest_batch_fingerprint_length"
+        ),
+        CheckConstraint(
+            "total_count > 0 AND pending_count >= 0 AND running_count >= 0 "
+            "AND completed_count >= 0 AND failed_count >= 0 AND cancelled_count >= 0 "
+            "AND pending_count + running_count + completed_count + failed_count "
+            "+ cancelled_count = total_count",
+            name="backtest_batch_counters_valid",
+        ),
+        CheckConstraint(
+            "(scope <> 'WATCHLIST') OR watchlist_id IS NOT NULL",
+            name="backtest_batch_watchlist_required",
+        ),
+        Index("ix_backtest_batches_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    watchlist_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("watchlists.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    pending_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    running_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cancelled_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
+    correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class BacktestBatchItemModel(MutableTimestampedModel, Base):
+    __tablename__ = "backtest_batch_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "batch_id",
+            "instrument_id",
+            name="uq_backtest_batch_items_batch_instrument",
+        ),
+        UniqueConstraint("backtest_run_id", name="uq_backtest_batch_items_run"),
+        CheckConstraint(
+            f"status IN ({enum_values(BacktestBatchItemStatus)})",
+            name="backtest_batch_item_status_valid",
+        ),
+        CheckConstraint(
+            "ordinal >= 0 AND attempt_count >= 0",
+            name="backtest_batch_item_counters_valid",
+        ),
+        Index("ix_backtest_batch_items_claim", "status", "updated_at", "ordinal"),
+        Index("ix_backtest_batch_items_batch_ordinal", "batch_id", "ordinal"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    batch_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_batches.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id", ondelete="RESTRICT"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    backtest_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="RESTRICT")
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    error_message: Mapped[str | None] = mapped_column(String(512))
 
 
 class BacktestEquityPointModel(TimestampedModel, Base):

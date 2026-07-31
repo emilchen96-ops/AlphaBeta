@@ -9,7 +9,7 @@ const item = {
   event_id: "55555555-5555-4555-8555-555555555555",
   source: {
     source_id: "66666666-6666-4666-8666-666666666666",
-    source_key: "manual-test",
+    source_key: "manual-user",
     display_name: "用户来源",
     source_type: "MANUAL",
     base_url: null,
@@ -85,8 +85,9 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 test("资讯中心展示来源、双时间和安全边界", async () => {
-  renderRoute("/information");
-  expect(await screen.findByText("公司公告")).toBeInTheDocument();
+  renderRoute("/ai-research?tab=materials");
+  expect(await screen.findByText("调研资料与来源")).toBeInTheDocument();
+  expect((await screen.findAllByText("公司公告")).length).toBeGreaterThan(0);
   expect(screen.getByText(/尚未经过 AI 分析/)).toBeInTheDocument();
   expect(screen.getByText("发布时间")).toBeInTheDocument();
   expect(screen.getByText("接收时间")).toBeInTheDocument();
@@ -97,20 +98,19 @@ test("资讯中心展示来源、双时间和安全边界", async () => {
 });
 
 test("手工录入表单支持来源、正文、Instrument与主题", async () => {
-  renderRoute("/information");
-  fireEvent.click(screen.getByRole("button", { name: /手工录入/ }));
+  renderRoute("/ai-research?tab=materials");
+  fireEvent.click(screen.getByRole("button", { name: /添加调研资料/ }));
   expect(await screen.findByLabelText("来源名称")).toBeInTheDocument();
   expect(screen.getByLabelText("正文")).toBeInTheDocument();
   expect(screen.getByText("关联标的")).toBeInTheDocument();
   expect(screen.getByLabelText("主题 key")).toBeInTheDocument();
 });
 
-test("市场事件页面支持类型、方向与搜索", async () => {
+test("旧市场事件入口收口到 AI 调研资料", async () => {
   renderRoute("/market-events");
-  expect(await screen.findByText("公司公告")).toBeInTheDocument();
-  expect(screen.getAllByText("事件类型").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("方向").length).toBeGreaterThan(0);
-  expect(screen.getByPlaceholderText("搜索事件标题")).toBeInTheDocument();
+  expect(await screen.findByText("调研资料与来源")).toBeInTheDocument();
+  expect((await screen.findAllByText("公司公告")).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("heading", { name: "市场事件" })).not.toBeInTheDocument();
 });
 
 test("资讯详情保留原始内容并区分发布时间与接收时间", async () => {
@@ -121,7 +121,12 @@ test("资讯详情保留原始内容并区分发布时间与接收时间", async
   expect(screen.getByText("用户指定方向")).toBeInTheDocument();
 });
 
-test.each(["/information", "/market-events", `/information/${itemId}`])(
+test.each([
+  "/ai-research?tab=materials",
+  "/information",
+  "/market-events",
+  `/information/${itemId}`,
+])(
   "%s 没有 AI 冒充或交易动作",
   async (route) => {
     renderRoute(route);

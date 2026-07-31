@@ -17,8 +17,11 @@ from alphadesk_domain.market_reference import (
     TradingCalendarSession,
 )
 
-# Explicit deterministic fixture closures. It is not presented as an authoritative live calendar.
-FIXTURE_HOLIDAYS = {
+# Exchange-verified A-share weekday closures.  Weekend dates are intentionally
+# omitted because they are derived below.  Keep whole published holiday
+# schedules together: adding one incident date would recreate the exact class
+# of calendar mismatch CAL01-R fixes.
+VERIFIED_A_SHARE_HOLIDAYS = {
     date(2024, 1, 1),
     date(2024, 2, 9),
     date(2024, 2, 12),
@@ -27,11 +30,61 @@ FIXTURE_HOLIDAYS = {
     date(2024, 2, 15),
     date(2024, 2, 16),
     date(2024, 4, 4),
+    date(2024, 4, 5),
     date(2024, 5, 1),
+    date(2024, 5, 2),
+    date(2024, 5, 3),
+    date(2024, 6, 10),
+    date(2024, 9, 16),
+    date(2024, 9, 17),
     date(2024, 10, 1),
+    date(2024, 10, 2),
+    date(2024, 10, 3),
+    date(2024, 10, 4),
+    date(2024, 10, 7),
     date(2025, 1, 1),
+    date(2025, 1, 28),
+    date(2025, 1, 29),
+    date(2025, 1, 30),
+    date(2025, 1, 31),
+    date(2025, 2, 3),
+    date(2025, 2, 4),
+    date(2025, 4, 4),
+    date(2025, 5, 1),
+    date(2025, 5, 2),
+    date(2025, 5, 5),
+    date(2025, 6, 2),
+    date(2025, 10, 1),
+    date(2025, 10, 2),
+    date(2025, 10, 3),
+    date(2025, 10, 6),
+    date(2025, 10, 7),
+    date(2025, 10, 8),
     date(2026, 1, 1),
+    date(2026, 1, 2),
+    date(2026, 2, 16),
+    date(2026, 2, 17),
+    date(2026, 2, 18),
+    date(2026, 2, 19),
+    date(2026, 2, 20),
+    date(2026, 2, 23),
+    date(2026, 4, 6),
+    date(2026, 5, 1),
+    date(2026, 5, 4),
+    date(2026, 5, 5),
+    date(2026, 6, 19),
+    date(2026, 9, 25),
+    date(2026, 10, 1),
+    date(2026, 10, 2),
+    date(2026, 10, 5),
+    date(2026, 10, 6),
+    date(2026, 10, 7),
 }
+
+# Fixture remains available for deterministic tests, but no longer means
+# "Monday to Friday".  Production uses the separately named verified provider
+# so persisted provenance cannot be confused with test data.
+FIXTURE_HOLIDAYS = VERIFIED_A_SHARE_HOLIDAYS
 
 
 class FixtureMarketReferenceProvider:
@@ -42,12 +95,17 @@ class FixtureMarketReferenceProvider:
     ) -> list[TradingCalendarSession]:
         now = datetime.now(UTC)
         dates: list[date] = []
-        current = start
-        while current <= end:
-            dates.append(current)
+        context_dates: list[date] = []
+        current = start - timedelta(days=14)
+        while current <= end + timedelta(days=14):
+            context_dates.append(current)
+            if start <= current <= end:
+                dates.append(current)
             current += timedelta(days=1)
         open_dates = [
-            value for value in dates if value.weekday() < 5 and value not in FIXTURE_HOLIDAYS
+            value
+            for value in context_dates
+            if value.weekday() < 5 and value not in FIXTURE_HOLIDAYS
         ]
         values: list[TradingCalendarSession] = []
         for value in dates:
@@ -132,3 +190,9 @@ class FixtureMarketReferenceProvider:
             )
             for instrument_id in instrument_ids
         ]
+
+
+class VerifiedAshareMarketReferenceProvider(FixtureMarketReferenceProvider):
+    """Auditable calendar built from published SSE/SZSE closure schedules."""
+
+    source = "VERIFIED_CN_A_CALENDAR"

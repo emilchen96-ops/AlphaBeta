@@ -19,6 +19,7 @@ from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.scanners import (
+    ScanMemberStatus,
     ScanResult,
     ScanRun,
     ScanRunMember,
@@ -189,6 +190,15 @@ class MemberRepository:
         for item in entities:
             self.store.members[(item.scan_run_id, item.instrument_id)] = deepcopy(item)
 
+    async def list_by_run(self, run_id: UUID) -> list[ScanRunMember]:
+        return deepcopy(
+            [
+                item
+                for (stored_run_id, _), item in self.store.members.items()
+                if stored_run_id == run_id
+            ]
+        )
+
 
 class ResultRepository:
     def __init__(self, store: Store) -> None:
@@ -283,7 +293,7 @@ async def test_sc02a_worker_continues_when_redis_heartbeat_is_unavailable() -> N
     class Processor:
         called = False
 
-        async def process_next(self, _: object) -> UUID:
+        async def process_next(self, _: object, __: object) -> UUID:
             self.called = True
             return uuid4()
 
@@ -402,6 +412,61 @@ async def test_processor_marks_partial_failed_for_insufficient_and_indeterminate
     }
     assert statuses[insufficient.id] == "DATA_MISSING"
     assert statuses[flat.id] == "INDETERMINATE"
+
+
+@pytest.mark.asyncio
+async def test_processor_preserves_preparation_failures_in_terminal_status() -> None:
+    ready = instrument("600001", "SSE")
+    calendar_mismatch = instrument("000001", "SZSE")
+    store = Store([ready, calendar_mismatch])
+    store.bars[ready.id] = bottom_bars(ready)
+    scan_run = run(store)
+    scan_run.total_instruments = 2
+    scan_run.mark_phase(ScanRunStatus.SCREENING, SCAN_AT, progress_percent=80)
+    scan_run.execution_stats = {
+        "data_preparation": {
+            "prepared": True,
+            "ready_instrument_ids": [str(ready.id)],
+            "calendar_mismatch_count": 1,
+            "reference_data_missing_count": 0,
+            "provider_failed_count": 0,
+            "quality_failed_count": 0,
+            "insufficient_count": 0,
+            "listing_history_short_count": 0,
+            "data_gap_count": 0,
+            "indeterminate_count": 0,
+        }
+    }
+    store.runs[scan_run.id] = deepcopy(scan_run)
+    store.members[(scan_run.id, ready.id)] = ScanRunMember(
+        scan_run_id=scan_run.id,
+        instrument_id=ready.id,
+        symbol=ready.symbol,
+        exchange=ready.exchange,
+        instrument_name=ready.name,
+        status=ScanMemberStatus.READY,
+    )
+    store.members[(scan_run.id, calendar_mismatch.id)] = ScanRunMember(
+        scan_run_id=scan_run.id,
+        instrument_id=calendar_mismatch.id,
+        symbol=calendar_mismatch.symbol,
+        exchange=calendar_mismatch.exchange,
+        instrument_name=calendar_mismatch.name,
+        status=ScanMemberStatus.CALENDAR_MISMATCH,
+        reason_code="CALENDAR_MISMATCH",
+    )
+    processor = RuleBasedScreeningProcessor(
+        factory(store),
+        builtin_condition_catalog(),
+    )
+
+    await processor.process(scan_run.id)
+
+    saved = store.runs[scan_run.id]
+    assert saved.status is ScanRunStatus.PARTIAL_FAILED
+    assert saved.instruments_scanned == 1
+    assert saved.failed_instruments == 1
+    assert saved.matches_found == 1
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from alphadesk_domain.repositories import (
     AdjustmentFactorRepository,
     AIAnalysisRunRepository,
     AuditLogRepository,
+    BacktestBatchRepository,
     BacktestEquityPointRepository,
     BacktestEventRepository,
     BacktestMetricRepository,
@@ -124,6 +125,7 @@ class UnitOfWork(Protocol):
     market_data_quality_issues: MarketDataQualityIssueRepository
     market_realtime_runs: MarketRealtimeRunRepository
     backtest_runs: BacktestRunRepository
+    backtest_batches: BacktestBatchRepository
     backtest_equity_points: BacktestEquityPointRepository
     backtest_metrics: BacktestMetricRepository
     backtest_trades: BacktestTradeSummaryRepository

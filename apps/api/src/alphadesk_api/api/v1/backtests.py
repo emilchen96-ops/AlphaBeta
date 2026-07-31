@@ -92,9 +92,22 @@ async def create_backtest(request: Request, body: BacktestCreateBody) -> Backtes
                 initial_cash=_decimal(body.initial_cash, "initial_cash"),
                 order_type=OrderType(body.order_type),
                 time_in_force=TimeInForce(body.time_in_force),
+                execution_price_mode=body.execution_price_mode,
+                position_size_ratio=(
+                    None
+                    if body.position_size_ratio is None
+                    else _decimal(body.position_size_ratio, "position_size_ratio")
+                ),
+                maximum_entry_gap_ratio=(
+                    None
+                    if body.maximum_entry_gap_ratio is None
+                    else _decimal(body.maximum_entry_gap_ratio, "maximum_entry_gap_ratio")
+                ),
                 fee_configuration=AshareSimpleFeeModel(
                     commission_rate=_decimal(fee.commission_rate, "commission_rate"),
-                    minimum_commission=_decimal(fee.minimum_commission, "minimum_commission"),
+                    minimum_commission=_decimal(
+                        fee.minimum_commission or "5", "minimum_commission"
+                    ),
                     stamp_duty_rate=_decimal(fee.stamp_duty_rate, "stamp_duty_rate"),
                     transfer_fee_rate=_decimal(fee.transfer_fee_rate, "transfer_fee_rate"),
                 ),

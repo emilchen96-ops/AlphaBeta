@@ -1,5 +1,7 @@
 """Unified UX02 quick-backtest workflow backed by the complete BT01 engine."""
 
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 import builtins
@@ -16,6 +18,7 @@ from alphadesk_api.application.backtests import (
 )
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.core.config import Settings
+from alphadesk_domain.backtest import BacktestExecutionPriceMode
 from alphadesk_domain.broker import AshareSimpleFeeModel, FixedBasisPointsSlippageModel
 from alphadesk_domain.enums import MarketTimeframe, OrderType, TimeInForce
 from alphadesk_domain.market_reference import PriceAdjustmentMode
@@ -37,13 +40,17 @@ class QuickBacktestRequest:
     initial_cash: Decimal
     spec: StrategySpec | None = None
     user_strategy_id: UUID | None = None
-    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.QFQ
+    price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
     commission_rate: Decimal = Decimal("0.0003")
     minimum_commission: Decimal = Decimal("5")
     stamp_duty_rate: Decimal = Decimal("0.0005")
     transfer_fee_rate: Decimal = Decimal("0.00001")
     slippage_basis_points: Decimal = Decimal("2")
     maximum_volume_participation: Decimal | None = Decimal("0.1")
+    execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    position_size_ratio: Decimal | None = Decimal("1")
+    maximum_entry_gap_ratio: Decimal | None = Decimal("0.05")
+    time_in_force: TimeInForce = TimeInForce.DAY
     idempotency_key: str | None = None
     correlation_id: UUID | None = None
 
@@ -72,8 +79,16 @@ class QuickBacktestService:
                 start_at=request.start_at,
                 end_at=request.end_at,
                 initial_cash=request.initial_cash,
-                order_type=OrderType.LIMIT,
-                time_in_force=TimeInForce.DAY,
+                order_type=(
+                    OrderType.MARKET
+                    if request.execution_price_mode
+                    is not BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+                    else OrderType.LIMIT
+                ),
+                time_in_force=request.time_in_force,
+                execution_price_mode=request.execution_price_mode,
+                position_size_ratio=request.position_size_ratio,
+                maximum_entry_gap_ratio=request.maximum_entry_gap_ratio,
                 fee_configuration=AshareSimpleFeeModel(
                     commission_rate=request.commission_rate,
                     minimum_commission=request.minimum_commission,
@@ -156,15 +171,50 @@ class ResearchBacktestQueryService:
 
     async def list(self, *, page: int, page_size: int) -> dict[str, Any]:
         result = await self._backtests.list(page=page, page_size=page_size, status=None)
-        return dict(result)
+        items: list[dict[str, Any]] = []
+        for item in result["items"]:
+            items.append(await self.detail(UUID(str(item["id"]))))
+        return {**dict(result), "items": items}
 
     async def detail(self, run_id: UUID) -> dict[str, Any]:
         detail = await self._backtests.detail(run_id)
         async with self._uow_factory() as uow:
             snapshot = await uow.research_backtest_specs.get_by_run(run_id)
+            parent = await uow.backtest_batches.get_parent_for_run(run_id)
+            configuration = detail.get("configuration") or {}
+            instrument_ids = [UUID(str(value)) for value in configuration.get("instrument_ids", [])]
+            instruments = await uow.instruments.get_many(instrument_ids)
         if snapshot is not None:
             detail["strategy_spec"] = strategy_spec_to_dict(snapshot.spec)
             detail["strategy_preview"] = strategy_spec_preview(snapshot.spec)
+        preview = list(detail.get("strategy_preview", []))
+        strategy_name = (
+            snapshot.spec.name
+            if snapshot is not None
+            else _strategy_fallback_name(str(detail.get("strategy_key", "")))
+        )
+        strategy_summary = (
+            "；".join(preview[:2]) if preview else "历史策略回测（旧记录未保存完整策略快照）"
+        )
+        instrument_display = "、".join(
+            f"{item.name}（{item.symbol}.{item.exchange}）" for item in instruments
+        )
+        parent_batch = None if parent is None else parent[0]
+        run_source = "BATCH_CHILD" if parent_batch is not None else "DIRECT"
+        detail.update(
+            {
+                "display_name": (f"{instrument_display or '历史标的'} · {strategy_name}"),
+                "instrument_display": instrument_display or "历史标的（信息待补全）",
+                "strategy_display_name": strategy_name,
+                "strategy_summary": strategy_summary,
+                "run_source": run_source,
+                "backtest_type": "批量独立回测子任务" if parent_batch else "单股回测",
+                "parent_batch_id": None if parent_batch is None else parent_batch.id,
+                "parent_batch_name": None if parent_batch is None else parent_batch.name,
+                "start_at": configuration.get("start_at"),
+                "end_at": configuration.get("end_at"),
+            }
+        )
         detail["simulation_notice"] = "回测仅为历史模拟, 不会发送给券商。"
         return detail
 
@@ -174,10 +224,26 @@ class ResearchBacktestQueryService:
         fills = int(detail.get("fills_generated", 0))
         explanation: builtins.list[str] = []
         if fills == 0:
-            explanation = [
-                "当前区间没有产生模拟成交。",
-                "可能原因包括策略条件较严格、数据范围较短或历史行情缺失。",
+            async with self._uow_factory() as uow:
+                events = await uow.backtest_events.list_by_run(run_id)
+            gap_events = [
+                event
+                for event in events
+                if event.details.get("code") == "BACKTEST_ENTRY_GAP_EXCEEDED"
             ]
+            if gap_events:
+                explanation = [
+                    "策略产生了买入信号, 但下一交易日高开超过设置的最大允许幅度。",
+                    (
+                        f"共有 {len(gap_events)} 次买入因不追高规则未成交; "
+                        "可在再次回测时提高“最大允许高开幅度”, 或改为继续等待后续交易日。"
+                    ),
+                ]
+            else:
+                explanation = [
+                    "当前区间没有产生模拟成交。",
+                    "可能原因包括策略条件较严格、风控未通过、数据范围较短或历史行情缺失。",
+                ]
         return {
             "run_id": run_id,
             "status": detail["status"],
@@ -197,3 +263,17 @@ class ResearchBacktestQueryService:
 
     async def equity(self, run_id: UUID) -> builtins.list[dict[str, Any]]:
         return [asdict(item) for item in await self._backtests.equity_curve(run_id)]
+
+
+def _strategy_fallback_name(strategy_key: str) -> str:
+    known = {
+        "sma_crossover": "均线交叉策略",
+        "volume_breakout": "放量突破策略",
+        "atr_channel": "ATR 通道策略",
+        "trend_pullback": "趋势回调策略",
+    }
+    if strategy_key in known:
+        return known[strategy_key]
+    if strategy_key.startswith("user_spec_"):
+        return "自定义规则策略"
+    return "历史策略回测"

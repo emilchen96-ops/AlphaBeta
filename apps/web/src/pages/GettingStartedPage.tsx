@@ -65,7 +65,7 @@ const journey = [
   ],
   ["运行条件扫描", "/scanners", "scanner", "研究标的有日线", "扫描运行可打开"],
   [
-    "运行策略研究",
+    "运行策略回测",
     "/strategies",
     "strategy_research",
     "策略参数合法",

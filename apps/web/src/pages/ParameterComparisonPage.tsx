@@ -132,6 +132,10 @@ export function ParameterComparisonPage() {
           transfer_fee_rate: "0.00001",
           slippage_basis_points: "2",
           maximum_volume_participation: "0.1",
+          execution_price_mode: "NEXT_OPEN",
+          position_size_ratio: "1",
+          maximum_entry_gap_ratio: "0.05",
+          time_in_force: "DAY",
           idempotency_key: `parameter-comparison:${crypto.randomUUID()}`,
         });
         next.push({ key: run.id, ...item, run });

@@ -4,7 +4,10 @@ from uuid import uuid4
 
 import pytest
 
-from alphadesk_api.infrastructure.market_reference import FixtureMarketReferenceProvider
+from alphadesk_api.infrastructure.market_reference import (
+    FixtureMarketReferenceProvider,
+    VerifiedAshareMarketReferenceProvider,
+)
 from alphadesk_domain.enums import (
     AdjustmentType,
     MarketDataQualityStatus,
@@ -79,6 +82,33 @@ async def test_fixture_calendar_distinguishes_open_weekend_and_holiday() -> None
     assert by_date[date(2024, 1, 1)].session_type is CalendarSessionType.HOLIDAY
     assert by_date[date(2024, 1, 2)].is_open is True
     assert by_date[date(2024, 1, 6)].session_type is CalendarSessionType.WEEKEND
+
+
+@pytest.mark.asyncio
+async def test_verified_2026_dragon_boat_calendar_and_neighbors() -> None:
+    values = await VerifiedAshareMarketReferenceProvider().fetch_calendar(
+        "SHSE", date(2026, 6, 18), date(2026, 6, 22)
+    )
+    by_date = {item.session_date: item for item in values}
+    assert by_date[date(2026, 6, 19)].is_open is False
+    assert by_date[date(2026, 6, 19)].session_type is CalendarSessionType.HOLIDAY
+    assert by_date[date(2026, 6, 18)].next_open_date == date(2026, 6, 22)
+    assert by_date[date(2026, 6, 22)].previous_open_date == date(2026, 6, 18)
+
+
+@pytest.mark.asyncio
+async def test_verified_calendar_32_session_window_is_deduplicated() -> None:
+    provider = VerifiedAshareMarketReferenceProvider()
+    values = [
+        *await provider.fetch_calendar("SHSE", date(2026, 5, 1), date(2026, 7, 28)),
+        *await provider.fetch_calendar("SZSE", date(2026, 5, 1), date(2026, 7, 28)),
+    ]
+    open_dates = sorted({item.session_date for item in values if item.is_open})
+    window = open_dates[-32:]
+    assert window[0] == date(2026, 6, 12)
+    assert window[-1] == date(2026, 7, 28)
+    assert date(2026, 6, 19) not in window
+    assert len(window) == 32
 
 
 def test_calendar_previous_next_latest_and_common_sessions() -> None:

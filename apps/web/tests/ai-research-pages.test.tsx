@@ -200,7 +200,7 @@ test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", as
   );
   expect(screen.getByText("资讯原始事实")).toBeInTheDocument();
   expect(screen.getByText("市场事件事实")).toBeInTheDocument();
-  expect(screen.getAllByText("EVENT_SUMMARY").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("单事件摘要").length).toBeGreaterThan(0);
   expect(
     screen.getByRole("button", { name: /创建真实研究分析/ }),
   ).toBeDisabled();
@@ -211,13 +211,16 @@ test("AI研究页显示 Provider 禁用状态、输入事实与安全边界", as
 
 test("分析详情区分 AI 推断、不确定性和可追溯原始证据", async () => {
   renderRoute(`/ai-analyses/${analysisId}`);
-  expect(await screen.findByText("AI 研究摘要")).toBeInTheDocument();
+  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(
+    0,
+  );
   expect(screen.getByText("AI 摘要 / 推断")).toBeInTheDocument();
   expect(screen.getByText("仍需交叉验证。")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "打开原始事实" })).toHaveAttribute(
     "href",
     `/information/${itemId}`,
   );
+  await userEvent.click(screen.getByText("技术详情"));
   expect(screen.getByText("100 / 80 / 合计 180")).toBeInTheDocument();
   expect(screen.getByText("真实服务（REAL）")).toBeInTheDocument();
   expect(screen.getByText("0 USD")).toBeInTheDocument();
@@ -227,8 +230,9 @@ test("真实 Provider 可用时显示安全端点并允许连接测试", async (
   installFetch("REAL_AVAILABLE");
   renderRoute("/ai-research");
   expect(await screen.findByText(/最近连通成功/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("技术详情"));
   expect(
-    screen.getByText("Endpoint：https://ai.example.test"),
+    screen.getByText("接口地址：https://ai.example.test"),
   ).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: /创建真实研究分析/ }),
@@ -258,6 +262,7 @@ test("真实 Provider 不可用时禁用分析且只显示稳定错误码", asyn
   installFetch("REAL_UNAVAILABLE");
   renderRoute("/ai-research");
   expect(await screen.findByText(/最近连通失败/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("技术详情"));
   expect(screen.getByText(/AI_PROVIDER_TIMEOUT/)).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: /创建真实研究分析/ }),
@@ -275,7 +280,9 @@ test("ResearchInsight 目录和证据详情均为只读研究页面", async () =
 
 test("ResearchInsight 详情保留版本化结构与来源证据", async () => {
   renderRoute(`/research-insights/${insightId}`);
-  expect(await screen.findByText("AI 研究摘要")).toBeInTheDocument();
+  expect((await screen.findAllByText("AI 研究摘要")).length).toBeGreaterThan(
+    0,
+  );
   expect(screen.getByText("原始来源证据（需人工核对）")).toBeInTheDocument();
   expect(screen.getByText("selected information item")).toBeInTheDocument();
 });

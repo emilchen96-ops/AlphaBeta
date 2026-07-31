@@ -15,7 +15,10 @@ from alphadesk_api.application.market_reference import (
     MarketReferenceQueryService,
     ReferenceMarketDataSyncService,
 )
-from alphadesk_api.infrastructure.market_reference import FixtureMarketReferenceProvider
+from alphadesk_api.infrastructure.market_reference import (
+    FixtureMarketReferenceProvider,
+    VerifiedAshareMarketReferenceProvider,
+)
 from alphadesk_api.schemas.market_reference import (
     AdjustmentFactorResponse,
     CalendarSessionResponse,
@@ -31,6 +34,8 @@ router = APIRouter(prefix="/market-reference", tags=["market-reference"])
 
 
 def _provider(request: Request, requested: str) -> tuple[MarketReferenceProvider, str]:
+    if requested.lower() == "verified":
+        return VerifiedAshareMarketReferenceProvider(), "VERIFIED_CN_A_CALENDAR"
     if requested.lower() == "fixture":
         return FixtureMarketReferenceProvider(), "FIXTURE"
     if requested.lower() == "tushare":

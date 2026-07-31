@@ -64,6 +64,11 @@ class ScanMemberStatus(StrEnum):
     DATA_MISSING = "DATA_MISSING"
     BACKFILL_REQUESTED = "BACKFILL_REQUESTED"
     READY = "READY"
+    CURRENTLY_SUSPENDED = "CURRENTLY_SUSPENDED"
+    STALE_DATA = "STALE_DATA"
+    DATA_GAP = "DATA_GAP"
+    CALENDAR_MISMATCH = "CALENDAR_MISMATCH"
+    DELISTED = "DELISTED"
     INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
     REFERENCE_DATA_MISSING = "REFERENCE_DATA_MISSING"
     QUALITY_FAILED = "QUALITY_FAILED"
@@ -867,7 +872,7 @@ class ScanResult:
     reference_price: Decimal
     reason_code: str
     reason: str
-    metrics: dict[str, str | int | bool | None]
+    metrics: dict[str, object]
     id: UUID = field(default_factory=uuid4)
     schema_version: int = 1
     created_at: datetime = field(default_factory=utc_now)

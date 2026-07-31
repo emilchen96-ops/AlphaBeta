@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, status
+from redis.exceptions import RedisError
 
 from alphadesk_api.api.v1.market_common import (
     request_correlation_id,
@@ -15,9 +17,13 @@ from alphadesk_api.api.v1.market_common import (
     uow_factory,
 )
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
 from alphadesk_api.application.scanners import ScannerQueryService
 from alphadesk_api.application.screening_specs import ScreeningSpecService
-from alphadesk_api.application.screenings import ScreeningRunService
+from alphadesk_api.application.screenings import (
+    BACKFILL_SECONDS_PER_BATCH,
+    ScreeningRunService,
+)
 from alphadesk_api.application.user_screenings import (
     ScreeningWatchlistService,
     UserScreeningService,
@@ -26,6 +32,7 @@ from alphadesk_api.schemas.screenings import (
     ConditionDefinitionResponse,
     RankingRuleBody,
     ScreeningConditionBody,
+    ScreeningConditionGroupBody,
     ScreeningCreateBody,
     ScreeningParseResponse,
     ScreeningPreviewEnvelopeResponse,
@@ -52,9 +59,11 @@ from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.scanners import ScanRun
 from alphadesk_domain.screening import (
     ConditionCatalog,
+    ConditionGroupOperator,
     RankingDirection,
     RankingRule,
     ScreeningCondition,
+    ScreeningConditionGroup,
     ScreeningError,
     ScreeningSpec,
     ScreeningTemplateDefinition,
@@ -86,7 +95,10 @@ def catalog(request: Request) -> ConditionCatalog:
 
 
 def _domain_spec(body: ScreeningCreateBody, condition_catalog: ConditionCatalog) -> ScreeningSpec:
-    for item in body.conditions:
+    nodes = list(body.conditions)
+    if body.root_group is not None:
+        nodes.extend(_condition_bodies(body.root_group))
+    for item in nodes:
         definition = condition_catalog.get(item.condition_key)
         if item.condition_version is not None and item.condition_version != definition.version:
             raise ScreeningError(
@@ -101,6 +113,7 @@ def _domain_spec(body: ScreeningCreateBody, condition_catalog: ConditionCatalog)
         as_of_date=body.as_of_date,
         timeframe=MarketTimeframe(body.timeframe),
         conditions=tuple(_domain_condition(item) for item in body.conditions),
+        root_group=(None if body.root_group is None else _domain_group(body.root_group)),
         exclusions=body.exclusions,
         ranking_rules=tuple(_domain_ranking(item) for item in body.ranking_rules),
         top_n=body.top_n,
@@ -123,6 +136,28 @@ def _domain_condition(body: ScreeningConditionBody) -> ScreeningCondition:
     return ScreeningCondition(
         condition_key=body.condition_key,
         parameters=body.parameters,
+    )
+
+
+def _condition_bodies(group: ScreeningConditionGroupBody) -> list[ScreeningConditionBody]:
+    return [
+        condition
+        for child in group.children
+        for condition in (
+            _condition_bodies(child) if isinstance(child, ScreeningConditionGroupBody) else [child]
+        )
+    ]
+
+
+def _domain_group(body: ScreeningConditionGroupBody) -> ScreeningConditionGroup:
+    return ScreeningConditionGroup(
+        operator=ConditionGroupOperator(body.operator),
+        children=tuple(
+            _domain_group(child)
+            if isinstance(child, ScreeningConditionGroupBody)
+            else _domain_condition(child)
+            for child in body.children
+        ),
     )
 
 
@@ -175,11 +210,42 @@ def _run_response(run: ScanRun, *, replayed: bool = False) -> ScreeningRunRespon
     "/screening-conditions",
     response_model=list[ConditionDefinitionResponse],
 )
-async def list_screening_conditions(request: Request) -> list[ConditionDefinitionResponse]:
+@router.get(
+    "/research/screening-conditions",
+    response_model=list[ConditionDefinitionResponse],
+)
+async def list_screening_conditions(
+    request: Request,
+    query: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[ConditionDefinitionResponse]:
+    items = catalog(request).search(query=query, category=category)
     return [
         ConditionDefinitionResponse.model_validate(item.response_dict())
-        for item in catalog(request).list()
+        for item in items[offset : offset + limit]
     ]
+
+
+@router.get(
+    "/screening-conditions/{condition_key}",
+    response_model=ConditionDefinitionResponse,
+)
+@router.get(
+    "/research/screening-conditions/{condition_key}",
+    response_model=ConditionDefinitionResponse,
+)
+async def get_screening_condition(
+    request: Request,
+    condition_key: str,
+) -> ConditionDefinitionResponse:
+    try:
+        return ConditionDefinitionResponse.model_validate(
+            catalog(request).get(condition_key).response_dict()
+        )
+    except ScreeningError as exc:
+        raise to_app_error(ApplicationError(exc.code, str(exc))) from exc
 
 
 def _spec_service(request: Request) -> ScreeningSpecService:
@@ -521,6 +587,21 @@ async def get_screening_progress(request: Request, screening_id: UUID) -> Screen
     if not isinstance(preparation, dict):
         preparation = {}
     stage = str(preparation.get("stage", run.status.value))
+    total_batches = max(0, int(preparation.get("queued_batch_count", 0)))
+    pending_batches = await _pending_backfill_batches(request, screening_id)
+    processed_batches = (
+        max(0, total_batches - min(total_batches, pending_batches))
+        if pending_batches is not None
+        else 0
+    )
+    backfill_percent: int | None = None
+    remaining_seconds: int | None = None
+    if total_batches > 0 and pending_batches is not None:
+        calculated = int(processed_batches / total_batches * 100)
+        backfill_percent = (
+            min(calculated, 99) if stage == "BACKFILLING_MARKET_DATA" else min(calculated, 100)
+        )
+        remaining_seconds = max(0, pending_batches * BACKFILL_SECONDS_PER_BATCH)
     return ScreeningProgressResponse(
         screening_id=run.id,
         status=run.status.value,
@@ -535,14 +616,53 @@ async def get_screening_progress(request: Request, screening_id: UUID) -> Screen
         elapsed_ms=run.elapsed_ms,
         current_stage=stage,
         stage_label=STAGE_LABELS.get(stage, stage),
-        current_action=str(
-            preparation.get("current_action", STAGE_LABELS.get(stage, stage))
-        ),
+        current_action=str(preparation.get("current_action", STAGE_LABELS.get(stage, stage))),
         downloading_count=int(preparation.get("downloading_count", 0)),
         provider_failed_count=int(preparation.get("provider_failed_count", 0)),
         quality_failed_count=int(preparation.get("quality_failed_count", 0)),
         not_applicable_count=int(preparation.get("not_applicable_count", 0)),
+        listing_history_short_count=int(preparation.get("listing_history_short_count", 0)),
+        currently_suspended_count=int(preparation.get("currently_suspended_count", 0)),
+        stale_data_count=int(preparation.get("stale_data_count", 0)),
+        data_gap_count=int(preparation.get("data_gap_count", 0)),
+        calendar_mismatch_count=int(preparation.get("calendar_mismatch_count", 0)),
+        calendar_mismatch_dates=[
+            str(item)
+            for item in preparation.get("calendar_mismatch_dates", [])
+            if isinstance(item, str)
+        ],
+        excluded_count=run.excluded_instruments,
+        backfill_total_batches=total_batches,
+        backfill_pending_batches=pending_batches,
+        backfill_processed_batches=processed_batches,
+        backfill_progress_percent=backfill_percent,
+        backfill_estimated_remaining_seconds=remaining_seconds,
     )
+
+
+async def _pending_backfill_batches(
+    request: Request,
+    screening_id: UUID,
+) -> int | None:
+    """Count only queued MiniQMT batches that belong to this screening run."""
+
+    client = getattr(request.app.state.redis, "client", None)
+    if client is None:
+        return None
+    try:
+        raw_items = await client.lrange(HISTORY_QUEUE_KEY, 0, -1)
+    except (RedisError, ConnectionError, TimeoutError, OSError):
+        return None
+    pending = 0
+    for raw in raw_items:
+        try:
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            payload = json.loads(text)
+        except (UnicodeDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(payload, dict) and str(payload.get("scan_run_id")) == str(screening_id):
+            pending += 1
+    return pending
 
 
 @router.post(

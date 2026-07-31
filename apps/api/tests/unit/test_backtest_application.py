@@ -6,13 +6,63 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from alphadesk_api.application.backtests import BacktestService, _safe_failure
+from alphadesk_api.application.backtests import (
+    BacktestService,
+    _partial_daily_bar,
+    _safe_failure,
+    _same_day_bars,
+)
 from alphadesk_domain.accounting import FillAccountingResult
 from alphadesk_domain.entities import Fill, Order
-from alphadesk_domain.enums import OrderSide
-from alphadesk_domain.strategy import StrategyError
+from alphadesk_domain.enums import MarketTimeframe, OrderSide
+from alphadesk_domain.market_reference import PriceAdjustmentMode
+from alphadesk_domain.strategy import StrategyBar, StrategyError
 
 pytestmark = [pytest.mark.unit, pytest.mark.bt01]
+
+
+def _bar(at: datetime, *, close: str) -> StrategyBar:
+    value = Decimal(close)
+    return StrategyBar(
+        instrument_id=UUID(int=1),
+        symbol="300088",
+        exchange="SZSE",
+        timeframe=MarketTimeframe.MINUTE_1,
+        timestamp=at,
+        open=value,
+        high=value,
+        low=value,
+        close=value,
+        volume=Decimal("100"),
+        amount=value * Decimal("100"),
+    )
+
+
+def test_same_day_cutoff_never_reads_the_execution_minute() -> None:
+    trading_date = datetime(2025, 1, 2, tzinfo=UTC).date()
+    # Beijing 14:54 and 14:55.
+    visible = _bar(datetime(2025, 1, 2, 6, 54, tzinfo=UTC), close="10")
+    execution = _bar(datetime(2025, 1, 2, 6, 55, tzinfo=UTC), close="20")
+    last_visible, next_bar = _same_day_bars([visible, execution], trading_date)
+    daily = StrategyBar(
+        instrument_id=visible.instrument_id,
+        symbol=visible.symbol,
+        exchange=visible.exchange,
+        timeframe=MarketTimeframe.DAY_1,
+        timestamp=datetime(2025, 1, 2, tzinfo=UTC),
+        open=Decimal("9"),
+        high=Decimal("30"),
+        low=Decimal("8"),
+        close=Decimal("30"),
+        volume=Decimal("999"),
+        adjustment_mode=PriceAdjustmentMode.RAW,
+    )
+    partial = _partial_daily_bar(daily, [visible, execution], last_visible)
+
+    assert next_bar is execution
+    assert partial.close == Decimal("10")
+    assert partial.high == Decimal("10")
+    assert partial.volume == Decimal("100")
 
 
 def test_backtest_preserves_safe_strategy_data_errors() -> None:

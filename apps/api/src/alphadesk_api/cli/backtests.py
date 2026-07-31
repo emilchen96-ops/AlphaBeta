@@ -20,6 +20,7 @@ from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.application.strategies import StrategyResearchService
 from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.infrastructure.database import DatabaseService
+from alphadesk_domain.backtest import BacktestExecutionPriceMode
 from alphadesk_domain.broker import AshareSimpleFeeModel, FixedBasisPointsSlippageModel
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import (
@@ -90,6 +91,8 @@ async def _run(
             initial_cash=initial_cash,
             order_type=OrderType.LIMIT,
             time_in_force=TimeInForce.DAY,
+            execution_price_mode=BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT,
+            maximum_entry_gap_ratio=None,
             fee_configuration=AshareSimpleFeeModel(),
             slippage_configuration=FixedBasisPointsSlippageModel(basis_points=Decimal("2")),
             maximum_volume_participation=Decimal("0.1"),

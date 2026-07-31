@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -228,8 +228,21 @@ def test_09_provider_partial_failure_becomes_per_instrument_status() -> None:
         gap,
         backfill_attempted=True,
     )
+    assert finalized.readiness is ScreeningInstrumentReadiness.DATA_GAP
+    assert finalized.reason_code == "DATA_STILL_NOT_READY"
+
+
+def test_09b_only_explicit_provider_failure_is_provider_failed() -> None:
+    item = instrument()
+    required = sessions(5)
+    gap = assess(item, [bar(item, value) for value in required[:-1]], required)
+    finalized = ScreeningDataPreparationService._finalize_gap(
+        gap,
+        backfill_attempted=True,
+        provider_failed=True,
+    )
     assert finalized.readiness is ScreeningInstrumentReadiness.PROVIDER_FAILED
-    assert finalized.reason_code == "SCREENING_DATA_STILL_NOT_READY"
+    assert finalized.reason_code == "SCREENING_PROVIDER_NOT_AVAILABLE"
 
 
 def test_10_single_bad_stock_does_not_change_ready_peer() -> None:
@@ -276,12 +289,12 @@ def test_12_new_listing_with_short_history_is_not_applicable() -> None:
     assert gap.reason_code == "LISTING_HISTORY_TOO_SHORT"
 
 
-def test_13_delisted_sessions_are_excluded_from_required_window() -> None:
+def test_13_delisted_instrument_has_distinct_state() -> None:
     required = sessions(8)
     item = instrument(delisted_at=required[-2])
     lifecycle = [value for value in required if value < required[-2]]
     gap = assess(item, [bar(item, value) for value in lifecycle], required)
-    assert gap.readiness is ScreeningInstrumentReadiness.READY
+    assert gap.readiness is ScreeningInstrumentReadiness.DELISTED
 
 
 def test_14_missing_reliable_limit_price_is_indeterminate_not_fabricated() -> None:
@@ -315,8 +328,132 @@ def test_16_backfill_then_complete_window_becomes_ready() -> None:
     required = sessions(6)
     before = assess(item, [bar(item, value) for value in required[:-1]], required)
     after = assess(item, [bar(item, value) for value in required], required)
-    assert before.readiness is ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY
+    assert before.readiness is ScreeningInstrumentReadiness.DATA_GAP
     assert after.readiness is ScreeningInstrumentReadiness.READY
+
+
+def test_16b_suspension_extends_effective_bar_window_without_expanding_market_window() -> None:
+    item = instrument()
+    available = sessions(12)
+    market_window = available[-5:]
+    suspended_days = {market_window[1], market_window[2]}
+    values = [bar(item, value) for value in available if value not in suspended_days]
+    gap = ScreeningDataGapService().assess(
+        instruments=[item],
+        bars_by_instrument={item.id: values},
+        required_sessions=market_window,
+        available_sessions=available,
+        minimum_rule_sessions=5,
+        suspended_sessions={(item.id, value) for value in suspended_days},
+        as_of_date=market_window[-1],
+    )[0]
+    assert gap.readiness is ScreeningInstrumentReadiness.READY
+    assert gap.missing_sessions == ()
+    assert market_window[0] == available[-5]
+
+
+def test_16c_current_suspension_and_long_stale_data_are_distinct() -> None:
+    item = instrument()
+    required = sessions(10)
+    suspended = {(item.id, required[-1])}
+    current = ScreeningDataGapService().assess(
+        instruments=[item],
+        bars_by_instrument={item.id: [bar(item, value) for value in required[:-1]]},
+        required_sessions=required,
+        minimum_rule_sessions=3,
+        suspended_sessions=suspended,
+        currently_suspended_ids={item.id},
+        as_of_date=required[-1],
+        max_stale_sessions=3,
+    )[0]
+    stale = ScreeningDataGapService().assess(
+        instruments=[item],
+        bars_by_instrument={item.id: [bar(item, value) for value in required[:3]]},
+        required_sessions=required,
+        minimum_rule_sessions=3,
+        suspended_sessions={(item.id, value) for value in required[3:]},
+        currently_suspended_ids={item.id},
+        as_of_date=required[-1],
+        max_stale_sessions=3,
+    )[0]
+    assert current.readiness is ScreeningInstrumentReadiness.CURRENTLY_SUSPENDED
+    assert current.calculation_ready is True
+    assert stale.readiness is ScreeningInstrumentReadiness.STALE_DATA
+
+
+def test_16d_new_listing_participates_after_enough_history_accumulates() -> None:
+    required = sessions(10)
+    short_item = instrument(symbol="600010", listed_at=required[-2])
+    ready_item = instrument(symbol="600011", listed_at=required[-5])
+    short = assess(
+        short_item,
+        [bar(short_item, value) for value in required[-2:]],
+        required,
+        minimum=5,
+    )
+    ready = assess(
+        ready_item,
+        [bar(ready_item, value) for value in required[-5:]],
+        required,
+        minimum=5,
+    )
+    assert short.reason_code == "LISTING_HISTORY_TOO_SHORT"
+    assert ready.readiness is ScreeningInstrumentReadiness.READY
+
+
+def test_16e_common_single_date_gap_is_calendar_mismatch_not_mass_backfill() -> None:
+    required = sessions(5)
+    common_missing = required[2]
+    gaps = tuple(
+        InstrumentDataGap(
+            instrument_id=uuid4(),
+            readiness=ScreeningInstrumentReadiness.DATA_GAP,
+            available_bars=4,
+            required_bars=5,
+            missing_sessions=(common_missing,),
+        )
+        for _ in range(60)
+    )
+    classified = ScreeningDataPreparationService._classify_calendar_mismatches(
+        gaps,
+        included_count=60,
+    )
+    assert all(
+        item.readiness is ScreeningInstrumentReadiness.CALENDAR_MISMATCH for item in classified
+    )
+    assert all(item.needs_backfill is False for item in classified)
+
+
+def test_16f_common_gap_remains_backfillable_before_miniqmt_confirmation() -> None:
+    required = sessions(5)
+    common_missing = required[2]
+    gaps = tuple(
+        InstrumentDataGap(
+            instrument_id=uuid4(),
+            readiness=ScreeningInstrumentReadiness.DATA_GAP,
+            available_bars=4,
+            required_bars=5,
+            missing_sessions=(common_missing,),
+        )
+        for _ in range(60)
+    )
+
+    initial = ScreeningDataPreparationService._classify_confirmed_calendar_mismatches(
+        gaps,
+        included_count=60,
+        backfill_attempted=False,
+    )
+    confirmed = ScreeningDataPreparationService._classify_confirmed_calendar_mismatches(
+        gaps,
+        included_count=60,
+        backfill_attempted=True,
+    )
+
+    assert all(item.readiness is ScreeningInstrumentReadiness.DATA_GAP for item in initial)
+    assert all(item.needs_backfill is True for item in initial)
+    assert all(
+        item.readiness is ScreeningInstrumentReadiness.CALENDAR_MISMATCH for item in confirmed
+    )
 
 
 def test_17_feature_store_refreshes_when_source_bars_change() -> None:
@@ -377,6 +514,93 @@ def test_19_cancel_stops_preparation_before_screening() -> None:
     run.mark_canceled(now)
     assert run.cancel_requested is True
     assert run.status is ScanRunStatus.CANCELED
+
+
+def test_19b_backfill_wait_uses_persisted_batch_estimate() -> None:
+    run = scan_run()
+    run.execution_stats = {
+        "data_preparation": {
+            "estimated_backfill_wait_seconds": 2_760,
+        }
+    }
+    service = ScreeningDataPreparationService(
+        lambda: None,  # type: ignore[arg-type]
+        builtin_condition_catalog(),
+        backfill_wait_seconds=120,
+    )
+
+    assert service._estimated_backfill_wait_seconds(run) == 2_760
+
+
+def test_19c_backfill_wait_recalculates_from_existing_queue_depth() -> None:
+    run = scan_run()
+    run.execution_stats = {
+        "data_preparation": {
+            "estimated_backfill_wait_seconds": 14_400,
+            "maximum_queue_depth": 694,
+        }
+    }
+    service = ScreeningDataPreparationService(
+        lambda: None,  # type: ignore[arg-type]
+        builtin_condition_catalog(),
+        backfill_wait_seconds=120,
+    )
+
+    assert service._estimated_backfill_wait_seconds(run) == 20_940
+
+
+def test_19d_queue_drain_observation_is_timezone_aware() -> None:
+    run = scan_run()
+    run.execution_stats = {
+        "data_preparation": {
+            "queue_drain_observed_at": "2026-07-29T03:04:05+00:00",
+        }
+    }
+    service = ScreeningDataPreparationService(
+        lambda: None,  # type: ignore[arg-type]
+        builtin_condition_catalog(),
+    )
+
+    assert service._queue_drain_observed_at(run) == datetime(
+        2026,
+        7,
+        29,
+        3,
+        4,
+        5,
+        tzinfo=UTC,
+    )
+
+
+def test_19e_successful_no_bar_response_is_inferred_as_suspension() -> None:
+    item = instrument()
+    required = sessions(40)
+    missing = required[-3]
+    gap = InstrumentDataGap(
+        instrument_id=item.id,
+        readiness=ScreeningInstrumentReadiness.DATA_GAP,
+        available_bars=39,
+        required_bars=32,
+        missing_sessions=(missing,),
+    )
+
+    inferred = ScreeningDataPreparationService._confirmed_suspension_sessions(
+        (gap,),
+        {item.id: [bar(item, value) for value in required if value != missing]},
+    )
+
+    assert inferred == {(item.id, missing)}
+
+
+def test_19f_unknown_listing_without_any_bar_is_reference_missing() -> None:
+    item = replace(instrument(), listed_at=None)
+    required = sessions(32)
+
+    result = assess(item, [], required)
+
+    assert result.readiness is ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING
+    assert result.reason_code == "LISTING_DATE_NOT_AVAILABLE"
+    assert result.needs_backfill is False
 
 
 @dataclass

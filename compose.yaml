@@ -83,7 +83,7 @@ services:
       ALPHADESK_AI_API_KEY: ${ALPHADESK_AI_API_KEY:-}
       ALPHADESK_TUSHARE_ENABLED: ${TUSHARE_ENABLED:-false}
       ALPHADESK_TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
-      ALPHADESK_MARKET_CALENDAR_PROVIDER: ${MARKET_CALENDAR_PROVIDER:-fixture}
+      ALPHADESK_MARKET_CALENDAR_PROVIDER: ${MARKET_CALENDAR_PROVIDER:-verified}
       ALPHADESK_MARKET_ADJUSTMENT_PROVIDER: ${MARKET_ADJUSTMENT_PROVIDER:-fixture}
       ALPHADESK_MARKET_SUSPENSION_PROVIDER: ${MARKET_SUSPENSION_PROVIDER:-fixture}
       ALPHADESK_AI_MODEL: ${ALPHADESK_AI_MODEL:-}
@@ -231,6 +231,41 @@ services:
           "python",
           "-c",
           "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:scanners:v1:worker:heartbeat'); x.close()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  backtest_batch_worker:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "alphadesk_api.workers.backtest_batches"]
+    environment:
+      ALPHADESK_ENVIRONMENT: ${ALPHADESK_ENVIRONMENT:-development}
+      ALPHADESK_POSTGRES_HOST: postgres
+      ALPHADESK_POSTGRES_PORT: 5432
+      ALPHADESK_POSTGRES_DB: ${POSTGRES_DB:-alphadesk}
+      ALPHADESK_POSTGRES_USER: ${POSTGRES_USER:-alphadesk}
+      ALPHADESK_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-only}
+      ALPHADESK_REDIS_HOST: redis
+      ALPHADESK_REDIS_PORT: 6379
+      ALPHADESK_LOG_LEVEL: ${ALPHADESK_LOG_LEVEL:-INFO}
+      ALPHADESK_BACKTEST_BATCH_WORKER_POLL_MS: ${ALPHADESK_BACKTEST_BATCH_WORKER_POLL_MS:-500}
+      ALPHADESK_BACKTEST_BATCH_ITEM_STALE_SECONDS: ${ALPHADESK_BACKTEST_BATCH_ITEM_STALE_SECONDS:-1800}
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,redis; x=redis.Redis(host=os.getenv('ALPHADESK_REDIS_HOST','redis'),decode_responses=True); assert x.get('alphadesk:backtest-batches:v1:worker:heartbeat'); x.close()",
         ]
       interval: 15s
       timeout: 5s

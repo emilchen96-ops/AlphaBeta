@@ -29,17 +29,25 @@ ScreeningSpec
 - `SCREENING`：把 READY 股票交给既有 SC02 引擎；
 - `COMPLETED`、`PARTIAL_FAILED`、`FAILED`：终态。
 
-## 数据计划
+## 数据计划与双窗口
 
-`DataRequirementPlan` 记录点时股票数、最早和最晚日期、所需交易日数量、字段、参考
-数据、特征、Provider 方案和预计缺失股票数。窗口使用交易日历计算：
+`DataRequirementPlan` 记录点时股票数、统一市场窗口、逐股补足窗口、所需交易日数量、
+字段、参考数据、特征、Provider 方案和预计缺失股票数。CAL01-R 把窗口明确分成两层：
+
+- **市场事件窗口**：所有股票共享同一组真实 A 股开放日，用于“最近 N 个交易日涨停过”
+  等事件条件，保证横向可比；
+- **个股有效 K 线窗口**：对均线、均量、ATR 等指标按该股票真实可交易 K 线计数，
+  已知停牌日跳过并向前补足，但不扩大市场事件窗口。
+
+窗口使用已同步的权威交易日历计算：
 
 ```text
 所需交易日 = 最大规则窗口 + ALPHADESK_SCREENING_WARMUP_BUFFER_SESSIONS
 ```
 
-默认预热缓冲为 10 个交易日。涨停回踩额外需要可靠的涨跌停语义；底部放倍量只准备
-区间高低价、均量、量比和阳线特征，不会重建无关指标。
+默认预热缓冲为 10 个交易日，逐股向前补足上限默认为 60 个市场交易日。涨停回踩额外
+需要可靠的涨跌停语义；底部放倍量只准备区间高低价、均量、量比和阳线特征，不会重建
+无关指标。
 
 ## 增量补数与幂等
 
@@ -48,9 +56,11 @@ ScreeningSpec
 准备统计、请求时间和 READY 股票范围持久化在 `scan_runs.execution_stats`；相同幂等键
 和相同请求返回原任务。
 
-MiniQMT 返回后 Worker 再次读取 PostgreSQL，而不是信任队列返回值。仍有缺口的股票
-标为 `PROVIDER_FAILED`，其他股票继续执行。高级选项“仅使用当前已有数据运行”会跳过
-下载，并把不完整股票标为 `INSUFFICIENT_HISTORY`。
+MiniQMT 返回后 Worker 再次读取 PostgreSQL，而不是信任队列返回值。补数后仍缺少真实
+开放日 K 线的股票标为 `DATA_GAP`；只有 MiniQMT 请求明确失败的股票才标为
+`PROVIDER_FAILED`。若大量股票集中缺少同一个日期，系统先标记 `CALENDAR_MISMATCH`
+并停止对该日期重复补数。其他股票继续执行。高级选项“仅使用当前已有数据运行”会跳过
+下载，并按具体原因分类。
 
 ## 单股就绪状态
 
@@ -58,8 +68,13 @@ MiniQMT 返回后 Worker 再次读取 PostgreSQL，而不是信任队列返回�
 - `INSUFFICIENT_HISTORY`：当前已有数据不足且未请求补数；
 - `REFERENCE_DATA_MISSING`：缺少必要的复权或参考事实；
 - `QUALITY_FAILED`：重复 Bar 或数据质量错误；
-- `PROVIDER_FAILED`：请求失败或补数后仍不完整；
-- `NOT_APPLICABLE`：上市历史不足等点时不适用情况；
+- `PROVIDER_FAILED`：MiniQMT 请求明确失败；
+- `DATA_GAP`：应有开放日仍缺少 K 线；
+- `CALENDAR_MISMATCH`：大量股票集中缺少同一“开放日”，疑似日历错误；
+- `CURRENTLY_SUSPENDED`：筛选日当前停牌，有足够历史可审计计算但不输出当日候选；
+- `STALE_DATA`：长期无新 K 线且超过允许阈值；
+- `NOT_APPLICABLE` / `LISTING_HISTORY_TOO_SHORT`：新股尚未积累规则要求的最小历史；
+- `DELISTED`：筛选日已经退市；
 - `INDETERMINATE`：规则计算时无法获得可靠涨停价等事实。
 
 只有 READY 股票进入条件计算。“已进入条件计算”不再包含数据不足或 Provider 失败
@@ -75,14 +90,19 @@ POST /api/v1/research/screenings/{id}/retry-failed
 ```
 
 创建请求可传 `use_existing_data_only=true`。进度返回当前阶段、中文动作、总数、READY、
-下载中、数据不足、不可判定、Provider 失败、质量失败、已计算、命中、百分比和耗时。
+下载中、新股历史不足、当前停牌、长期无行情、真实开放日缺口、日历异常、不可判定、
+Provider 失败、质量失败、已计算、命中、百分比和耗时。
+补数阶段另外返回当前运行的总批次、已处理批次、Redis 待处理批次、下载百分比和预计
+剩余时间。该下载进度只统计 `scan_run_id` 与当前选股运行一致的 MiniQMT 请求，不混入
+其他扫描或维护任务；最后一个批次被 Agent 领取后，在 PostgreSQL 写入和完整性复检完成前
+最多显示 99%，避免把“队列已取完”误报成“数据已全部可用”。
 重试会创建新的、只包含失败股票的可审计任务，不修改原任务。
 
 ## 持久化与迁移
 
-Migration `0026_sc02d_screening_data_preparation` 扩展 `scan_runs.status` 长度和状态约束，
-并扩展 `scan_run_members.status`。数据计划与准备快照使用现有 JSONB 审计字段，避免为
-可重建的派生特征新增事实表。
+Migration `0026_sc02d_screening_data_preparation` 扩展 `scan_runs.status` 长度和状态约束；
+CAL01-R 的 `0027_cal01r_screening_calendar_semantics` 扩展逐股状态约束。数据计划与准备
+快照使用现有 JSONB 审计字段，避免为可重建的派生特征新增事实表。
 
 ## 安全边界
 
@@ -90,7 +110,13 @@ Migration `0026_sc02d_screening_data_preparation` 扩展 `scan_runs.status` 长�
 队列发送只读请求。它不读取账户、资金、持仓、委托或成交，不导入交易 SDK，不创建
 Signal、RiskDecision、Order 或 Fill，不下单、不撤单，也不修改账本。
 
-## 本地验收记录
+## 重试、幂等与审计
+
+同一任务不会因重试而删除或覆盖旧记录。重试只针对真实缺口、明确 Provider 失败、陈旧
+数据或修正后的日历异常；关闭日、已知停牌日、上市前和退市后日期永远不进入补数队列。
+计划快照会保存具体市场交易日列表、扩展窗口、分类计数和日历异常日期，便于复盘。
+
+## 历史验收记录
 
 2026-07-28 在正式 PostgreSQL、Redis、API、Web 和 Scanner Worker 上分别运行了
 “涨停回踩”和“底部放倍量”。两个任务均使用本地 MiniQMT 正式行情事实，未启用 Fixture：
@@ -100,7 +126,6 @@ Signal、RiskDecision、Order 或 Fill，不下单、不撤单，也不修改账
 - 底部放倍量：全市场 5,531 只，规划 71 个交易日，识别 5,500 只需要补数、
   31 只不适用，总耗时 8,358ms。
 
-验收时 MiniQMT Agent 状态为 `NOT_CONFIGURED`，因此仅使用当前数据完成了计划、覆盖、
-参考数据、质量和终态分类验证，没有把未下载股票或空结果冒充成功。自动增量补数已经由
-专项测试覆盖，但全市场真实下载、补数后 READY 与真实入选结果仍须在 MiniQMT 可登录且
-Agent 在线时复验。这是外部运行条件限制，不改变只读安全边界。
+该记录是 CAL01-R 之前的基线。随后发现旧 Fixture 日历把 2026-06-19 误标为开放日，
+导致 4,396 只股票同时被误判为 Provider 失败。CAL01-R 已把它修正为端午节休市日，
+并增加上述双窗口与分类语义；最终真实环境复验结果应记录在本任务验收报告中。

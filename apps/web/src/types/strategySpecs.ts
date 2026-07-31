@@ -92,5 +92,121 @@ export interface QuickBacktestRequest {
   transfer_fee_rate: string;
   slippage_basis_points: string;
   maximum_volume_participation: string | null;
+  execution_price_mode:
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE";
+  position_size_ratio: string | null;
+  maximum_entry_gap_ratio: string | null;
+  time_in_force: "DAY" | "GTC";
   idempotency_key: string;
+}
+
+export type BacktestScope = "SINGLE" | "WATCHLIST" | "ALL_A_SHARES";
+
+export interface BacktestBatchRequest extends Omit<
+  QuickBacktestRequest,
+  "instrument_id" | "price_adjustment_mode"
+> {
+  scope: Exclude<BacktestScope, "SINGLE">;
+  watchlist_id: string | null;
+  exclude_st: boolean;
+  exclude_bse: boolean;
+  exclude_star_market: boolean;
+  exclude_chinext: boolean;
+}
+
+export interface BacktestBatch {
+  id: string;
+  name: string;
+  scope: Exclude<BacktestScope, "SINGLE">;
+  watchlist_id: string | null;
+  status:
+    | "CREATED"
+    | "RUNNING"
+    | "COMPLETED"
+    | "PARTIAL_FAILED"
+    | "FAILED"
+    | "CANCELLED";
+  total_count: number;
+  pending_count: number;
+  running_count: number;
+  completed_count: number;
+  failed_count: number;
+  cancelled_count: number;
+  progress_percent: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  filters?: {
+    exclude_st?: boolean;
+    exclude_bse?: boolean;
+    exclude_star_market?: boolean;
+    exclude_chinext?: boolean;
+  };
+}
+
+export interface BacktestBatchResult {
+  item_id: string;
+  instrument_id: string;
+  symbol: string;
+  exchange: string;
+  name: string;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  backtest_run_id: string | null;
+  total_return: string | null;
+  annualized_return: string | null;
+  maximum_drawdown: string | null;
+  sharpe_ratio: string | null;
+  fill_count: number | null;
+  error_code: string | null;
+  error_message: string | null;
+}
+
+export interface BacktestBatchDistribution {
+  count: number;
+  average: string | null;
+  median: string | null;
+  p25: string | null;
+  p50: string | null;
+  p75: string | null;
+}
+
+export interface BacktestBatchHistogramBucket {
+  minimum: number;
+  maximum: number;
+  count: number;
+}
+
+export interface BacktestBatchSummary {
+  batch: BacktestBatch;
+  notice: string;
+  counts: {
+    total: number;
+    completed: number;
+    failed: number;
+    traded: number;
+    profitable: number;
+  };
+  ratios: {
+    traded: string | null;
+    profitable: string | null;
+  };
+  returns: BacktestBatchDistribution;
+  drawdowns: BacktestBatchDistribution;
+  sharpe_distribution: BacktestBatchHistogramBucket[];
+  fill_distribution: BacktestBatchHistogramBucket[];
+  return_histogram: BacktestBatchHistogramBucket[];
+  return_drawdown_scatter: Array<{
+    instrument_id: string;
+    instrument_display: string;
+    total_return: string;
+    maximum_drawdown: string;
+  }>;
+  top: Array<BacktestBatchResult & { instrument_display: string }>;
+  bottom: Array<BacktestBatchResult & { instrument_display: string }>;
+  failure_reasons: Array<{ code: string; count: number }>;
 }

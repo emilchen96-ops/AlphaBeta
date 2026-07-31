@@ -56,6 +56,26 @@ def test_legacy_d02_migration_adds_adjustment_mode_and_recomputes_fingerprint() 
     assert fingerprint == backtest_request_fingerprint(backtest_configuration_from_dict(repaired))
 
 
+def test_bt01_execution_migration_adds_legacy_policy_and_recomputes_fingerprint() -> None:
+    migration_path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "0028_bt01_execution_price_policy.py"
+    )
+    migration = runpy.run_path(str(migration_path))
+    repair = migration["repair_legacy_configuration"]
+    value = backtest_configuration_to_dict(configuration())
+    value.pop("execution_price_mode")
+    value.pop("maximum_entry_gap_ratio")
+
+    repaired, fingerprint = repair(value)
+
+    assert repaired["execution_price_mode"] == "NEXT_OPEN"
+    assert repaired["maximum_entry_gap_ratio"] is None
+    assert fingerprint == backtest_request_fingerprint(backtest_configuration_from_dict(repaired))
+
+
 def test_backtest_list_projection_tolerates_one_bad_fingerprint(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

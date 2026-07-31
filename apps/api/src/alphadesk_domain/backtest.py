@@ -23,7 +23,7 @@ from alphadesk_domain.values import as_utc, decimal_value, non_empty, utc_now
 ZERO = Decimal("0")
 ONE = Decimal("1")
 TRADING_SESSIONS_PER_YEAR = Decimal("252")
-BACKTEST_ENGINE_VERSION = "bt01-v1"
+BACKTEST_ENGINE_VERSION = "bt01-v2"
 ASHARE_TIMEZONE = ZoneInfo("Asia/Shanghai")
 EIGHT_PLACES = Decimal("0.00000001")
 TWELVE_PLACES = Decimal("0.000000000001")
@@ -64,6 +64,14 @@ class BacktestEventType(StrEnum):
     WARNING = "WARNING"
     RUN_COMPLETED = "RUN_COMPLETED"
     RUN_FAILED = "RUN_FAILED"
+
+
+class BacktestExecutionPriceMode(StrEnum):
+    """How a signal becomes an executable historical order."""
+
+    SIGNAL_CLOSE_LIMIT = "SIGNAL_CLOSE_LIMIT"
+    NEXT_OPEN = "NEXT_OPEN"
+    SAME_DAY_NEXT_MINUTE = "SAME_DAY_NEXT_MINUTE"
 
 
 def _non_negative(value: Decimal, name: str) -> Decimal:
@@ -160,6 +168,9 @@ class BacktestConfiguration:
     initial_cash: Decimal
     order_type: OrderType = OrderType.MARKET
     time_in_force: TimeInForce = TimeInForce.DAY
+    execution_price_mode: BacktestExecutionPriceMode | None = None
+    position_size_ratio: Decimal | None = None
+    maximum_entry_gap_ratio: Decimal | None = Decimal("0.05")
     fee_configuration: AshareSimpleFeeModel = field(default_factory=AshareSimpleFeeModel)
     slippage_configuration: FixedBasisPointsSlippageModel = field(
         default_factory=lambda: FixedBasisPointsSlippageModel(basis_points=ZERO)
@@ -177,6 +188,12 @@ class BacktestConfiguration:
     def __post_init__(self) -> None:
         strategy_key = non_empty(self.strategy_key, "strategy_key")
         strategy_version = non_empty(self.strategy_version, "strategy_version")
+        execution_price_mode = self.execution_price_mode or (
+            BacktestExecutionPriceMode.NEXT_OPEN
+            if self.order_type is OrderType.MARKET
+            else BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+        )
+        object.__setattr__(self, "execution_price_mode", execution_price_mode)
         if self.environment is not StrategyEnvironment.BACKTEST:
             raise BacktestError("BACKTEST_INVALID_CONFIGURATION", "environment must be BACKTEST")
         if self.timeframe is not MarketTimeframe.DAY_1:
@@ -185,6 +202,60 @@ class BacktestConfiguration:
             raise BacktestError(
                 "BACKTEST_INVALID_CONFIGURATION", "BT01 only supports DAY or GTC orders"
             )
+        if (
+            execution_price_mode
+            in (
+                BacktestExecutionPriceMode.NEXT_OPEN,
+                BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+            )
+            and self.order_type is not OrderType.MARKET
+        ):
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION",
+                (
+                    "NEXT_OPEN execution requires a MARKET order"
+                    if execution_price_mode is BacktestExecutionPriceMode.NEXT_OPEN
+                    else "SAME_DAY_NEXT_MINUTE execution requires a MARKET order"
+                ),
+            )
+        if (
+            execution_price_mode is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+            and self.order_type is not OrderType.LIMIT
+        ):
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION",
+                "SIGNAL_CLOSE_LIMIT execution requires a LIMIT order",
+            )
+        if (
+            execution_price_mode is BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE
+            and self.strategy_price_adjustment_mode is not PriceAdjustmentMode.RAW
+        ):
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION",
+                "same-day minute execution currently requires RAW prices",
+            )
+        if self.maximum_entry_gap_ratio is not None:
+            decimal_value(self.maximum_entry_gap_ratio, "maximum_entry_gap_ratio")
+            if not ZERO <= self.maximum_entry_gap_ratio <= ONE:
+                raise BacktestError(
+                    "BACKTEST_INVALID_CONFIGURATION",
+                    "maximum_entry_gap_ratio must be in [0, 1]",
+                )
+        if self.position_size_ratio is not None:
+            decimal_value(self.position_size_ratio, "position_size_ratio")
+            if not ZERO < self.position_size_ratio <= ONE:
+                raise BacktestError(
+                    "BACKTEST_INVALID_CONFIGURATION",
+                    "position_size_ratio must be in (0, 1]",
+                )
+            if execution_price_mode not in (
+                BacktestExecutionPriceMode.NEXT_OPEN,
+                BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+            ):
+                raise BacktestError(
+                    "BACKTEST_INVALID_CONFIGURATION",
+                    "position sizing requires NEXT_OPEN or SAME_DAY_NEXT_MINUTE execution",
+                )
         start_at = as_utc(self.start_at, "start_at")
         end_at = as_utc(self.end_at, "end_at")
         if start_at >= end_at:
@@ -261,6 +332,10 @@ def backtest_request_fingerprint(configuration: BacktestConfiguration) -> str:
     """Return a stable SHA-256 over every execution-affecting configuration field."""
 
     payload = _canonical_value(configuration)
+    # Keep fingerprints for pre-position-sizing runs stable.  Those runs did not
+    # persist this optional key and continue to mean "use the strategy quantity".
+    if isinstance(payload, dict) and payload.get("position_size_ratio") is None:
+        payload.pop("position_size_ratio", None)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -279,6 +354,8 @@ def backtest_configuration_to_dict(configuration: BacktestConfiguration) -> dict
     value = _canonical_value(configuration)
     if not isinstance(value, dict):
         raise TypeError("canonical backtest configuration must be an object")
+    if value.get("position_size_ratio") is None:
+        value.pop("position_size_ratio", None)
     return value
 
 
@@ -342,6 +419,28 @@ def backtest_configuration_from_dict(value: Mapping[str, Any]) -> BacktestConfig
         initial_cash=Decimal(str(value["initial_cash"])),
         order_type=OrderType(str(value["order_type"])),
         time_in_force=TimeInForce(str(value["time_in_force"])),
+        execution_price_mode=BacktestExecutionPriceMode(
+            str(
+                value.get(
+                    "execution_price_mode",
+                    (
+                        "NEXT_OPEN"
+                        if str(value["order_type"]) == OrderType.MARKET.value
+                        else "SIGNAL_CLOSE_LIMIT"
+                    ),
+                )
+            )
+        ),
+        position_size_ratio=(
+            None
+            if value.get("position_size_ratio") is None
+            else Decimal(str(value["position_size_ratio"]))
+        ),
+        maximum_entry_gap_ratio=(
+            None
+            if value.get("maximum_entry_gap_ratio") is None
+            else Decimal(str(value["maximum_entry_gap_ratio"]))
+        ),
         fee_configuration=AshareSimpleFeeModel(
             commission_rate=Decimal(str(fee["commission_rate"])),
             minimum_commission=Decimal(str(fee["minimum_commission"])),

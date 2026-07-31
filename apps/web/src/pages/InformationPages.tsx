@@ -10,6 +10,7 @@ import {
   Input,
   Select,
   Space,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -28,6 +29,7 @@ import {
 import { getInstruments } from "../api/market";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { InformationDetail } from "../types/information";
+import { displayEnum } from "../utils/display";
 
 const eventTypes = [
   "COMPANY_ANNOUNCEMENT",
@@ -90,9 +92,12 @@ function FactTable({
         { title: "来源", render: (_, item) => item.source.display_name },
         {
           title: "事件类型",
-          render: (_, item) => <Tag>{item.event_type}</Tag>,
+          render: (_, item) => <Tag>{displayEnum(item.event_type)}</Tag>,
         },
-        { title: "方向", render: (_, item) => <Tag>{item.direction}</Tag> },
+        {
+          title: "方向",
+          render: (_, item) => <Tag>{displayEnum(item.direction)}</Tag>,
+        },
         {
           title: "标的 / 主题",
           render: (_, item) => (
@@ -130,7 +135,11 @@ function FactTable({
   );
 }
 
-export function InformationCenterPage() {
+export function InformationCenterPage({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const [form] = Form.useForm<ManualValues>();
@@ -140,6 +149,7 @@ export function InformationCenterPage() {
   const [sourceId, setSourceId] = useState<string>();
   const [instrumentId, setInstrumentId] = useState<string>();
   const [themeKey, setThemeKey] = useState("");
+  const [showDemo, setShowDemo] = useState(false);
   const sources = useQuery({
     queryKey: ["information-sources"],
     queryFn: getInformationSources,
@@ -199,10 +209,12 @@ export function InformationCenterPage() {
   };
   return (
     <section>
-      <PageHeader
-        title="资讯事件中心"
-        description="保留原始来源、规范内容、事件与关联的事实层。"
-      />
+      {!embedded ? (
+        <PageHeader
+          title="调研资料"
+          description="管理 AI 调研使用的原始资料、来源链接和关联对象。"
+        />
+      ) : null}
       {disclaimer}
       <Space wrap style={{ marginTop: 16 }}>
         <Button
@@ -210,10 +222,7 @@ export function InformationCenterPage() {
           icon={<PlusOutlined />}
           onClick={() => setShowForm((value) => !value)}
         >
-          手工录入
-        </Button>
-        <Button onClick={() => void navigate("/market-events")}>
-          市场事件
+          添加调研资料
         </Button>
         <Input.Search
           placeholder="搜索标题与正文"
@@ -251,9 +260,13 @@ export function InformationCenterPage() {
           onChange={(event) => setThemeKey(event.target.value)}
           style={{ width: 140 }}
         />
+        <Space>
+          <Switch checked={showDemo} onChange={setShowDemo} />
+          <Typography.Text>显示演示/测试资料</Typography.Text>
+        </Space>
       </Space>
       {showForm ? (
-        <Card title="手工录入资讯" style={{ marginTop: 16 }}>
+        <Card title="添加调研资料" style={{ marginTop: 16 }}>
           <Form
             form={form}
             layout="vertical"
@@ -318,7 +331,13 @@ export function InformationCenterPage() {
       ) : null}
       <Card style={{ marginTop: 16 }}>
         <FactTable
-          items={items.data?.items ?? []}
+          items={(items.data?.items ?? []).filter(
+            (item) =>
+              showDemo ||
+              !/demo|fixture|测试|演示|u01|a01/i.test(
+                `${item.title} ${item.source.display_name}`,
+              ),
+          )}
           onOpen={(id) => void navigate(`/information/${id}`)}
         />
       </Card>

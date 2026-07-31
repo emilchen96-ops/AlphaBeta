@@ -173,8 +173,123 @@ test("一句话策略可以确认并提交到完整快速回测入口", async ()
   expect(submitted).toMatchObject({
     instrument_id: "11111111-1111-4111-8111-111111111111",
     initial_cash: "100000",
-    price_adjustment_mode: "QFQ",
+    price_adjustment_mode: "RAW",
+    minimum_commission: "5",
+    execution_price_mode: "NEXT_OPEN",
+    position_size_ratio: "1",
+    maximum_entry_gap_ratio: "0.05",
+    time_in_force: "DAY",
     spec,
   });
   expect(submitted).not.toHaveProperty("user_strategy_id");
+}, 90_000);
+
+test("自选组合会创建逐只独立回测的后台任务", async () => {
+  let submitted: Record<string, unknown> | null = null;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      let body: unknown = healthyStatus;
+      let status = 200;
+      if (url.includes("/system/capabilities")) {
+        body = {
+          generated_at: "",
+          database_reachable: true,
+          counts: {},
+          items: [],
+        };
+      } else if (url.includes("/strategy-templates")) {
+        body = [];
+      } else if (url.includes("/user-strategies")) {
+        body = { items: [], page: 1, page_size: 100, total: 0 };
+      } else if (url.endsWith("/watchlists")) {
+        body = [
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "成长股组合",
+            description: null,
+            realtime_enabled: false,
+            created_at: "",
+            updated_at: "",
+          },
+        ];
+      } else if (url.includes("/instruments?")) {
+        body = { items: [], page: 1, page_size: 50, total: 0 };
+      } else if (url.endsWith("/strategy-specs/parse")) {
+        body = {
+          status: "COMPLETE",
+          parser_source: "LOCAL_RULES",
+          spec,
+          preview: ["买入规则", "卖出规则"],
+          warnings: [],
+          missing_fields: [],
+          ai_assistance: "DISABLED",
+        };
+      } else if (url.endsWith("/strategy-specs/validate")) {
+        body = {
+          valid: true,
+          spec,
+          preview: ["买入规则", "卖出规则"],
+          compiled_strategy_key: "user_spec_test",
+        };
+      } else if (url.endsWith("/research/backtest-batches")) {
+        submitted = JSON.parse(
+          typeof init?.body === "string" ? init.body : "{}",
+        ) as Record<string, unknown>;
+        body = {
+          id: "44444444-4444-4444-8444-444444444444",
+          name: "自选组合独立回测",
+          scope: "WATCHLIST",
+          status: "CREATED",
+          total_count: 3,
+          pending_count: 3,
+          running_count: 0,
+          completed_count: 0,
+          failed_count: 0,
+          cancelled_count: 0,
+          progress_percent: 0,
+          created_at: "",
+          updated_at: "",
+        };
+        status = 202;
+      }
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }),
+  );
+
+  renderRoute("/research/backtest");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /解析策略$/ }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "确认并使用" }),
+  );
+  await userEvent.click(screen.getByText("一个自选组合"));
+  await userEvent.click(screen.getByRole("combobox", { name: "自选组合" }));
+  await userEvent.click(await screen.findByText("成长股组合"));
+  await userEvent.click(
+    screen.getByRole("button", { name: /创建批量回测任务$/ }),
+  );
+
+  await waitFor(() => expect(submitted).not.toBeNull());
+  expect(submitted).toMatchObject({
+    scope: "WATCHLIST",
+    watchlist_id: "33333333-3333-4333-8333-333333333333",
+    exclude_st: true,
+    initial_cash: "100000",
+    position_size_ratio: "1",
+    minimum_commission: "5",
+    spec,
+  });
+  expect(submitted).not.toHaveProperty("instrument_id");
+  expect(submitted).not.toHaveProperty("price_adjustment_mode");
 }, 90_000);

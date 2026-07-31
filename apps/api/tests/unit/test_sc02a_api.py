@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,6 +89,14 @@ class DatabaseStub:
 
     def unit_of_work(self) -> FakeUow:
         return FakeUow(self.store)
+
+
+class RedisClient:
+    def __init__(self) -> None:
+        self.history_requests: list[str] = []
+
+    async def lrange(self, _key: str, _start: int, _end: int) -> list[str]:
+        return list(self.history_requests)
 
 
 class Probe:
@@ -187,6 +196,42 @@ def test_create_is_async_durable_idempotent_and_queryable(
     progress = client.get(f"/api/v1/research/screenings/{body['screening_id']}/progress")
     assert detail.status_code == progress.status_code == 200
     assert progress.json()["status"] == "QUEUED"
+    assert progress.json()["backfill_total_batches"] == 0
+    assert progress.json()["backfill_progress_percent"] is None
+
+
+def test_progress_reports_only_current_screening_backfill_batches(
+    screening_client: tuple[TestClient, Store],
+) -> None:
+    client, store = screening_client
+    created = client.post("/api/v1/research/screenings", json=payload()).json()
+    run_id = UUID(created["screening_id"])
+    run = store.runs[run_id]
+    run.execution_stats = {
+        "data_preparation": {
+            "stage": "BACKFILLING_MARKET_DATA",
+            "queued_batch_count": 4,
+            "downloading_count": 120,
+        }
+    }
+    store.runs[run_id] = run
+    redis = RedisClient()
+    client.app.state.redis.client = redis
+    redis.history_requests = [
+        json.dumps({"scan_run_id": str(run_id), "request_id": "current-1"}),
+        json.dumps({"scan_run_id": str(run_id), "request_id": "current-2"}),
+        json.dumps({"scan_run_id": str(UUID(int=1)), "request_id": "other"}),
+    ]
+
+    response = client.get(f"/api/v1/research/screenings/{run_id}/progress")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["backfill_total_batches"] == 4
+    assert body["backfill_pending_batches"] == 2
+    assert body["backfill_processed_batches"] == 2
+    assert body["backfill_progress_percent"] == 50
+    assert body["backfill_estimated_remaining_seconds"] == 60
 
 
 @pytest.mark.parametrize(

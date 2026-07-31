@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     allow_test_market_data: bool = False
     tushare_enabled: bool = False
     tushare_token: SecretStr | None = None
-    market_calendar_provider: Literal["fixture", "tushare"] = "fixture"
+    market_calendar_provider: Literal["verified", "fixture", "tushare"] = "verified"
     market_adjustment_provider: Literal["fixture", "tushare"] = "fixture"
     market_suspension_provider: Literal["fixture", "tushare"] = "fixture"
     free_market_data_enabled: bool = False
@@ -116,10 +116,15 @@ class Settings(BaseSettings):
     scanner_backfill_wait_seconds: int = Field(default=120, ge=0, le=3600)
     scanner_scan_batch_size: int = Field(default=250, ge=1, le=1000)
     screening_warmup_buffer_sessions: int = Field(default=10, ge=0, le=250)
+    screening_max_extension_sessions: int = Field(default=60, ge=0, le=500)
+    screening_max_stale_sessions: int = Field(default=20, ge=1, le=250)
     strategy_experiment_max_combinations: int = Field(default=50, ge=1, le=50)
     backtest_max_instruments: int = Field(default=20, ge=1, le=200)
     backtest_max_bars: int = Field(default=100_000, ge=1, le=2_000_000)
     backtest_max_sessions: int = Field(default=5_000, ge=1, le=20_000)
+    backtest_batch_max_instruments: int = Field(default=6_000, ge=1, le=10_000)
+    backtest_batch_worker_poll_ms: int = Field(default=500, ge=100, le=60_000)
+    backtest_batch_item_stale_seconds: int = Field(default=1_800, ge=60, le=86_400)
     replay_interval_x1_ms: int = Field(default=1000, ge=100, le=60_000)
     replay_interval_x10_ms: int = Field(default=250, ge=25, le=10_000)
     replay_interval_x100_ms: int = Field(default=50, ge=10, le=1_000)

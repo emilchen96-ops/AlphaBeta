@@ -31,10 +31,10 @@ const menuItems = [
   {
     key: "/research/backtest",
     icon: <ExperimentOutlined />,
-    label: "策略研究",
+    label: "策略回测",
   },
-  { key: "/information", icon: <NotificationOutlined />, label: "资讯研究" },
-  { key: "/research/history", icon: <HistoryOutlined />, label: "研究记录" },
+  { key: "/ai-research", icon: <NotificationOutlined />, label: "AI调研" },
+  { key: "/research/archive", icon: <HistoryOutlined />, label: "研究档案" },
   {
     key: "/market-data-center",
     icon: <DatabaseOutlined />,
@@ -60,7 +60,11 @@ function selectedMenuKey(pathname: string) {
   ) {
     return "/research/backtest";
   }
-  if (pathname.startsWith("/research/history")) return "/research/history";
+  if (
+    pathname.startsWith("/research/history") ||
+    pathname.startsWith("/research/archive")
+  )
+    return "/research/archive";
   if (pathname.startsWith("/watchlists")) return "/watchlists";
   if (
     [
@@ -71,7 +75,7 @@ function selectedMenuKey(pathname: string) {
       "/research-insights",
     ].some((prefix) => pathname.startsWith(prefix))
   ) {
-    return "/information";
+    return "/ai-research";
   }
   if (pathname.startsWith("/scan-runs")) return "/scanners";
   if (

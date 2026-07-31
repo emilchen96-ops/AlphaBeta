@@ -44,6 +44,7 @@ from alphadesk_api.application.strategy_runner import StrategyRunRequest
 from alphadesk_api.application.system_capabilities import CapabilityDataProvider
 from alphadesk_api.core.config import Settings
 from alphadesk_domain.ai_research import AIAnalysisType, FakeAIResearchProvider
+from alphadesk_domain.backtest import BacktestExecutionPriceMode
 from alphadesk_domain.broker import (
     AshareSimpleFeeModel,
     FixedBasisPointsSlippageModel,
@@ -335,6 +336,8 @@ class ResearchDemoInitializationService:
                 initial_cash=Decimal("100000"),
                 order_type=OrderType.LIMIT,
                 time_in_force=TimeInForce.DAY,
+                execution_price_mode=BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT,
+                maximum_entry_gap_ratio=None,
                 fee_configuration=AshareSimpleFeeModel(),
                 slippage_configuration=FixedBasisPointsSlippageModel(basis_points=Decimal("2")),
                 maximum_volume_participation=Decimal("0.1"),

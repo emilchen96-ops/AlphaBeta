@@ -109,7 +109,7 @@ const backtestFailureText: Record<
   MARKET_ADJUSTMENT_FACTOR_NOT_AVAILABLE: {
     title: "前复权数据尚未准备完成",
     description:
-      "当前股票缺少所选区间的前复权因子。请先在数据中心补齐复权因子，或在高级设置中改用“不复权”后重新回测。",
+      "这是一条旧版前复权回测提示。新版回测已固定使用不复权行情，请返回快速回测重新运行。",
   },
   BACKTEST_DATA_NOT_READY: {
     title: "历史行情尚未准备完成",
@@ -121,6 +121,11 @@ const backtestFailureText: Record<
     description:
       "本地数据库中没有该股票在所选区间的日线，请先补齐数据或调整回测区间。",
   },
+  BACKTEST_MINUTE_DATA_NOT_READY: {
+    title: "当日尾盘模式所需的分钟行情不完整",
+    description:
+      "该模式必须使用本地1分钟行情，并要求每天至少覆盖14:54至14:55之后。请先补齐分钟行情，或改用推荐的“下一交易日开盘成交”。",
+  },
 };
 
 function BoundaryNotice() {
@@ -129,7 +134,7 @@ function BoundaryNotice() {
       showIcon
       type="warning"
       title="历史回测边界"
-      description="回测结果不代表未来收益。T 日收盘信号只会在下一根可用日线的开盘阶段尝试执行；当前不使用实时行情、不连接券商、不会产生真实交易。费用与滑点均为模拟配置，部分公司行为可能未完整还原，暂不支持分钟或逐笔（Tick）回测，研究信号（Signal）也不是实时投资建议。"
+      description="回测结果不代表未来收益。默认模式在T日收盘确认信号，并于下一交易日开盘尝试执行；当日尾盘模式只使用14:55前已经形成的本地分钟行情，并在随后一分钟尝试执行。系统不连接券商、不会产生真实交易，研究信号也不是实时投资建议。"
     />
   );
 }
@@ -212,8 +217,14 @@ interface BacktestFormValues {
   start_at: string;
   end_at: string;
   initial_cash: string;
+  position_size_percent: string;
   order_type: "MARKET" | "LIMIT";
   time_in_force: "DAY" | "GTC";
+  execution_price_mode:
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE";
+  maximum_entry_gap_percent?: string | null;
   commission_rate: string;
   minimum_commission: string;
   stamp_duty_rate: string;
@@ -221,12 +232,19 @@ interface BacktestFormValues {
   slippage_basis_points: string;
   maximum_volume_participation?: string | null;
   idempotency_key?: string;
-  strategy_price_adjustment_mode: "RAW" | "QFQ";
   parameters?: Record<string, string | number | boolean>;
 }
 
 function newIdempotencyKey() {
   return `backtest:${crypto.randomUUID()}`;
+}
+
+function formNumberOrDefault(
+  value: string | null | undefined,
+  fallback: string,
+) {
+  const normalized = value?.trim();
+  return Number(normalized || fallback);
 }
 
 export function BacktestPage() {
@@ -236,6 +254,7 @@ export function BacktestPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const selectedKey = Form.useWatch("strategy_key", form);
+  const formExecutionPriceMode = Form.useWatch("execution_price_mode", form);
   const catalog = useQuery({
     queryKey: ["strategy-catalog"],
     queryFn: getStrategyCatalog,
@@ -276,20 +295,43 @@ export function BacktestPage() {
       parameters,
       instrument_ids: values.instrument_ids,
       timeframe: "DAY_1",
-      strategy_price_adjustment_mode: values.strategy_price_adjustment_mode,
+      strategy_price_adjustment_mode: "RAW",
       start_at: new Date(values.start_at).toISOString(),
       end_at: new Date(values.end_at).toISOString(),
       initial_cash: String(values.initial_cash),
-      order_type: values.order_type,
+      position_size_ratio:
+        values.execution_price_mode !== "SIGNAL_CLOSE_LIMIT"
+          ? String(Number(values.position_size_percent) / 100)
+          : null,
+      order_type:
+        values.execution_price_mode !== "SIGNAL_CLOSE_LIMIT"
+          ? "MARKET"
+          : "LIMIT",
       time_in_force: values.time_in_force,
+      execution_price_mode: values.execution_price_mode,
+      maximum_entry_gap_ratio:
+        values.execution_price_mode !== "NEXT_OPEN" ||
+        !values.maximum_entry_gap_percent?.trim()
+          ? null
+          : String(Number(values.maximum_entry_gap_percent) / 100),
       fee_configuration: {
-        commission_rate: String(Number(values.commission_rate) / 100),
-        minimum_commission: String(values.minimum_commission),
-        stamp_duty_rate: String(Number(values.stamp_duty_rate) / 100),
-        transfer_fee_rate: String(Number(values.transfer_fee_rate) / 100),
+        commission_rate: String(
+          formNumberOrDefault(values.commission_rate, "0.03") / 100,
+        ),
+        minimum_commission: String(
+          formNumberOrDefault(values.minimum_commission, "5"),
+        ),
+        stamp_duty_rate: String(
+          formNumberOrDefault(values.stamp_duty_rate, "0.05") / 100,
+        ),
+        transfer_fee_rate: String(
+          formNumberOrDefault(values.transfer_fee_rate, "0.001") / 100,
+        ),
       },
       slippage_configuration: {
-        basis_points: String(values.slippage_basis_points),
+        basis_points: String(
+          formNumberOrDefault(values.slippage_basis_points, "2"),
+        ),
         maximum_slippage: null,
       },
       maximum_volume_participation: !values.maximum_volume_participation?.trim()
@@ -340,8 +382,11 @@ export function BacktestPage() {
           layout="vertical"
           initialValues={{
             initial_cash: "100000",
-            order_type: "LIMIT",
+            position_size_percent: "100",
+            order_type: "MARKET",
             time_in_force: "DAY",
+            execution_price_mode: "NEXT_OPEN",
+            maximum_entry_gap_percent: "5",
             commission_rate: "0.03",
             minimum_commission: "5",
             stamp_duty_rate: "0.05",
@@ -349,7 +394,6 @@ export function BacktestPage() {
             slippage_basis_points: "2",
             maximum_volume_participation: "10",
             idempotency_key: newIdempotencyKey(),
-            strategy_price_adjustment_mode: "RAW",
           }}
         >
           <Row gutter={16}>
@@ -365,21 +409,6 @@ export function BacktestPage() {
                     value: item.strategy_key,
                     label: `${displayStrategy(item.strategy_key)} · ${item.version}`,
                   }))}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={8}>
-              <Form.Item
-                name="strategy_price_adjustment_mode"
-                label="策略价格复权模式"
-                tooltip="仅影响策略输入和研究信号；开盘成交、费用与账本始终使用不复权价格。"
-                rules={[{ required: true }]}
-              >
-                <Select
-                  options={[
-                    { value: "RAW", label: "不复权（RAW）" },
-                    { value: "QFQ", label: "前复权（QFQ，仅策略）" },
-                  ]}
                 />
               </Form.Item>
             </Col>
@@ -443,22 +472,65 @@ export function BacktestPage() {
                 <Input />
               </Form.Item>
             </Col>
-            <Col xs={12} md={3}>
-              <Form.Item name="order_type" label="订单类型">
+            <Col xs={24} md={6}>
+              <Form.Item
+                name="position_size_percent"
+                label="单次买入仓位（%）"
+                tooltip="按执行时可用资金比例计算买入金额，计入开盘价、滑点和费用后向下取整为 100 股整手；卖出信号默认清空可用持仓。"
+                rules={[{ required: true }]}
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={5}
+                  disabled={formExecutionPriceMode === "SIGNAL_CLOSE_LIMIT"}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={6}>
+              <Form.Item
+                name="execution_price_mode"
+                label="买入执行价格方式"
+                tooltip="默认在T日收盘确认后于下一交易日开盘执行；尾盘模式只使用14:55前已形成的分钟行情判断。"
+              >
                 <Select
                   options={[
-                    { value: "LIMIT", label: "限价单（LIMIT）" },
-                    { value: "MARKET", label: "市价单（MARKET）" },
+                    {
+                      value: "NEXT_OPEN",
+                      label: "下一交易日开盘价（推荐）",
+                    },
+                    {
+                      value: "SAME_DAY_NEXT_MINUTE",
+                      label: "当日尾盘（14:55判断，下一分钟）",
+                    },
+                    {
+                      value: "SIGNAL_CLOSE_LIMIT",
+                      label: "信号日收盘价限价（可能不成交）",
+                    },
                   ]}
                 />
               </Form.Item>
             </Col>
             <Col xs={12} md={3}>
-              <Form.Item name="time_in_force" label="订单有效期（TIF）">
+              <Form.Item
+                name="maximum_entry_gap_percent"
+                label="最大允许高开（%）"
+                tooltip="次日高开超过该幅度则不追高；留空表示不限制。"
+              >
+                <Input
+                  allowClear
+                  disabled={formExecutionPriceMode !== "NEXT_OPEN"}
+                  placeholder="例如 5"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={3}>
+              <Form.Item name="time_in_force" label="未成交后的处理">
                 <Select
                   options={[
-                    { value: "DAY", label: "当日有效（DAY）" },
-                    { value: "GTC", label: "撤销前有效（GTC）" },
+                    { value: "DAY", label: "当天取消（推荐）" },
+                    { value: "GTC", label: "继续等待" },
                   ]}
                 />
               </Form.Item>
@@ -471,19 +543,28 @@ export function BacktestPage() {
               className="backtest-nested-card"
             >
               <Row gutter={16}>
-                {strategy.parameters.map((definition) => (
-                  <Col xs={24} md={8} key={definition.name}>
-                    <Form.Item
-                      name={["parameters", definition.name]}
-                      label={displayParameter(definition.name)}
-                      tooltip={definition.description}
-                      initialValue={definition.default ?? undefined}
-                    >
-                      {parameterInput(definition)}
-                    </Form.Item>
-                  </Col>
-                ))}
+                {strategy.parameters
+                  .filter(
+                    (definition) =>
+                      definition.name !== "quantity" ||
+                      formExecutionPriceMode === "SIGNAL_CLOSE_LIMIT",
+                  )
+                  .map((definition) => (
+                    <Col xs={24} md={8} key={definition.name}>
+                      <Form.Item
+                        name={["parameters", definition.name]}
+                        label={displayParameter(definition.name)}
+                        tooltip={definition.description}
+                        initialValue={definition.default ?? undefined}
+                      >
+                        {parameterInput(definition)}
+                      </Form.Item>
+                    </Col>
+                  ))}
               </Row>
+              <Typography.Text type="secondary">
+                买入股数由上方“单次买入仓位”统一计算；卖出信号默认卖出该股票的全部可用持仓。
+              </Typography.Text>
             </Card>
           ) : null}
           <Card
@@ -494,10 +575,10 @@ export function BacktestPage() {
             <Row gutter={16}>
               {[
                 ["commission_rate", "佣金率（%）"],
-                ["minimum_commission", "最低佣金（元）"],
+                ["minimum_commission", "最低佣金（元，留空默认 5 元）"],
                 ["stamp_duty_rate", "印花税率（%）"],
                 ["transfer_fee_rate", "过户费率（%）"],
-                ["slippage_basis_points", "滑点（基点）"],
+                ["slippage_basis_points", "预计成交价偏差（滑点，基点）"],
               ].map(([name, label]) => (
                 <Col xs={24} sm={12} md={4} key={name}>
                   <Form.Item
@@ -512,8 +593,8 @@ export function BacktestPage() {
               <Col xs={24} sm={12} md={4}>
                 <Form.Item
                   name="maximum_volume_participation"
-                  label="最大成交量参与率（%，可空）"
-                  tooltip="留空表示不额外限制成交量参与率"
+                  label="单次最多占当日成交量（%，可空）"
+                  tooltip="避免假设单笔交易超过市场实际可成交数量；留空表示不额外限制。"
                 >
                   <Input allowClear placeholder="留空表示不限制" />
                 </Form.Item>
@@ -851,6 +932,14 @@ export function BacktestDetailPage() {
     );
   if (!detail.data) return <Empty description="回测不存在" />;
   const data = detail.data;
+  const runConfiguration = data.run.configuration ?? {};
+  const executionPriceMode = factText(
+    runConfiguration.execution_price_mode,
+    "SIGNAL_CLOSE_LIMIT",
+  );
+  const maximumEntryGapRatio = runConfiguration.maximum_entry_gap_ratio;
+  const positionSizeRatio = runConfiguration.position_size_ratio;
+  const unfilledPolicy = factText(runConfiguration.time_in_force, "DAY");
   const bars = chartBars.data?.items ?? [];
   const firstEquityAt = data.equity[0]?.timestamp;
   const lastEquityAt = data.equity.at(-1)?.timestamp;
@@ -896,7 +985,13 @@ export function BacktestDetailPage() {
   return (
     <section className="backtest-page">
       <PageHeader
-        title={`回测详情 · ${displayStrategy(data.run.strategy_key)}`}
+        title={`回测详情 · ${
+          data.run.display_name ??
+          `${data.run.instrument_display ?? "历史回测"} · ${
+            data.run.strategy_display_name ??
+            displayStrategy(data.run.strategy_key)
+          }`
+        }`}
         description="先看收益与风险，再按需展开交易和完整事实链。"
         action={
           <Space wrap>
@@ -934,7 +1029,7 @@ export function BacktestDetailPage() {
                 逐日查看
               </Link>
             ) : null}
-            <Link to="/research/history?tab=backtests">返回研究记录</Link>
+            <Link to="/research/archive?tab=backtests">返回研究档案</Link>
           </Space>
         }
       />
@@ -981,6 +1076,28 @@ export function BacktestDetailPage() {
           </Descriptions.Item>
           <Descriptions.Item label="创建时间">
             {formatDate(data.run.created_at)}
+          </Descriptions.Item>
+          <Descriptions.Item label="买入执行价格">
+            {executionPriceMode === "NEXT_OPEN"
+              ? "下一交易日开盘价（另计滑点）"
+              : executionPriceMode === "SAME_DAY_NEXT_MINUTE"
+                ? "14:55前可见数据判断，下一分钟开盘价"
+              : "信号日收盘价限价"}
+          </Descriptions.Item>
+          <Descriptions.Item label="单次买入仓位">
+            {positionSizeRatio === null || positionSizeRatio === undefined
+              ? "按旧策略固定股数"
+              : `${formatPercentRatio(factText(positionSizeRatio, "0"))}（按可用资金）`}
+          </Descriptions.Item>
+          <Descriptions.Item label="最大允许高开">
+            {maximumEntryGapRatio === null || maximumEntryGapRatio === undefined
+              ? "不限制"
+              : formatPercentRatio(factText(maximumEntryGapRatio, "0"))}
+          </Descriptions.Item>
+          <Descriptions.Item label="未成交处理">
+            {unfilledPolicy === "GTC"
+              ? "继续等待后续交易日"
+              : "当天未成交则取消"}
           </Descriptions.Item>
         </Descriptions>
         {data.run.error_code ? (
@@ -1058,21 +1175,43 @@ export function BacktestDetailPage() {
           </Card>
         </Col>
       </Row>
-      <Card title="K线买卖点" className="backtest-section">
+      <Card title="K线信号与实际成交" className="backtest-section">
         <CandlestickChart
           bars={bars}
           loading={chartBars.isLoading}
-          markers={data.signals
-            .filter(
-              (signal) =>
-                signal.bar_timestamp &&
-                (signal.side === "BUY" || signal.side === "SELL"),
-            )
-            .map((signal) => ({
-              time: signal.bar_timestamp!,
-              side: signal.side as "BUY" | "SELL",
-              label: `${displayEnum(signal.side)}：${localizeReason(signal.reason)}`,
-            }))}
+          markers={[
+            ...data.signals
+              .filter(
+                (signal) =>
+                  signal.bar_timestamp &&
+                  (signal.side === "BUY" || signal.side === "SELL"),
+              )
+              .map((signal) => ({
+                time: signal.bar_timestamp!,
+                side: signal.side as "BUY" | "SELL",
+                kind: "SIGNAL" as const,
+                label: `${displayEnum(signal.side)}信号：${localizeReason(signal.reason)}`,
+              })),
+            ...data.fills.flatMap((fill) => {
+              const order = data.orders.find(
+                (item) => item.id === fill.order_id,
+              );
+              if (!order || (order.side !== "BUY" && order.side !== "SELL")) {
+                return [];
+              }
+              const side: "BUY" | "SELL" =
+                order.side === "BUY" ? "BUY" : "SELL";
+              return [
+                {
+                  time: fill.executed_at,
+                  side,
+                  kind: "FILL" as const,
+                  price: fill.price,
+                  label: `${displayEnum(order.side)}成交：${formatPrice(fill.price)}`,
+                },
+              ];
+            }),
+          ]}
         />
       </Card>
       <Card title="现金与市值" className="backtest-section">

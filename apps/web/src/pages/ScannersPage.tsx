@@ -30,7 +30,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useEffect, useRef, useState, type Key } from "react";
+import { useEffect, useMemo, useRef, useState, type Key } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
@@ -58,9 +58,14 @@ import {
 import { createWatchlist, getWatchlists } from "../api/market";
 import { getScannerSessionDefault } from "../api/scanners";
 import { PageHeader } from "../components/PageHeader/PageHeader";
-import { VisualScreeningEditor } from "../components/ScreeningBuilder/VisualScreeningEditor";
+import { AtomicConditionCatalog } from "../components/ScreeningBuilder/AtomicConditionCatalog";
+import {
+  conditionFromDefinition,
+  VisualScreeningEditor,
+} from "../components/ScreeningBuilder/VisualScreeningEditor";
 import type {
   ScreeningConditionDefinition,
+  ScreeningConditionGroupSpec,
   ScreeningParseResult,
   ScreeningPreview,
   ScreeningResult,
@@ -119,12 +124,49 @@ const statusColor: Record<ScreeningStatus, string> = {
   CANCELED: "default",
 };
 
+const formatRemainingTime = (seconds: number | null | undefined) => {
+  if (seconds === null || seconds === undefined) return "正在计算";
+  if (seconds <= 0) return "等待最后写入和数据复检";
+  if (seconds < 60) return "不到1分钟";
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `约${minutes}分钟`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0
+    ? `约${hours}小时${remainingMinutes}分钟`
+    : `约${hours}小时`;
+};
+
+const displayUnknown = (value: unknown, fallback = "—") => {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  return fallback;
+};
+
 const parseStatusText = {
   COMPLETE: "条件已识别，可以确认",
   PARTIAL: "只识别了部分条件",
   AMBIGUOUS: "需要确认几个参数",
   UNSUPPORTED: "当前条件暂不支持",
 } as const;
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function screeningConditionCount(
+  spec: ScreeningSpecSnapshot | undefined,
+) {
+  if (!spec) return 0;
+  const countGroup = (group: ScreeningConditionGroupSpec): number =>
+    group.children.reduce(
+      (total, child) =>
+        total +
+        (child.node_type === "GROUP" ? countGroup(child) : 1),
+      0,
+    );
+  return spec.root_group
+    ? countGroup(spec.root_group)
+    : spec.conditions.length;
+}
 
 const screeningErrorAdvice: Record<string, string> = {
   SCREENING_DATA_PLAN_FAILED:
@@ -169,6 +211,8 @@ function metricText(metrics: Record<string, unknown>) {
     range_position: "区间位置",
     volume_multiple: "成交量倍数",
     bullish_candle: "是否收阳",
+    latest_limit_up_date: "最近涨停日期",
+    limit_up_occurrences: "窗口内涨停次数",
   };
   const percentKeys = new Set([
     "distance_to_anchor",
@@ -389,6 +433,20 @@ function NaturalLanguageScreeningPane({
     queryFn: getWatchlists,
   });
   const resolvedAsOfDate = asOfDate || sessionDefault.data?.scan_date || "";
+  const addedConditionKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const visit = (group: ScreeningConditionGroupSpec) => {
+      group.children.forEach((child) => {
+        if (child.node_type === "GROUP") visit(child);
+        else keys.add(child.condition_key);
+      });
+    };
+    draftSpec?.conditions.forEach((condition) =>
+      keys.add(condition.condition_key),
+    );
+    if (draftSpec?.root_group) visit(draftSpec.root_group);
+    return keys;
+  }, [draftSpec]);
 
   useEffect(
     () => () => {
@@ -607,6 +665,83 @@ function NaturalLanguageScreeningPane({
     );
   };
 
+  const addCatalogCondition = (
+    definition: ScreeningConditionDefinition,
+    phrase: string,
+  ) => {
+    if (addedConditionKeys.has(definition.condition_key)) {
+      void message.info("该原子条件已经在当前方案中");
+      return;
+    }
+    const condition = conditionFromDefinition(definition, phrase);
+    const nextCustomName = (() => {
+      if (
+        draftSpec &&
+        draftSpec.origin !== "USER_STRUCTURED" &&
+        !draftSpec.name.startsWith("自定义选股：")
+      ) {
+        return draftSpec.name;
+      }
+      const labels = [
+        ...addedConditionKeys,
+        definition.condition_key,
+      ]
+        .map(
+          (key) =>
+            definitions.data?.find((item) => item.condition_key === key)
+              ?.display_name ?? key,
+        )
+        .slice(0, 4);
+      return `自定义选股：${labels.join(" + ")}`;
+    })();
+    if (!draftSpec) {
+      updateDraft({
+        schema_version: 1,
+        name: nextCustomName,
+        origin: "USER_STRUCTURED",
+        universe_spec: {
+          universe_key: "ALL_A_SHARES",
+          excluded_instrument_ids: [],
+          exclude_st: false,
+          exclude_bse: false,
+          exclude_star_market: false,
+          exclude_chinext: false,
+        },
+        as_of_date: resolvedAsOfDate,
+        timeframe: "DAY_1",
+        conditions: [condition],
+        root_group: null,
+        exclusions: {},
+        ranking_rules: [{ field: "score", direction: "DESC" }],
+        top_n: null,
+        price_adjustment_mode: "RAW",
+      });
+      void message.success(`已添加“${definition.display_name}”，请确认参数`);
+      return;
+    }
+    if (draftSpec.root_group) {
+      updateDraft({
+        ...draftSpec,
+        name: nextCustomName,
+        schema_version: 2,
+        origin: "USER_CORRECTED",
+        conditions: [],
+        root_group: {
+          ...draftSpec.root_group,
+          children: [...draftSpec.root_group.children, condition],
+        },
+      });
+    } else {
+      updateDraft({
+        ...draftSpec,
+        name: nextCustomName,
+        origin: "USER_CORRECTED",
+        conditions: [...draftSpec.conditions, condition],
+      });
+    }
+    void message.success(`已添加“${definition.display_name}”`);
+  };
+
   const start = async () => {
     if (
       !draftSpec ||
@@ -735,6 +870,25 @@ function NaturalLanguageScreeningPane({
           </Col>
         </Row>
       </Card>
+
+      {definitions.data ? (
+        <AtomicConditionCatalog
+          definitions={definitions.data}
+          naturalLanguageText={text}
+          addedConditionKeys={addedConditionKeys}
+          onAdd={addCatalogCondition}
+        />
+      ) : definitions.isLoading ? (
+        <Card loading title="正在加载原子条件目录" style={{ marginTop: 16 }} />
+      ) : (
+        <Alert
+          style={{ marginTop: 16 }}
+          type="error"
+          showIcon
+          title="原子条件目录加载失败"
+          description="请确认 AlphaDesk API 在线后点击右上角刷新。"
+        />
+      )}
 
       {parseResult ? (
         <Alert
@@ -875,7 +1029,7 @@ function NaturalLanguageScreeningPane({
                 {
                   key: "conditions",
                   label: "条件数量",
-                  children: `${active.data?.spec.conditions.length ?? draftSpec?.conditions.length ?? 0}项`,
+                  children: `${screeningConditionCount(active.data?.spec ?? draftSpec)}项`,
                 },
               ]}
               style={{ marginBottom: 12 }}
@@ -883,13 +1037,9 @@ function NaturalLanguageScreeningPane({
             <Alert
               type="info"
               showIcon
-              title={
-                progress.data?.stage_label ??
-                statusText[current.status]
-              }
+              title={progress.data?.stage_label ?? statusText[current.status]}
               description={
-                progress.data?.current_action ??
-                "后台任务正在准备或筛选数据"
+                progress.data?.current_action ?? "后台任务正在准备或筛选数据"
               }
               style={{ marginBottom: 12 }}
             />
@@ -901,17 +1051,17 @@ function NaturalLanguageScreeningPane({
                   {
                     key: "estimated",
                     label: "预计筛选股票",
-                    children: `${String(active.data.data_requirement_plan.universe_count ?? "—")}只`,
+                    children: `${displayUnknown(active.data.data_requirement_plan.universe_count)}只`,
                   },
                   {
                     key: "estimated-missing",
                     label: "预计需补数",
-                    children: `${String(active.data.data_requirement_plan.estimated_missing_instruments ?? "—")}只`,
+                    children: `${displayUnknown(active.data.data_requirement_plan.estimated_missing_instruments)}只`,
                   },
                   {
                     key: "range",
                     label: "预计补数范围",
-                    children: `${String(active.data.data_requirement_plan.earliest_required_date ?? "—")} 至 ${String(active.data.data_requirement_plan.latest_required_date ?? "—")}`,
+                    children: `${displayUnknown(active.data.data_requirement_plan.earliest_required_date)} 至 ${displayUnknown(active.data.data_requirement_plan.latest_required_date)}`,
                   },
                   {
                     key: "provider",
@@ -927,6 +1077,56 @@ function NaturalLanguageScreeningPane({
                 style={{ marginBottom: 12 }}
               />
             ) : null}
+            {(progress.data?.backfill_total_batches ?? 0) > 0 ? (
+              <div
+                aria-label="历史行情下载进度"
+                style={{
+                  padding: "12px 16px",
+                  marginBottom: 16,
+                  border: "1px solid #d9e8ff",
+                  borderRadius: 8,
+                  background: "#f6faff",
+                }}
+              >
+                <Row justify="space-between" align="middle" gutter={[12, 8]}>
+                  <Col>
+                    <Typography.Text strong>历史行情下载进度</Typography.Text>
+                  </Col>
+                  <Col>
+                    <Typography.Text type="secondary">
+                      已处理 {progress.data?.backfill_processed_batches ?? 0} /{" "}
+                      {progress.data?.backfill_total_batches ?? 0} 批
+                    </Typography.Text>
+                  </Col>
+                </Row>
+                <Progress
+                  percent={progress.data?.backfill_progress_percent ?? 0}
+                  status={current.status === "FAILED" ? "exception" : "active"}
+                  strokeColor="#52c41a"
+                  style={{ marginTop: 8 }}
+                />
+                <Row justify="space-between" gutter={[12, 8]}>
+                  <Col>
+                    <Typography.Text type="secondary">
+                      剩余{" "}
+                      {progress.data?.backfill_pending_batches === null
+                        ? "—"
+                        : (progress.data?.backfill_pending_batches ?? 0)}{" "}
+                      批
+                    </Typography.Text>
+                  </Col>
+                  <Col>
+                    <Typography.Text type="secondary">
+                      预计剩余：
+                      {formatRemainingTime(
+                        progress.data?.backfill_estimated_remaining_seconds,
+                      )}
+                    </Typography.Text>
+                  </Col>
+                </Row>
+              </div>
+            ) : null}
+            <Typography.Text type="secondary">整体流程进度</Typography.Text>
             <Progress
               percent={current.progress_percent}
               status={current.status === "FAILED" ? "exception" : "active"}
@@ -948,8 +1148,8 @@ function NaturalLanguageScreeningPane({
               </Col>
               <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="数据已就绪"
-                  value={current.ready_instruments}
+                  title="正常进入计算"
+                  value={current.processed_instruments}
                   suffix="只"
                 />
               </Col>
@@ -962,28 +1162,63 @@ function NaturalLanguageScreeningPane({
               </Col>
               <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="历史数据不足"
-                  value={current.insufficient_data_count}
+                  title="排除ST/板块"
+                  value={progress.data?.excluded_count ?? 0}
                   suffix="只"
                 />
               </Col>
               <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="无法可靠判定"
-                  value={current.indeterminate_count}
+                  title="上市历史不足"
+                  value={progress.data?.listing_history_short_count ?? 0}
                   suffix="只"
                 />
               </Col>
               <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="提供方失败"
-                  value={progress.data?.provider_failed_count ?? current.failed_count}
+                  title="当前停牌"
+                  value={progress.data?.currently_suspended_count ?? 0}
                   suffix="只"
                 />
               </Col>
               <Col xs={12} md={6} xl={3}>
                 <Statistic
-                  title="入选结果"
+                  title="数据过旧"
+                  value={progress.data?.stale_data_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="正常交易日行情缺失"
+                  value={progress.data?.data_gap_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="MiniQMT明确失败"
+                  value={progress.data?.provider_failed_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="数据质量异常"
+                  value={progress.data?.quality_failed_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="交易日历异常"
+                  value={progress.data?.calendar_mismatch_count ?? 0}
+                  suffix="只"
+                />
+              </Col>
+              <Col xs={12} md={6} xl={3}>
+                <Statistic
+                  title="符合条件"
                   value={current.matched_count}
                   suffix="只"
                 />
@@ -1037,10 +1272,21 @@ function NaturalLanguageScreeningPane({
             <Space orientation="vertical" size={6}>
               <span>
                 已处理{current.processed_instruments}只，其中
-                {current.insufficient_data_count}只历史数据不足、
-                {current.indeterminate_count + current.failed_count}
-                只无法完成判断。
+                {progress.data?.listing_history_short_count ?? 0}只上市历史不足、
+                {progress.data?.currently_suspended_count ?? 0}只当前停牌、
+                {progress.data?.stale_data_count ?? 0}只数据过旧、
+                {progress.data?.data_gap_count ?? 0}只正常交易日行情缺失、
+                {progress.data?.provider_failed_count ?? 0}只MiniQMT明确失败。
               </span>
+              {(progress.data?.calendar_mismatch_count ?? 0) > 0 ? (
+                <span>
+                  检测到大量股票共同缺少
+                  {(progress.data?.calendar_mismatch_dates ?? []).join("、") ||
+                    "同一市场日期"}
+                  行情。该日期在本地日历中被标记为开市，但MiniQMT未返回市场行情；
+                  已停止错误补数并标记为交易日历异常。
+                </span>
+              ) : null}
               {failureSummary ? <span>{failureSummary}。</span> : null}
               {current.insufficient_data_count > 0 &&
               current.processed_instruments === 0 ? (
@@ -1076,7 +1322,7 @@ function NaturalLanguageScreeningPane({
           type="warning"
           showIcon
           title="结果可用，但部分股票未能完成判断"
-          description={`本次有${current.insufficient_data_count}只数据不足，${current.indeterminate_count + current.failed_count}只计算失败或无法判定；下表只展示满足条件的真实结果。`}
+          description={`本次有${progress.data?.data_gap_count ?? 0}只正常交易日行情缺失、${progress.data?.provider_failed_count ?? 0}只MiniQMT明确失败、${progress.data?.currently_suspended_count ?? 0}只当前停牌；下表只展示可执行的真实结果。`}
           style={{ marginTop: 16 }}
         />
       ) : null}
@@ -1192,6 +1438,59 @@ function NaturalLanguageScreeningPane({
                   }
                 />
               ),
+            }}
+            expandable={{
+              rowExpandable: (record) =>
+                Array.isArray(record.metrics.condition_evaluations),
+              expandedRowRender: (record) => {
+                const evaluations = Array.isArray(
+                  record.metrics.condition_evaluations,
+                )
+                  ? record.metrics.condition_evaluations
+                  : [];
+                return (
+                  <Space orientation="vertical" size={8}>
+                    <Typography.Text strong>
+                      原子条件逐项判断
+                    </Typography.Text>
+                    {evaluations.map((item, index) => {
+                      const detail =
+                        typeof item === "object" && item !== null
+                          ? (item as Record<string, unknown>)
+                          : {};
+                      return (
+                        <Space key={`${String(detail.condition_key)}-${index}`} wrap>
+                          <Tag
+                            color={
+                              detail.outcome === "MATCHED"
+                                ? "success"
+                                : detail.outcome === "NOT_MATCHED"
+                                  ? "default"
+                                  : "warning"
+                            }
+                          >
+                            {detail.outcome === "MATCHED"
+                              ? "满足"
+                              : detail.outcome === "NOT_MATCHED"
+                                ? "不满足"
+                                : "无法判断"}
+                          </Tag>
+                          <Typography.Text strong>
+                            {displayUnknown(
+                              detail.display_name ??
+                                detail.condition_key ??
+                                "条件",
+                            )}
+                          </Typography.Text>
+                          <Typography.Text type="secondary">
+                            {displayUnknown(detail.reason)}
+                          </Typography.Text>
+                        </Space>
+                      );
+                    })}
+                  </Space>
+                );
+              },
             }}
           />
         </Card>

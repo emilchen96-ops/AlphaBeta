@@ -19,7 +19,7 @@ class ReferenceSyncRequest(BaseModel):
     end: date | None = None
     universe: str = Field(default="research", max_length=64)
     instrument_ids: list[UUID] = Field(default_factory=list, max_length=500)
-    provider: str = Field(default="fixture", max_length=32)
+    provider: str = Field(default="verified", max_length=32)
     dry_run: bool = True
     max_instruments: int = Field(default=30, ge=1, le=500)
 

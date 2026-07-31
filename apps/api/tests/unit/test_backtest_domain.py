@@ -9,6 +9,7 @@ from alphadesk_domain.backtest import (
     BacktestClock,
     BacktestConfiguration,
     BacktestError,
+    BacktestExecutionPriceMode,
     BacktestFillMetricInput,
     BacktestPerformanceService,
     BacktestPhase,
@@ -22,7 +23,7 @@ from alphadesk_domain.backtest import (
     build_equity_points,
 )
 from alphadesk_domain.broker import AshareSimpleFeeModel, FixedBasisPointsSlippageModel
-from alphadesk_domain.enums import MarketTimeframe, OrderSide
+from alphadesk_domain.enums import MarketTimeframe, OrderSide, OrderType
 
 pytestmark = [pytest.mark.unit, pytest.mark.bt01]
 
@@ -49,6 +50,68 @@ def test_configuration_normalizes_instruments_and_has_stable_fingerprint() -> No
 
     assert left.instrument_ids == tuple(sorted((first, second), key=str))
     assert backtest_request_fingerprint(left) == backtest_request_fingerprint(right)
+
+
+def test_configuration_models_next_open_and_legacy_limit_execution_explicitly() -> None:
+    next_open = _configuration()
+    legacy_limit = replace(
+        next_open,
+        order_type=OrderType.LIMIT,
+        execution_price_mode=BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT,
+        maximum_entry_gap_ratio=None,
+    )
+
+    assert next_open.execution_price_mode is BacktestExecutionPriceMode.NEXT_OPEN
+    assert next_open.maximum_entry_gap_ratio == Decimal("0.05")
+    assert legacy_limit.execution_price_mode is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+    assert backtest_request_fingerprint(next_open) != backtest_request_fingerprint(legacy_limit)
+
+    legacy_payload = backtest_configuration_to_dict(legacy_limit)
+    legacy_payload.pop("execution_price_mode")
+    legacy_payload.pop("maximum_entry_gap_ratio")
+    restored = backtest_configuration_from_dict(legacy_payload)
+    assert restored.execution_price_mode is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+    assert restored.maximum_entry_gap_ratio is None
+
+
+def test_configuration_round_trips_safe_same_day_minute_execution() -> None:
+    configured = replace(
+        _configuration(),
+        execution_price_mode=BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+        position_size_ratio=Decimal("0.5"),
+        maximum_entry_gap_ratio=None,
+    )
+
+    restored = backtest_configuration_from_dict(backtest_configuration_to_dict(configured))
+
+    assert restored.execution_price_mode is BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE
+    assert restored.position_size_ratio == Decimal("0.5")
+
+
+def test_configuration_rejects_inconsistent_execution_price_mode() -> None:
+    with pytest.raises(BacktestError, match="NEXT_OPEN execution requires"):
+        replace(
+            _configuration(),
+            order_type=OrderType.LIMIT,
+            execution_price_mode=BacktestExecutionPriceMode.NEXT_OPEN,
+        )
+
+
+def test_configuration_persists_position_ratio_and_rejects_invalid_values() -> None:
+    configured = replace(_configuration(), position_size_ratio=Decimal("0.35"))
+    restored = backtest_configuration_from_dict(backtest_configuration_to_dict(configured))
+
+    assert restored.position_size_ratio == Decimal("0.35")
+    assert backtest_request_fingerprint(configured) == backtest_request_fingerprint(restored)
+    with pytest.raises(BacktestError, match="position_size_ratio"):
+        replace(_configuration(), position_size_ratio=Decimal("0"))
+    with pytest.raises(BacktestError, match="position sizing requires NEXT_OPEN"):
+        replace(
+            _configuration(),
+            order_type=OrderType.LIMIT,
+            execution_price_mode=BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT,
+            position_size_ratio=Decimal("0.5"),
+        )
 
 
 def test_configuration_fingerprint_captures_data_source_and_actual_risk_limits() -> None:

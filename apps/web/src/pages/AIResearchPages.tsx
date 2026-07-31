@@ -5,17 +5,24 @@ import {
   App,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Form,
   Input,
   Select,
   Space,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from "antd";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 
 import {
   createAIAnalysis,
@@ -29,6 +36,7 @@ import {
 import { getInformationItems, getMarketEvents } from "../api/information";
 import { getInstruments } from "../api/market";
 import { PageHeader } from "../components/PageHeader/PageHeader";
+import { InformationCenterPage } from "./InformationPages";
 import type {
   AIAnalysisCreateBody,
   AIAnalysisRun,
@@ -38,10 +46,13 @@ import type {
 
 const analysisTypes: Array<{ value: AIAnalysisType; label: string }> = [
   { value: "EVENT_SUMMARY", label: "单事件摘要" },
-  { value: "INSTRUMENT_IMPACT", label: "Instrument 影响研究" },
+  { value: "INSTRUMENT_IMPACT", label: "个股影响分析" },
   { value: "MULTI_EVENT_SYNTHESIS", label: "多事件综合" },
   { value: "RESEARCH_QUESTION", label: "研究问题" },
 ];
+const analysisTypeText = Object.fromEntries(
+  analysisTypes.map((item) => [item.value, item.label]),
+) as Record<string, string>;
 
 const aiDisclaimer = (
   <Alert
@@ -55,7 +66,16 @@ const aiDisclaimer = (
 function statusTag(status: AIAnalysisRun["status"]) {
   const color =
     status === "COMPLETED" ? "green" : status === "FAILED" ? "red" : "blue";
-  return <Tag color={color}>{status}</Tag>;
+  return (
+    <Tag color={color}>
+      {{
+        CREATED: "已创建",
+        RUNNING: "运行中",
+        COMPLETED: "已完成",
+        FAILED: "失败",
+      }[status] ?? status}
+    </Tag>
+  );
 }
 
 interface FormValues {
@@ -66,7 +86,7 @@ interface FormValues {
   question?: string;
 }
 
-export function AIResearchPage() {
+function AIResearchWorkbench() {
   const { message } = App.useApp();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -131,8 +151,8 @@ export function AIResearchPage() {
   return (
     <section>
       <PageHeader
-        title="AI 研究助手"
-        description="以 N01 资讯与市场事件为证据边界，生成可追溯的结构化研究记录。"
+        title="AI 调研"
+        description="选择可核对的调研资料，生成带来源证据的结构化研究报告。"
       />
       {aiDisclaimer}
       <Alert
@@ -147,22 +167,18 @@ export function AIResearchPage() {
                 ? "warning"
                 : "error"
         }
-        title={`模型服务（Provider）：${provider.data?.provider_key ?? "检查中"} / ${provider.data?.model_name ?? "-"}`}
+        title={
+          provider.data?.mode === "REAL_AVAILABLE"
+            ? "AI 模型服务可用"
+            : provider.data?.mode === "FAKE"
+              ? "当前使用测试模型"
+              : "AI 模型服务尚未就绪"
+        }
         description={
           <Space orientation="vertical" size="small">
             <Typography.Text>
               {provider.data?.message ?? "正在读取模型服务状态"}
             </Typography.Text>
-            {provider.data?.base_url_summary ? (
-              <Typography.Text type="secondary">
-                Endpoint：{provider.data.base_url_summary}
-              </Typography.Text>
-            ) : null}
-            {provider.data?.last_error_code ? (
-              <Typography.Text type="danger">
-                最近错误：{provider.data.last_error_code}
-              </Typography.Text>
-            ) : null}
             {(provider.data?.warnings ?? []).map((warning) => (
               <Typography.Text key={warning} type="secondary">
                 {warning}
@@ -178,10 +194,38 @@ export function AIResearchPage() {
                 测试真实模型服务连通性
               </Button>
             ) : null}
+            <Collapse
+              ghost
+              size="small"
+              items={[
+                {
+                  key: "technical",
+                  label: "技术详情",
+                  children: (
+                    <Space orientation="vertical" size={2}>
+                      <Typography.Text type="secondary">
+                        服务：{provider.data?.provider_key ?? "检查中"} /{" "}
+                        {provider.data?.model_name ?? "-"}
+                      </Typography.Text>
+                      {provider.data?.base_url_summary ? (
+                        <Typography.Text type="secondary">
+                          接口地址：{provider.data.base_url_summary}
+                        </Typography.Text>
+                      ) : null}
+                      {provider.data?.last_error_code ? (
+                        <Typography.Text type="danger">
+                          最近错误代码：{provider.data.last_error_code}
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
+                  ),
+                },
+              ]}
+            />
           </Space>
         }
       />
-      <Card title="创建有依据的研究" style={{ marginTop: 16 }}>
+      <Card title="创建有依据的 AI 调研" style={{ marginTop: 16 }}>
         <Form
           form={form}
           layout="vertical"
@@ -257,7 +301,7 @@ export function AIResearchPage() {
           </Button>
         </Form>
       </Card>
-      <Card title="AI 分析运行审计记录" style={{ marginTop: 16 }}>
+      <Card title="最近的 AI 调研" style={{ marginTop: 16 }}>
         <Table<AIAnalysisRun>
           rowKey="analysis_id"
           dataSource={runs.data?.items ?? []}
@@ -268,13 +312,20 @@ export function AIResearchPage() {
             onChange: setPage,
           }}
           columns={[
-            { title: "类型", dataIndex: "analysis_type" },
-            { title: "状态", render: (_, run) => statusTag(run.status) },
             {
-              title: "模型服务 / 模型",
-              render: (_, run) => `${run.provider_key} / ${run.model_name}`,
+              title: "调研主题",
+              render: (_, run) =>
+                run.insight?.title ??
+                run.user_question ??
+                analysisTypeText[run.analysis_type] ??
+                "AI 调研",
             },
-            { title: "Prompt 版本", dataIndex: "prompt_version" },
+            {
+              title: "调研类型",
+              render: (_, run) =>
+                analysisTypeText[run.analysis_type] ?? run.analysis_type,
+            },
+            { title: "状态", render: (_, run) => statusTag(run.status) },
             {
               title: "创建时间",
               render: (_, run) => new Date(run.created_at).toLocaleString(),
@@ -288,17 +339,37 @@ export function AIResearchPage() {
                     void navigate(`/ai-analyses/${run.analysis_id}`)
                   }
                 >
-                  查看依据
+                  查看报告与依据
                 </Button>
               ),
             },
           ]}
         />
-        <Button onClick={() => void navigate("/research-insights")}>
-          ResearchInsight 目录
-        </Button>
       </Card>
     </section>
+  );
+}
+
+export function AIResearchPage() {
+  const [search, setSearch] = useSearchParams();
+  const active = search.get("tab") ?? "research";
+  return (
+    <Tabs
+      activeKey={active}
+      onChange={(tab) => setSearch({ tab })}
+      items={[
+        {
+          key: "research",
+          label: "AI 调研",
+          children: <AIResearchWorkbench />,
+        },
+        {
+          key: "materials",
+          label: "调研资料与来源",
+          children: <InformationCenterPage embedded />,
+        },
+      ]}
+    />
   );
 }
 
@@ -383,7 +454,16 @@ export function AIAnalysisDetailPage() {
   });
   return (
     <section>
-      <PageHeader title="AI 分析运行详情" description={analysisId} />
+      <PageHeader
+        title={
+          run.data?.insight?.title ??
+          run.data?.user_question ??
+          (run.data
+            ? analysisTypeText[run.data.analysis_type]
+            : "AI 调研报告")
+        }
+        description="查看调研结论、引用资料与证据链。"
+      />
       {run.data ? (
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <Card>
@@ -397,39 +477,70 @@ export function AIAnalysisDetailPage() {
                   children: statusTag(run.data.status),
                 },
                 {
-                  key: "provider",
-                  label: "模型服务 / 模型",
-                  children: `${run.data.provider_key} / ${run.data.model_name}`,
-                },
-                {
-                  key: "provider-mode",
-                  label: "分析来源",
-                  children: run.data.is_real_provider
-                    ? "真实服务（REAL）"
-                    : "测试或未启用服务（FAKE / DISABLED）",
-                },
-                {
-                  key: "prompt",
-                  label: "Prompt 契约",
-                  children: `${run.data.prompt_template_key} v${run.data.prompt_version}`,
-                },
-                {
-                  key: "tokens",
-                  label: "Token 用量",
-                  children: `${run.data.input_token_count ?? "-"} / ${run.data.output_token_count ?? "-"} / 合计 ${run.data.total_token_count ?? "-"}`,
-                },
-                {
-                  key: "cost",
-                  label: "估算成本（非账单）",
+                  key: "type",
+                  label: "调研类型",
                   children:
-                    run.data.estimated_cost === null
-                      ? "模型服务未返回用量（usage）或未配置价格"
-                      : `${run.data.estimated_cost} ${run.data.cost_currency ?? "USD"}`,
+                    analysisTypeText[run.data.analysis_type] ??
+                    run.data.analysis_type,
                 },
+              ]}
+            />
+            <Collapse
+              ghost
+              style={{ marginTop: 12 }}
+              items={[
                 {
-                  key: "correlation",
-                  label: "Correlation ID",
-                  children: run.data.correlation_id,
+                  key: "technical",
+                  label: "技术详情",
+                  children: (
+                    <Descriptions
+                      bordered
+                      size="small"
+                      column={2}
+                      items={[
+                        {
+                          key: "analysis-id",
+                          label: "内部调研编号",
+                          children: run.data.analysis_id,
+                        },
+                        {
+                          key: "provider",
+                          label: "模型服务 / 模型",
+                          children: `${run.data.provider_key} / ${run.data.model_name}`,
+                        },
+                        {
+                          key: "provider-mode",
+                          label: "分析来源",
+                          children: run.data.is_real_provider
+                            ? "真实服务（REAL）"
+                            : "测试或未启用服务（FAKE / DISABLED）",
+                        },
+                        {
+                          key: "prompt",
+                          label: "提示词契约",
+                          children: `${run.data.prompt_template_key} v${run.data.prompt_version}`,
+                        },
+                        {
+                          key: "tokens",
+                          label: "Token 用量",
+                          children: `${run.data.input_token_count ?? "-"} / ${run.data.output_token_count ?? "-"} / 合计 ${run.data.total_token_count ?? "-"}`,
+                        },
+                        {
+                          key: "cost",
+                          label: "估算成本（非账单）",
+                          children:
+                            run.data.estimated_cost === null
+                              ? "模型服务未返回用量或未配置价格"
+                              : `${run.data.estimated_cost} ${run.data.cost_currency ?? "USD"}`,
+                        },
+                        {
+                          key: "correlation",
+                          label: "关联追踪编号",
+                          children: run.data.correlation_id,
+                        },
+                      ]}
+                    />
+                  ),
                 },
               ]}
             />

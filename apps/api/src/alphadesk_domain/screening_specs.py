@@ -21,12 +21,16 @@ from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.screening import (
     ConditionCatalog,
+    ConditionGroupOperator,
     RankingDirection,
     RankingRule,
     ScreeningCondition,
+    ScreeningConditionGroup,
     ScreeningError,
     ScreeningSpec,
     UniverseSpec,
+    ValidatedCondition,
+    ValidatedConditionGroup,
 )
 
 
@@ -640,6 +644,11 @@ class NaturalLanguageScreeningParser:
 
     def _generic_conditions(self, text: str) -> list[ScreeningCondition]:
         values: list[ScreeningCondition] = []
+        recent_limit_up = re.search(
+            rf"(?:近|最近|过去)\s*(?P<number>{_NUMBER_TOKEN})\s*"
+            r"(?:个)?(?:交易)?(?:日|天)(?:内)?[^，。；]{0,8}涨停",
+            text,
+        )
         high = re.search(
             rf"(?P<number>{_NUMBER_TOKEN})\s*日(?:价格|收盘价)?(?:新高|突破)",
             text,
@@ -652,9 +661,21 @@ class NaturalLanguageScreeningParser:
             text,
         )
         amount = re.search(
-            rf"成交额[^，。；]{{0,12}}(?P<number>{_NUMBER_TOKEN})\s*(?P<unit>亿元|万元|元)",
+            rf"成交额[^，。；]{{0,12}}?(?P<number>{_NUMBER_TOKEN})\s*(?P<unit>亿元|万元|元)",
             text,
         )
+        if recent_limit_up is not None:
+            values.append(
+                ScreeningCondition(
+                    condition_key="RECENT_LIMIT_UP_EVENT",
+                    parameters={
+                        "lookback_days": _integer(recent_limit_up.group("number"), "涨停回看周期"),
+                        "minimum_occurrences": 1,
+                        "event_selection": "LATEST_VALID",
+                        "require_reliable_limit_price": True,
+                    },
+                )
+            )
         if high is not None:
             values.append(
                 ScreeningCondition(
@@ -708,6 +729,7 @@ _SPEC_KEYS = {
     "as_of_date",
     "timeframe",
     "conditions",
+    "root_group",
     "exclusions",
     "ranking_rules",
     "top_n",
@@ -721,7 +743,8 @@ _UNIVERSE_KEYS = {
     "exclude_star_market",
     "exclude_chinext",
 }
-_CONDITION_KEYS = {"condition_key", "parameters", "condition_version"}
+_CONDITION_KEYS = {"node_type", "condition_key", "parameters", "condition_version"}
+_GROUP_KEYS = {"node_type", "operator", "children"}
 _RANK_KEYS = {"field", "direction"}
 
 
@@ -742,7 +765,8 @@ def screening_spec_from_mapping(
     _strict_mapping_keys(payload, _SPEC_KEYS, "ScreeningSpec")
     try:
         universe_raw = payload.get("universe_spec", {})
-        conditions_raw = payload["conditions"]
+        conditions_raw = payload.get("conditions", [])
+        root_group_raw = payload.get("root_group")
         rankings_raw = payload.get("ranking_rules", [])
         exclusions_raw = payload.get("exclusions", {})
         if not isinstance(universe_raw, Mapping):
@@ -766,7 +790,8 @@ def screening_spec_from_mapping(
             exclude_chinext=bool(universe_raw.get("exclude_chinext", False)),
         )
         conditions: list[ScreeningCondition] = []
-        for raw in conditions_raw:
+
+        def parse_condition(raw: Mapping[str, object]) -> ScreeningCondition:
             if not isinstance(raw, Mapping):
                 raise TypeError("condition")
             _strict_mapping_keys(raw, _CONDITION_KEYS, "筛选条件")
@@ -780,12 +805,42 @@ def screening_spec_from_mapping(
             parameters = raw.get("parameters", {})
             if not isinstance(parameters, Mapping):
                 raise TypeError("parameters")
-            conditions.append(
-                ScreeningCondition(
-                    condition_key=str(raw["condition_key"]),
-                    parameters=dict(parameters),
-                )
+            return ScreeningCondition(
+                condition_key=str(raw["condition_key"]),
+                parameters=dict(parameters),
             )
+
+        def parse_group(
+            raw: Mapping[str, object],
+        ) -> ScreeningConditionGroup:
+            _strict_mapping_keys(raw, _GROUP_KEYS, "条件组")
+            children_raw = raw.get("children")
+            if not isinstance(children_raw, list):
+                raise TypeError("children")
+            children: list[ScreeningCondition | ScreeningConditionGroup] = []
+            for child in children_raw:
+                if not isinstance(child, Mapping):
+                    raise TypeError("condition node")
+                children.append(
+                    parse_group(child)
+                    if str(child.get("node_type", "CONDITION")) == "GROUP"
+                    else parse_condition(child)
+                )
+            return ScreeningConditionGroup(
+                operator=ConditionGroupOperator(str(raw.get("operator", "AND"))),
+                children=tuple(children),
+            )
+
+        for raw in conditions_raw:
+            if not isinstance(raw, Mapping):
+                raise TypeError("condition")
+            conditions.append(parse_condition(raw))
+        if root_group_raw is None:
+            root_group = None
+        elif isinstance(root_group_raw, Mapping):
+            root_group = parse_group(root_group_raw)
+        else:
+            raise TypeError("root_group")
         rankings: list[RankingRule] = []
         for raw in rankings_raw:
             if not isinstance(raw, Mapping):
@@ -805,6 +860,7 @@ def screening_spec_from_mapping(
             as_of_date=date.fromisoformat(str(payload["as_of_date"])),
             timeframe=MarketTimeframe(str(payload.get("timeframe", "DAY_1"))),
             conditions=tuple(conditions),
+            root_group=root_group,
             exclusions=dict(exclusions_raw),
             ranking_rules=tuple(rankings),
             top_n=(None if payload.get("top_n") is None else int(str(payload["top_n"]))),
@@ -886,6 +942,8 @@ class ScreeningPreviewRenderer:
                 f"{item.definition.display_name}：至少"
                 f"{item.definition.history_bars(item.parameters)}根日K线；需要{fields}。"
             )
+        if spec.schema_version == 2:
+            condition_lines = [self._group_preview(validated.root_group)]
         ranking_lines = [self._ranking_preview(item) for item in spec.ranking_rules]
         if spec.top_n is not None:
             ranking_lines.append(f"仅保留排序后的前{spec.top_n}只股票。")
@@ -916,6 +974,23 @@ class ScreeningPreviewRenderer:
             can_execute=can_execute,
             notices=tuple(notices),
         )
+
+    def _group_preview(
+        self,
+        group: ValidatedConditionGroup,
+    ) -> str:
+        connector = " 并且 " if group.operator is ConditionGroupOperator.AND else " 或者 "
+        parts = []
+        for child in group.children:
+            if isinstance(child, ValidatedConditionGroup):
+                parts.append(self._group_preview(child))
+            else:
+                parts.append(self._condition_preview_line(child))
+        return f"（{connector.join(parts)}）"
+
+    def _condition_preview_line(self, item: ValidatedCondition) -> str:
+        lines = self._condition_preview(item.definition.condition_key, item.parameters)
+        return "；".join(lines)
 
     @staticmethod
     def _percent(value: object) -> str:

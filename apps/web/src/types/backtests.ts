@@ -28,6 +28,16 @@ export interface BacktestRun {
   strategy_spec?: import("./strategySpecs").StrategySpec;
   strategy_preview?: string[];
   simulation_notice?: string;
+  display_name?: string;
+  instrument_display?: string;
+  strategy_display_name?: string;
+  strategy_summary?: string;
+  run_source?: "DIRECT" | "BATCH_CHILD";
+  backtest_type?: string;
+  parent_batch_id?: string | null;
+  parent_batch_name?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
 }
 
 export interface BacktestPage {
@@ -184,6 +194,12 @@ export interface CreateBacktestRequest {
   initial_cash: string;
   order_type: "MARKET" | "LIMIT";
   time_in_force: "DAY" | "GTC";
+  execution_price_mode:
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE";
+  position_size_ratio: string | null;
+  maximum_entry_gap_ratio: string | null;
   fee_configuration: {
     commission_rate: string;
     minimum_commission: string;

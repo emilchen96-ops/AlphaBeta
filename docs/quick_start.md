@@ -37,7 +37,8 @@ docker compose exec api alembic upgrade head
 
 先启动并登录 Windows MiniQMT 的行情入口，再按
 [MD01 行情使用说明](md01_market_data.md)配置未跟踪的 `.env`。API 和 Migration
-就绪后，在 Windows 主机运行：
+就绪后，双击 `scripts/启动 AlphaDesk.cmd` 会自动启动并登记 Windows 只读行情代理；
+双击 `scripts/关闭 AlphaDesk.cmd` 会同时停止该代理。命令行手动启动仍可使用：
 
 ```powershell
 .\apps\api\.venv\Scripts\python.exe -m alphadesk_api.cli.miniqmt run-agent
@@ -46,6 +47,8 @@ docker compose exec api alembic upgrade head
 打开 <http://127.0.0.1:5173/market> 查看连接、搜索、自选、实时行情和 K 线。自选股分组
 只有开启行情订阅才会驱动期望订阅；页面上的等待状态不等于 MiniQMT 已经实际订阅。
 MiniQMT 客户端与行情代理都需要保持运行。本能力只读，交易功能未启用。
+代理运行日志保存在未纳入 Git 的 `work/miniqmt-agent.stdout.log` 和
+`work/miniqmt-agent.stderr.log`。
 
 ## 2. 一键准备研究环境
 
@@ -63,9 +66,10 @@ docker compose exec api python -m alphadesk_api.cli.demo verify-research --json
 
 ## 3. 推荐使用顺序
 
-默认 `RESEARCH_ONLY` 模式只保留六个主入口：**首页、行情、智能选股、策略研究、资讯研究、
-设置**。建议依次完成 MiniQMT 行情检查、全市场扫描、单策略快速回测，再按需要查看资讯和
-高级研究记录。策略运行、研究信号、扫描运行、历史回放和数据中心仍保留，但不再占用主导航。
+默认 `RESEARCH_ONLY` 模式保留九个任务入口：**首页、行情、自选股、智能选股、策略回测、
+AI 调研、研究档案、数据中心、设置**。建议依次完成 MiniQMT 行情检查、全市场扫描、单策略
+快速回测，再按需要查看 AI 调研与研究档案。策略运行、研究信号、扫描运行和历史回放仍保留
+为兼容能力，但不再占用主导航。
 独立订单、成交、持仓与风控操作在研究模式下关闭。
 
 ### 第一次运行 Scanner
@@ -75,12 +79,12 @@ fixture 已预先生成两次可在“扫描运行”打开的结果。
 
 ### 第一次运行 Strategy
 
-打开“策略研究”。通常直接进入“快速回测”；只有需要理解策略参数或排查触发原因时，再进入
+打开“策略回测”。通常直接进入“快速回测”；只有需要理解策略参数或排查触发原因时，再进入
 “策略模板”“策略运行”和“研究信号”。Strategy 只生成 Signal，不会创建真实订单。
 
 ### 第一次运行 Backtest
 
-打开“策略研究 → 快速回测”，选择股票、策略、参数和日期范围。正式页面固定读取已同步到
+打开“策略回测 → 快速回测”，选择股票、策略、参数和日期范围。正式页面固定读取已同步到
 本地数据库的 MiniQMT 历史日线。回测使用独立账户，并按 T 日收盘 Signal、下一有效交易日
 开盘执行。详情应包含指标、权益曲线、订单、成交和完整性检查。
 
@@ -92,7 +96,7 @@ fixture 已预先生成两次可在“扫描运行”打开的结果。
 
 ### 资讯与 AI
 
-在“资讯中心”手工录入来源后，可从“AI 研究”选择事实运行 Fake 演示。AI 输出仅供研究。
+在“AI 调研 → 调研资料与来源”添加资料后，可从“AI 调研”选择事实生成报告。AI 输出仅供研究。
 若要启用真实 AI，按 [真实 AI Provider](real_ai_provider.md) 把 Provider、Base URL、Key 和模型
 写入本地 `.env`，重新构建/启动 API，再先运行 `provider-status` 和 `test-provider`。不要把 Key
 写入 `.env.example`、前端或浏览器请求。

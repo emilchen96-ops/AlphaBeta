@@ -39,7 +39,7 @@ from alphadesk_domain.strategy import StrategyBar
 from alphadesk_domain.unit_of_work import UnitOfWork
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-BackfillEnqueuer = Callable[[dict[str, object]], Awaitable[None]]
+BackfillEnqueuer = Callable[[dict[str, object]], Awaitable[int | None]]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -246,7 +246,7 @@ test("回测列表展示配置入口、时间规则和本地运行记录", async
 test("回测详情展示指标、曲线、事实与完整性状态", async () => {
   renderRoute(`/backtest/${runId}`);
   expect(
-    await screen.findByText(/回测详情 · 均线交叉策略/),
+    await screen.findByText(/回测详情.*均线交叉策略/),
   ).toBeInTheDocument();
   expect(screen.getByText("完整性检查：通过")).toBeInTheDocument();
   expect(screen.getByText("权益曲线")).toBeInTheDocument();
@@ -281,7 +281,7 @@ test("创建表单固定使用MiniQMT并允许成交量参与率留空", async (
   fireEvent.change(screen.getByLabelText(/结束日期/), {
     target: { value: "2026-01-15" },
   });
-  fireEvent.change(screen.getByLabelText(/最大成交量参与率/), {
+  fireEvent.change(screen.getByLabelText(/单次最多占当日成交量/), {
     target: { value: "" },
   });
   await user.click(screen.getByRole("button", { name: /开始回测/ }));
@@ -292,6 +292,10 @@ test("创建表单固定使用MiniQMT并允许成交量参与率留空", async (
     strategy_key: "sma_crossover",
     data_source_code: "MINIQMT",
     instrument_ids: ["instrument-1"],
+    order_type: "MARKET",
+    execution_price_mode: "NEXT_OPEN",
+    maximum_entry_gap_ratio: "0.05",
+    time_in_force: "DAY",
   });
   expect(String(submittedBody?.idempotency_key)).toMatch(/^backtest:/);
 }, 60_000);

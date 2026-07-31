@@ -195,7 +195,7 @@ export function syncMarketReference(
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify({
-        provider: "fixture",
+        provider: "verified",
         universe: "research",
         max_instruments: 100,
         dry_run: dryRun,

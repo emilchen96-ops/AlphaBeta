@@ -1,5 +1,9 @@
 import { apiRequest } from "./client";
 import type {
+  BacktestBatch,
+  BacktestBatchRequest,
+  BacktestBatchResult,
+  BacktestBatchSummary,
   QuickBacktestRequest,
   StrategyParseResult,
   StrategySpec,
@@ -86,6 +90,46 @@ export const createQuickBacktest = (body: QuickBacktestRequest) =>
     },
     120_000,
   );
+
+export const createBacktestBatch = (body: BacktestBatchRequest) =>
+  apiRequest<BacktestBatch>(
+    "/api/v1/research/backtest-batches",
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    },
+    120_000,
+  );
+
+export const getBacktestBatch = (id: string) =>
+  apiRequest<BacktestBatch>(`/api/v1/research/backtest-batches/${id}`);
+
+export const listBacktestBatches = () =>
+  apiRequest<{
+    items: BacktestBatch[];
+    page: number;
+    page_size: number;
+    total: number;
+  }>("/api/v1/research/backtest-batches?page=1&page_size=100");
+
+export const getBacktestBatchResults = (id: string, page = 1, pageSize = 50) =>
+  apiRequest<{
+    items: BacktestBatchResult[];
+    page: number;
+    page_size: number;
+    total: number;
+  }>(
+    `/api/v1/research/backtest-batches/${id}/results?page=${page}&page_size=${pageSize}`,
+  );
+
+export const getBacktestBatchSummary = (id: string) =>
+  apiRequest<BacktestBatchSummary>(
+    `/api/v1/research/backtest-batches/${id}/summary`,
+  );
+
+export const backtestBatchCsvUrl = (id: string) =>
+  `/api/v1/research/backtest-batches/${id}/export.csv`;
 
 export const getResearchBacktest = (id: string) =>
   apiRequest<BacktestRun>(`/api/v1/research/backtests/${id}`);

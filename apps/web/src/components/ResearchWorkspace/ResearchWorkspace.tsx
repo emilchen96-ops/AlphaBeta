@@ -21,7 +21,7 @@ export function ResearchWorkspace() {
   return (
     <section className="research-workspace">
       <div className="research-workspace-heading">
-        <Typography.Title level={1}>策略研究</Typography.Title>
+        <Typography.Title level={1}>策略回测</Typography.Title>
         <Typography.Paragraph type="secondary">
           用自然语言描述策略，确认规则后直接回测；复杂参数与技术细节按需展开。
         </Typography.Paragraph>

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -21,7 +21,11 @@ from alphadesk_api.application.scanners import (
 )
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import MarketTimeframe
-from alphadesk_domain.market_reference import PriceAdjustmentMode
+from alphadesk_domain.market_reference import (
+    InstrumentTradingState,
+    InstrumentTradingStatus,
+    PriceAdjustmentMode,
+)
 from alphadesk_domain.scanners import (
     ScanMemberStatus,
     ScanResult,
@@ -34,12 +38,14 @@ from alphadesk_domain.scanners import (
 )
 from alphadesk_domain.screening import (
     ConditionCatalog,
+    ConditionGroupOperator,
     ConditionOutcome,
     RankingDirection,
     RankingRule,
     RuleBasedScreeningEngine,
     ScreeningCandidate,
     ScreeningCondition,
+    ScreeningConditionGroup,
     ScreeningError,
     ScreeningFeatureStore,
     ScreeningSpec,
@@ -58,6 +64,10 @@ from alphadesk_domain.screening_data_preparation import (
 from alphadesk_domain.strategy import StrategyBar
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+BACKFILL_SECONDS_PER_BATCH = 30
+MAX_BACKFILL_WAIT_SECONDS = 8 * 60 * 60
+BACKFILL_QUEUE_DRAIN_GRACE_SECONDS = 30
+BackfillPendingCounter = Callable[[UUID], Awaitable[int | None]]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -239,6 +249,9 @@ class ScreeningRunService:
         if run is None or not run.screening_spec:
             raise ApplicationError("SCREENING_RUN_NOT_FOUND", "筛选任务不存在")
         retry_statuses = {
+            ScanMemberStatus.DATA_GAP,
+            ScanMemberStatus.CALENDAR_MISMATCH,
+            ScanMemberStatus.STALE_DATA,
             ScanMemberStatus.INSUFFICIENT_HISTORY,
             ScanMemberStatus.REFERENCE_DATA_MISSING,
             ScanMemberStatus.QUALITY_FAILED,
@@ -286,6 +299,8 @@ class ScreeningDataPreparationService:
         *,
         source_code: str = "MINIQMT",
         warmup_buffer: int = 10,
+        maximum_extension_sessions: int = 60,
+        maximum_stale_sessions: int = 20,
         backfill_batch_size: int = 50,
         backfill_wait_seconds: int = 120,
     ) -> None:
@@ -294,6 +309,7 @@ class ScreeningDataPreparationService:
         self._source_code = source_code.strip().upper()
         self._planner = ScreeningDataRequirementPlanner(
             warmup_buffer=warmup_buffer,
+            maximum_extension_sessions=maximum_extension_sessions,
             provider_code=self._source_code,
         )
         self._gap_service = ScreeningDataGapService()
@@ -303,11 +319,13 @@ class ScreeningDataPreparationService:
         )
         self._backfill_batch_size = max(1, min(backfill_batch_size, 50))
         self._backfill_wait_seconds = max(0, backfill_wait_seconds)
+        self._maximum_stale_sessions = max(1, maximum_stale_sessions)
 
     async def prepare(
         self,
         run_id: UUID,
         enqueue_backfill: BackfillEnqueuer,
+        pending_backfill_batches: BackfillPendingCounter | None = None,
     ) -> ScreeningPreparationOutcome:
         run = await self._get_run(run_id)
         if run.cancel_requested:
@@ -353,9 +371,17 @@ class ScreeningDataPreparationService:
         gaps = self._gap_service.assess(
             instruments=included,
             bars_by_instrument=bars_by_instrument,
-            required_sessions=open_sessions,
+            required_sessions=plan.market_sessions,
             minimum_rule_sessions=plan.minimum_rule_sessions,
+            available_sessions=open_sessions,
             suspended_sessions=suspended,
+            currently_suspended_ids={
+                instrument_id
+                for instrument_id, value in resolution.trading_statuses.items()
+                if value == "SUSPENDED"
+            },
+            as_of_date=spec.as_of_date,
+            max_stale_sessions=self._maximum_stale_sessions,
         )
         use_existing = bool(self._options(run).get("use_existing_data_only", False))
         missing = tuple(item for item in gaps if item.needs_backfill)
@@ -375,17 +401,101 @@ class ScreeningDataPreparationService:
             )
             return ScreeningPreparationOutcome(ready_for_screening=False)
         now = datetime.now(UTC)
+        backfill_wait_seconds = self._estimated_backfill_wait_seconds(run)
+        pending_batches = (
+            await pending_backfill_batches(run.id) if pending_backfill_batches is not None else None
+        )
+        queue_drain_observed_at = self._queue_drain_observed_at(run)
+        if missing and not use_existing and run.backfill_requested_at is not None:
+            if pending_batches is not None and pending_batches > 0:
+                await self._persist_waiting(
+                    run,
+                    gaps,
+                    pending_batches=pending_batches,
+                    queue_drain_observed_at=None,
+                )
+                return ScreeningPreparationOutcome(ready_for_screening=False)
+            if pending_batches == 0:
+                if queue_drain_observed_at is None:
+                    await self._persist_waiting(
+                        run,
+                        gaps,
+                        pending_batches=0,
+                        queue_drain_observed_at=now,
+                    )
+                    return ScreeningPreparationOutcome(ready_for_screening=False)
+                if (
+                    now - queue_drain_observed_at
+                ).total_seconds() < BACKFILL_QUEUE_DRAIN_GRACE_SECONDS:
+                    await self._persist_waiting(
+                        run,
+                        gaps,
+                        pending_batches=0,
+                        queue_drain_observed_at=queue_drain_observed_at,
+                    )
+                    return ScreeningPreparationOutcome(ready_for_screening=False)
         if (
             missing
             and not use_existing
             and run.backfill_requested_at is not None
-            and (now - run.backfill_requested_at).total_seconds() < self._backfill_wait_seconds
+            and pending_batches is None
+            and (now - run.backfill_requested_at).total_seconds() < backfill_wait_seconds
         ):
             await self._persist_waiting(run, gaps)
             return ScreeningPreparationOutcome(ready_for_screening=False)
 
+        if missing and run.backfill_requested_at is not None:
+            # A market-wide missing session is not a calendar mismatch until
+            # MiniQMT has actually been asked to refill it and the queue has
+            # drained.  Classifying it during the initial coverage check would
+            # make `needs_backfill` false and silently skip the provider.
+            gaps = self._classify_confirmed_calendar_mismatches(
+                gaps,
+                included_count=len(included),
+                backfill_attempted=True,
+            )
+            missing = tuple(item for item in gaps if item.needs_backfill)
+            inferred_suspensions = self._confirmed_suspension_sessions(
+                missing,
+                bars_by_instrument,
+            )
+            if inferred_suspensions:
+                await self._persist_inferred_suspensions(
+                    run.id,
+                    inferred_suspensions,
+                )
+                suspended.update(inferred_suspensions)
+                gaps = self._gap_service.assess(
+                    instruments=included,
+                    bars_by_instrument=bars_by_instrument,
+                    required_sessions=plan.market_sessions,
+                    minimum_rule_sessions=plan.minimum_rule_sessions,
+                    available_sessions=open_sessions,
+                    suspended_sessions=suspended,
+                    currently_suspended_ids={
+                        instrument_id
+                        for instrument_id, value in resolution.trading_statuses.items()
+                        if value == "SUSPENDED"
+                    },
+                    as_of_date=spec.as_of_date,
+                    max_stale_sessions=self._maximum_stale_sessions,
+                )
+                gaps = self._classify_calendar_mismatches(
+                    gaps,
+                    included_count=len(included),
+                )
+
+        explicit_provider_failures = {
+            item.instrument_id
+            for item in await self._members(run.id)
+            if item.status is ScanMemberStatus.PROVIDER_FAILED
+        }
         finalized = tuple(
-            self._finalize_gap(item, backfill_attempted=run.backfill_requested_at is not None)
+            self._finalize_gap(
+                item,
+                backfill_attempted=run.backfill_requested_at is not None,
+                provider_failed=item.instrument_id in explicit_provider_failures,
+            )
             for item in gaps
         )
         await self._persist_stage(
@@ -406,11 +516,7 @@ class ScreeningDataPreparationService:
             65,
             "正在检查数据质量",
         )
-        ready_ids = {
-            item.instrument_id
-            for item in finalized
-            if item.readiness is ScreeningInstrumentReadiness.READY
-        }
+        ready_ids = {item.instrument_id for item in finalized if item.calculation_ready}
         await self._persist_readiness(
             run.id,
             finalized,
@@ -430,7 +536,8 @@ class ScreeningDataPreparationService:
         feature_store = ScreeningFeatureStore(
             required_condition_keys=tuple(
                 item.definition.condition_key for item in validated.conditions
-            )
+            ),
+            market_sessions=plan.market_sessions,
         )
         by_id = {item.id: item for item in included}
         for instrument_id in ready_ids:
@@ -476,7 +583,7 @@ class ScreeningDataPreparationService:
             required = tuple(
                 item
                 for item in open_dates
-                if plan.earliest_required_date <= item <= plan.latest_required_date
+                if plan.earliest_fetch_date <= item <= plan.latest_required_date
             )
             return plan, required
         except (AttributeError, ValueError) as exc:
@@ -565,7 +672,7 @@ class ScreeningDataPreparationService:
         plan: DataRequirementPlan,
         open_sessions: Sequence[date],
     ) -> tuple[dict[UUID, list[StrategyBar]], list[object]]:
-        start_at = datetime.combine(plan.earliest_required_date, time.min, SHANGHAI).astimezone(UTC)
+        start_at = datetime.combine(plan.earliest_fetch_date, time.min, SHANGHAI).astimezone(UTC)
         end_at = datetime.combine(
             plan.latest_required_date + timedelta(days=1),
             time.min,
@@ -613,11 +720,13 @@ class ScreeningDataPreparationService:
                 requests.setdefault(value, []).append(by_id[gap.instrument_id])
         missing_gaps = tuple(item for item in gaps if item.needs_backfill)
         queue_failed_ids: set[UUID] = set()
+        queued_batch_count = 0
+        maximum_queue_depth = 0
         for (start_date, end_date), values in requests.items():
             for offset in range(0, len(values), self._backfill_batch_size):
                 batch = values[offset : offset + self._backfill_batch_size]
                 try:
-                    await enqueue_backfill(
+                    queue_depth = await enqueue_backfill(
                         {
                             "request_id": str(uuid4()),
                             "instrument_ids": [str(item.id) for item in batch],
@@ -650,8 +759,24 @@ class ScreeningDataPreparationService:
                             "scan_run_id": str(run.id),
                         }
                     )
+                    queued_batch_count += 1
+                    if isinstance(queue_depth, int):
+                        maximum_queue_depth = max(maximum_queue_depth, queue_depth)
                 except Exception:
                     queue_failed_ids.update(item.id for item in batch)
+        estimated_batch_count = max(queued_batch_count, maximum_queue_depth)
+        estimated_wait_seconds = (
+            min(
+                MAX_BACKFILL_WAIT_SECONDS,
+                max(
+                    self._backfill_wait_seconds,
+                    estimated_batch_count * BACKFILL_SECONDS_PER_BATCH
+                    + self._backfill_wait_seconds,
+                ),
+            )
+            if queued_batch_count
+            else 0
+        )
         now = datetime.now(UTC)
         members = await self._members(run.id)
         gap_by_id = {item.instrument_id: item for item in gaps}
@@ -695,6 +820,10 @@ class ScreeningDataPreparationService:
                     },
                     "downloading_count": len(missing_gaps) - len(queue_failed_ids),
                     "provider_failed_count": len(queue_failed_ids),
+                    "queued_batch_count": queued_batch_count,
+                    "maximum_queue_depth": maximum_queue_depth,
+                    "estimated_backfill_wait_seconds": estimated_wait_seconds,
+                    "queue_drain_observed_at": None,
                     "updated_at": now.isoformat(),
                 }
             )
@@ -717,6 +846,9 @@ class ScreeningDataPreparationService:
         self,
         run: ScanRun,
         gaps: Sequence[InstrumentDataGap],
+        *,
+        pending_batches: int | None = None,
+        queue_drain_observed_at: datetime | None = None,
     ) -> None:
         now = datetime.now(UTC)
         async with self._uow_factory() as uow:
@@ -727,8 +859,18 @@ class ScreeningDataPreparationService:
             preparation.update(
                 {
                     "stage": ScreeningPreparationStage.BACKFILLING_MARKET_DATA.value,
-                    "current_action": "正在等待MiniQMT返回历史行情",
-                    "downloading_count": len(gaps),
+                    "current_action": (
+                        "MiniQMT补数队列已排空，正在确认最后一批数据入库"
+                        if pending_batches == 0
+                        else "正在等待MiniQMT返回历史行情"
+                    ),
+                    "downloading_count": sum(item.needs_backfill for item in gaps),
+                    "pending_batch_count": pending_batches,
+                    "queue_drain_observed_at": (
+                        queue_drain_observed_at.isoformat()
+                        if queue_drain_observed_at is not None
+                        else None
+                    ),
                     "updated_at": now.isoformat(),
                 }
             )
@@ -741,25 +883,138 @@ class ScreeningDataPreparationService:
             await uow.commit()
 
     @staticmethod
+    def _confirmed_suspension_sessions(
+        gaps: Sequence[InstrumentDataGap],
+        bars_by_instrument: Mapping[UUID, Sequence[StrategyBar]],
+    ) -> set[tuple[UUID, date]]:
+        """Infer suspension only after MiniQMT successfully returned no daily bar.
+
+        A listed instrument with other valid bars in the requested window but
+        no bar for a specifically re-requested open session is a suspension
+        fact, not an endlessly retryable transport failure.  Instruments with
+        no bars at all remain a reference/lifecycle problem and are not
+        inferred here.
+        """
+
+        return {
+            (gap.instrument_id, session)
+            for gap in gaps
+            if gap.readiness is ScreeningInstrumentReadiness.DATA_GAP
+            and bars_by_instrument.get(gap.instrument_id)
+            for session in gap.missing_sessions
+        }
+
+    async def _persist_inferred_suspensions(
+        self,
+        run_id: UUID,
+        sessions: set[tuple[UUID, date]],
+    ) -> None:
+        now = datetime.now(UTC)
+        values = [
+            InstrumentTradingStatus(
+                instrument_id=instrument_id,
+                session_date=session_date,
+                status=InstrumentTradingState.SUSPENDED,
+                source="MINIQMT_DAILY_BAR",
+                fetched_at=now,
+                suspension_type="INFERRED_NO_DAILY_BAR",
+                reason=(
+                    "MiniQMT历史请求成功完成；市场开市且该股票在请求日期仍无日线，按停牌语义记录"
+                ),
+            )
+            for instrument_id, session_date in sorted(
+                sessions,
+                key=lambda item: (item[1], str(item[0])),
+            )
+        ]
+        async with self._uow_factory() as uow:
+            await uow.instrument_trading_statuses.upsert_many(values)
+            locked = await uow.scan_runs.get_for_update(run_id)
+            if locked is not None:
+                preparation = self._preparation(locked)
+                preparation.update(
+                    {
+                        "inferred_suspended_session_count": len(values),
+                        "updated_at": now.isoformat(),
+                    }
+                )
+                locked.execution_stats = {
+                    **locked.execution_stats,
+                    "data_preparation": preparation,
+                }
+                await uow.scan_runs.update(locked)
+            await uow.commit()
+
+    @staticmethod
     def _finalize_gap(
         gap: InstrumentDataGap,
         *,
         backfill_attempted: bool,
+        provider_failed: bool = False,
     ) -> InstrumentDataGap:
-        if (
-            backfill_attempted
-            and gap.readiness is ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY
-        ):
+        if provider_failed:
             return InstrumentDataGap(
                 instrument_id=gap.instrument_id,
                 readiness=ScreeningInstrumentReadiness.PROVIDER_FAILED,
                 available_bars=gap.available_bars,
                 required_bars=gap.required_bars,
                 missing_sessions=gap.missing_sessions,
-                reason_code="SCREENING_DATA_STILL_NOT_READY",
-                reason="MiniQMT补数后仍缺少所需历史日线",
+                reason_code="SCREENING_PROVIDER_NOT_AVAILABLE",
+                reason="MiniQMT历史行情请求明确失败",
+            )
+        if backfill_attempted and gap.readiness is ScreeningInstrumentReadiness.DATA_GAP:
+            return replace(
+                gap,
+                reason_code="DATA_STILL_NOT_READY",
+                reason="增量补数后正常交易日行情仍未就绪",
             )
         return gap
+
+    @staticmethod
+    def _classify_calendar_mismatches(
+        gaps: Sequence[InstrumentDataGap],
+        *,
+        included_count: int,
+    ) -> tuple[InstrumentDataGap, ...]:
+        """Stop mass backfills when one alleged session is absent market-wide."""
+
+        missing_lengths = sorted(len(gap.missing_sessions) for gap in gaps if gap.missing_sessions)
+        if not missing_lengths or missing_lengths[len(missing_lengths) // 2] > 2:
+            return tuple(gaps)
+        counts = Counter(session for gap in gaps for session in gap.missing_sessions)
+        threshold = max(50, int(included_count * 0.5))
+        suspicious = {session for session, count in counts.items() if count >= threshold}
+        if not suspicious:
+            return tuple(gaps)
+        dates = "、".join(item.isoformat() for item in sorted(suspicious))
+        return tuple(
+            replace(
+                gap,
+                readiness=ScreeningInstrumentReadiness.CALENDAR_MISMATCH,
+                reason_code="CALENDAR_MISMATCH",
+                reason=f"大量股票共同缺少{dates}行情，请先核对交易日历",
+            )
+            if suspicious.intersection(gap.missing_sessions)
+            else gap
+            for gap in gaps
+        )
+
+    @classmethod
+    def _classify_confirmed_calendar_mismatches(
+        cls,
+        gaps: Sequence[InstrumentDataGap],
+        *,
+        included_count: int,
+        backfill_attempted: bool,
+    ) -> tuple[InstrumentDataGap, ...]:
+        """Classify a common gap only after a real provider refill attempt."""
+
+        if not backfill_attempted:
+            return tuple(gaps)
+        return cls._classify_calendar_mismatches(
+            gaps,
+            included_count=included_count,
+        )
 
     async def _verify_reference_data(
         self,
@@ -824,6 +1079,7 @@ class ScreeningDataPreparationService:
             member.required_bars = gap.required_bars
             member.updated_at = now
         counts = Counter(item.readiness.value for item in gaps)
+        reason_counts = Counter(item.reason_code for item in gaps)
         prior_preparation = self._preparation(await self._get_run(run_id))
         original_ready_value = prior_preparation.get("original_ready_count")
         if isinstance(original_ready_value, int):
@@ -847,9 +1103,10 @@ class ScreeningDataPreparationService:
             error_codes.append("SCREENING_REFERENCE_DATA_MISSING")
         if counts[ScreeningInstrumentReadiness.QUALITY_FAILED.value]:
             error_codes.append("SCREENING_DATA_QUALITY_FAILED")
-        if (
-            counts[ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value]
-            and not prior_preparation.get("downloading_count")
+        if counts[ScreeningInstrumentReadiness.CALENDAR_MISMATCH.value]:
+            error_codes.append("SCREENING_CALENDAR_MISMATCH")
+        if counts[ScreeningInstrumentReadiness.DATA_GAP.value] and not prior_preparation.get(
+            "downloading_count"
         ):
             error_codes.append("SCREENING_DATA_STILL_NOT_READY")
         async with self._uow_factory() as uow:
@@ -875,9 +1132,33 @@ class ScreeningDataPreparationService:
                     "quality_failed_count": counts[
                         ScreeningInstrumentReadiness.QUALITY_FAILED.value
                     ],
+                    "reference_data_missing_count": counts[
+                        ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING.value
+                    ],
                     "not_applicable_count": counts[
                         ScreeningInstrumentReadiness.NOT_APPLICABLE.value
                     ],
+                    "listing_history_short_count": reason_counts["LISTING_HISTORY_TOO_SHORT"],
+                    "currently_suspended_count": counts[
+                        ScreeningInstrumentReadiness.CURRENTLY_SUSPENDED.value
+                    ],
+                    "stale_data_count": counts[ScreeningInstrumentReadiness.STALE_DATA.value],
+                    "data_gap_count": counts[ScreeningInstrumentReadiness.DATA_GAP.value],
+                    "calendar_mismatch_count": counts[
+                        ScreeningInstrumentReadiness.CALENDAR_MISMATCH.value
+                    ],
+                    "calendar_mismatch_dates": [
+                        item.isoformat()
+                        for item in sorted(
+                            {
+                                session
+                                for gap in gaps
+                                if gap.readiness is ScreeningInstrumentReadiness.CALENDAR_MISMATCH
+                                for session in gap.missing_sessions
+                            }
+                        )
+                    ],
+                    "delisted_count": counts[ScreeningInstrumentReadiness.DELISTED.value],
                     "backfilled_instrument_count": max(
                         0,
                         len(ready_ids) - original_ready,
@@ -893,14 +1174,17 @@ class ScreeningDataPreparationService:
                 "data_preparation": preparation,
             }
             locked.data_ready_instruments = len(ready_ids)
-            locked.insufficient_history = counts[
-                ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value
-            ]
+            locked.insufficient_history = (
+                counts[ScreeningInstrumentReadiness.DATA_GAP.value]
+                + counts[ScreeningInstrumentReadiness.INSUFFICIENT_HISTORY.value]
+                + reason_counts["LISTING_HISTORY_TOO_SHORT"]
+            )
             locked.backfill_failed = counts[ScreeningInstrumentReadiness.PROVIDER_FAILED.value]
             locked.failed_instruments = (
                 counts[ScreeningInstrumentReadiness.PROVIDER_FAILED.value]
                 + counts[ScreeningInstrumentReadiness.QUALITY_FAILED.value]
                 + counts[ScreeningInstrumentReadiness.REFERENCE_DATA_MISSING.value]
+                + counts[ScreeningInstrumentReadiness.CALENDAR_MISMATCH.value]
             )
             locked.mark_phase(ScanRunStatus.VERIFYING_DATA, now, progress_percent=70)
             await uow.scan_runs.update(locked)
@@ -1021,6 +1305,28 @@ class ScreeningDataPreparationService:
         value = run.execution_stats.get("data_preparation", {})
         return dict(value) if isinstance(value, Mapping) else {}
 
+    def _estimated_backfill_wait_seconds(self, run: ScanRun) -> int:
+        preparation = self._preparation(run)
+        value = preparation.get("estimated_backfill_wait_seconds")
+        persisted = value if isinstance(value, int) else self._backfill_wait_seconds
+        queue_depth_value = preparation.get("maximum_queue_depth")
+        if isinstance(queue_depth_value, int):
+            queue_estimate = (
+                queue_depth_value * BACKFILL_SECONDS_PER_BATCH + self._backfill_wait_seconds
+            )
+            persisted = max(persisted, queue_estimate)
+        return max(0, min(persisted, MAX_BACKFILL_WAIT_SECONDS))
+
+    def _queue_drain_observed_at(self, run: ScanRun) -> datetime | None:
+        value = self._preparation(run).get("queue_drain_observed_at")
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
 
 class RuleBasedScreeningProcessor:
     """Execute one SC02-A job from PostgreSQL facts in bounded batches."""
@@ -1121,7 +1427,11 @@ class RuleBasedScreeningProcessor:
                 await uow.commit()
         run = await self._get_run(run.id)
         plan = run.execution_stats.get("data_requirement_plan", {})
-        earliest = plan.get("earliest_required_date") if isinstance(plan, Mapping) else None
+        earliest = (
+            plan.get("earliest_fetch_date") or plan.get("earliest_required_date")
+            if isinstance(plan, Mapping)
+            else None
+        )
         start_at = (
             datetime.combine(date.fromisoformat(str(earliest)), time.min, SHANGHAI).astimezone(UTC)
             if earliest is not None
@@ -1162,10 +1472,14 @@ class RuleBasedScreeningProcessor:
                 item_bars = grouped[instrument.id]
                 member = by_member[instrument.id]
                 member.bars_available = len(item_bars)
+                current_status = resolution.trading_statuses.get(instrument.id)
+                currently_suspended = current_status == "SUSPENDED"
                 latest_is_as_of = bool(item_bars) and (
                     item_bars[-1].timestamp.astimezone(SHANGHAI).date() == spec.as_of_date
                 )
-                if len(item_bars) < validated.required_history_bars or not latest_is_as_of:
+                if len(item_bars) < validated.required_history_bars or (
+                    not latest_is_as_of and not currently_suspended
+                ):
                     member.status = ScanMemberStatus.DATA_MISSING
                     member.reason_code = "INSUFFICIENT_HISTORY"
                     member.reason = "历史日线不足或缺少筛选日日线"
@@ -1178,13 +1492,19 @@ class RuleBasedScreeningProcessor:
                         spec,
                         instrument,
                         item_bars,
-                        trading_status=resolution.trading_statuses.get(instrument.id),
+                        trading_status=current_status,
                     )
                 except Exception as exc:
                     member.status = ScanMemberStatus.FAILED
                     member.reason_code = "CONDITION_EVALUATION_FAILED"
                     member.reason = f"该股票规则计算失败：{str(exc)[:300]}"
                     failed += 1
+                    processed += 1
+                    continue
+                if currently_suspended:
+                    member.status = ScanMemberStatus.CURRENTLY_SUSPENDED
+                    member.reason_code = "CURRENTLY_SUSPENDED"
+                    member.reason = "筛选截止日当前停牌，已完成研究计算但不进入可执行结果"
                     processed += 1
                     continue
                 if (
@@ -1280,6 +1600,25 @@ class RuleBasedScreeningProcessor:
             locked.query_count = 3
             locked.bars_read = len(bars)
             preparation_stats = self._preparation_stats(locked)
+            preparation_insufficient = 0
+            preparation_indeterminate = 0
+            preparation_failed = 0
+            if preparation_stats:
+                preparation_insufficient = (
+                    int(preparation_stats.get("insufficient_count", 0))
+                    + int(preparation_stats.get("listing_history_short_count", 0))
+                    + int(preparation_stats.get("data_gap_count", 0))
+                )
+                preparation_indeterminate = int(preparation_stats.get("indeterminate_count", 0))
+                preparation_failed = (
+                    int(preparation_stats.get("provider_failed_count", 0))
+                    + int(preparation_stats.get("quality_failed_count", 0))
+                    + int(preparation_stats.get("reference_data_missing_count", 0))
+                    + int(preparation_stats.get("calendar_mismatch_count", 0))
+                )
+            locked.insufficient_history = insufficient + preparation_insufficient
+            locked.indeterminate_count = indeterminate + preparation_indeterminate
+            locked.failed_instruments = failed + preparation_failed
             locked.execution_stats = {
                 **locked.execution_stats,
                 "as_of_date": spec.as_of_date.isoformat(),
@@ -1307,11 +1646,6 @@ class RuleBasedScreeningProcessor:
                     }
                 )
                 locked.execution_stats["data_preparation"] = preparation_stats
-                locked.insufficient_history += int(preparation_stats.get("insufficient_count", 0))
-                locked.indeterminate_count += int(preparation_stats.get("indeterminate_count", 0))
-                locked.failed_instruments += int(
-                    preparation_stats.get("provider_failed_count", 0)
-                ) + int(preparation_stats.get("quality_failed_count", 0))
             if (
                 locked.insufficient_history
                 or locked.indeterminate_count
@@ -1457,8 +1791,17 @@ class ScreeningOrchestrationService:
         self,
         run_id: UUID,
         enqueue_backfill: BackfillEnqueuer,
+        pending_backfill_batches: BackfillPendingCounter | None = None,
     ) -> None:
-        outcome = await self._preparation.prepare(run_id, enqueue_backfill)
+        outcome = (
+            await self._preparation.prepare(run_id, enqueue_backfill)
+            if pending_backfill_batches is None
+            else await self._preparation.prepare(
+                run_id,
+                enqueue_backfill,
+                pending_backfill_batches,
+            )
+        )
         if outcome.ready_for_screening:
             await self._screening.process(
                 run_id,
@@ -1484,7 +1827,11 @@ class UnifiedScannerWorkerProcessor:
         self._screening = screening_processor
         self._screening_orchestration = screening_orchestration
 
-    async def process_next(self, enqueue_backfill: BackfillEnqueuer) -> UUID | None:
+    async def process_next(
+        self,
+        enqueue_backfill: BackfillEnqueuer,
+        pending_backfill_batches: BackfillPendingCounter | None = None,
+    ) -> UUID | None:
         async with self._uow_factory() as uow:
             run = await uow.scan_runs.get_next_pending(
                 (
@@ -1511,7 +1858,11 @@ class UnifiedScannerWorkerProcessor:
                 if self._screening_orchestration is None:
                     await self._screening.process(run_id)
                 else:
-                    await self._screening_orchestration.process(run_id, enqueue_backfill)
+                    await self._screening_orchestration.process(
+                        run_id,
+                        enqueue_backfill,
+                        pending_backfill_batches,
+                    )
             else:
                 await self._legacy.process(run_id, enqueue_backfill)
         except Exception as exc:
@@ -1525,7 +1876,9 @@ class UnifiedScannerWorkerProcessor:
 def screening_spec_from_snapshot(payload: Mapping[str, object]) -> ScreeningSpec:
     try:
         universe_value = payload["universe_spec"]
-        conditions_value = payload["conditions"]
+        schema_version = int(str(payload["schema_version"]))
+        conditions_value = payload.get("conditions", [])
+        root_group_value = payload.get("root_group")
         ranking_value = payload.get("ranking_rules", [])
         exclusions_value = payload.get("exclusions", {})
         if not isinstance(universe_value, Mapping):
@@ -1548,18 +1901,10 @@ def screening_spec_from_snapshot(payload: Mapping[str, object]) -> ScreeningSpec
         )
         conditions_list: list[ScreeningCondition] = []
         for condition_value in conditions_value:
-            if not isinstance(condition_value, Mapping):
-                raise TypeError("condition must be an object")
-            condition_raw = dict(condition_value)
-            parameter_value = condition_raw.get("parameters", {})
-            if not isinstance(parameter_value, Mapping):
-                raise TypeError("condition parameters must be an object")
-            conditions_list.append(
-                ScreeningCondition(
-                    condition_key=str(condition_raw["condition_key"]),
-                    parameters=dict(parameter_value),
-                )
-            )
+            conditions_list.append(_screening_condition_from_snapshot(condition_value))
+        root_group = None
+        if schema_version == 2:
+            root_group = _screening_group_from_snapshot(root_group_value)
         ranking_list: list[RankingRule] = []
         for rule_value in ranking_value:
             if not isinstance(rule_value, Mapping):
@@ -1572,13 +1917,14 @@ def screening_spec_from_snapshot(payload: Mapping[str, object]) -> ScreeningSpec
                 )
             )
         return ScreeningSpec(
-            schema_version=int(str(payload["schema_version"])),
+            schema_version=schema_version,
             name=str(payload["name"]),
             origin=str(payload["origin"]),
             universe_spec=universe,
             as_of_date=date.fromisoformat(str(payload["as_of_date"])),
             timeframe=MarketTimeframe(str(payload["timeframe"])),
             conditions=tuple(conditions_list),
+            root_group=root_group,
             exclusions=dict(exclusions_value),
             ranking_rules=tuple(ranking_list),
             top_n=(None if payload.get("top_n") is None else int(str(payload["top_n"]))),
@@ -1586,5 +1932,50 @@ def screening_spec_from_snapshot(payload: Mapping[str, object]) -> ScreeningSpec
                 str(payload.get("price_adjustment_mode", "RAW"))
             ),
         )
-    except (KeyError, TypeError, ValueError) as exc:
+    except (KeyError, TypeError, ValueError, ScreeningError) as exc:
         raise ApplicationError("SCREENING_SPEC_INVALID", "持久化的ScreeningSpec快照无效") from exc
+
+
+def _screening_condition_from_snapshot(value: object) -> ScreeningCondition:
+    if not isinstance(value, Mapping):
+        raise TypeError("condition must be an object")
+    raw = dict(value)
+    parameter_value = raw.get("parameters", {})
+    if not isinstance(parameter_value, Mapping):
+        raise TypeError("condition parameters must be an object")
+    return ScreeningCondition(
+        condition_key=str(raw["condition_key"]),
+        parameters=dict(parameter_value),
+    )
+
+
+def _screening_group_from_snapshot(
+    value: object,
+    *,
+    depth: int = 1,
+) -> ScreeningConditionGroup:
+    if not isinstance(value, Mapping):
+        raise TypeError("root_group must be an object for ScreeningSpec v2")
+    if depth > 3:
+        raise ValueError("condition group nesting exceeds three levels")
+    raw = dict(value)
+    children_value = raw.get("children")
+    if not isinstance(children_value, list) or not children_value:
+        raise TypeError("condition group children must be a non-empty array")
+    children: list[ScreeningCondition | ScreeningConditionGroup] = []
+    for child_value in children_value:
+        if not isinstance(child_value, Mapping):
+            raise TypeError("condition group child must be an object")
+        child_raw = dict(child_value)
+        is_group = child_raw.get("node_type") == "GROUP" or (
+            "children" in child_raw and "operator" in child_raw
+        )
+        children.append(
+            _screening_group_from_snapshot(child_raw, depth=depth + 1)
+            if is_group
+            else _screening_condition_from_snapshot(child_raw)
+        )
+    return ScreeningConditionGroup(
+        operator=ConditionGroupOperator(str(raw.get("operator", "AND"))),
+        children=tuple(children),
+    )

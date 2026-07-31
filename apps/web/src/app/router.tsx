@@ -13,9 +13,7 @@ import { NotFoundPage } from "../pages/NotFoundPage";
 import { ReplayRunDetailPage, ReplayRunsPage } from "../pages/ReplayPages";
 import { MarketDataCenterPage } from "../pages/MarketDataCenterPage";
 import {
-  InformationCenterPage,
   InformationDetailPage,
-  MarketEventsPage,
 } from "../pages/InformationPages";
 import { OrdersPage } from "../pages/OrdersPage";
 import {
@@ -45,6 +43,7 @@ import { SignalsPage } from "../pages/SignalsPage";
 import { StrategyResearchPage } from "../pages/StrategyResearchPage";
 import { ResearchHistoryPage } from "../pages/ResearchHistoryPage";
 import { QuickBacktestPage } from "../pages/QuickBacktestPage";
+import { BacktestBatchPage } from "../pages/BacktestBatchPage";
 import { ParameterComparisonPage } from "../pages/ParameterComparisonPage";
 import { ResearchWorkspace } from "../components/ResearchWorkspace/ResearchWorkspace";
 
@@ -107,9 +106,15 @@ export const routes: RouteObject[] = [
         path: "scan-runs/:runId",
         element: <Navigate to="/scanners?tab=history" replace />,
       },
-      { path: "information", element: <InformationCenterPage /> },
+      {
+        path: "information",
+        element: <Navigate to="/ai-research?tab=materials" replace />,
+      },
       { path: "information/:itemId", element: <InformationDetailPage /> },
-      { path: "market-events", element: <MarketEventsPage /> },
+      {
+        path: "market-events",
+        element: <Navigate to="/ai-research?tab=materials" replace />,
+      },
       {
         path: "market-events/:eventId",
         element: <InformationDetailPage eventMode />,
@@ -148,7 +153,7 @@ export const routes: RouteObject[] = [
       {
         path: "strategy-runs",
         element: (
-          <LegacyFullSimulationRoute researchPath="/research/history?tab=runs">
+          <LegacyFullSimulationRoute researchPath="/research/archive?tab=backtests">
             <StrategyRunsPage />
           </LegacyFullSimulationRoute>
         ),
@@ -157,7 +162,7 @@ export const routes: RouteObject[] = [
       {
         path: "signals",
         element: (
-          <LegacyFullSimulationRoute researchPath="/research/history?tab=backtests">
+          <LegacyFullSimulationRoute researchPath="/research/archive?tab=backtests">
             <SignalsPage />
           </LegacyFullSimulationRoute>
         ),
@@ -229,7 +234,7 @@ export const routes: RouteObject[] = [
       {
         path: "replays",
         element: (
-          <LegacyFullSimulationRoute researchPath="/research/history?tab=backtests">
+          <LegacyFullSimulationRoute researchPath="/research/archive?tab=backtests">
             <ReplayRunsPage />
           </LegacyFullSimulationRoute>
         ),
@@ -249,10 +254,18 @@ export const routes: RouteObject[] = [
           { path: "my-strategies", element: <StrategyResearchPage /> },
         ],
       },
-      { path: "research/history", element: <ResearchHistoryPage /> },
+      {
+        path: "research/history",
+        element: <Navigate to="/research/archive" replace />,
+      },
+      { path: "research/archive", element: <ResearchHistoryPage /> },
       {
         path: "research/backtests/:backtestId",
         element: <BacktestDetailPage />,
+      },
+      {
+        path: "research/backtest-batches/:batchId",
+        element: <BacktestBatchPage />,
       },
       {
         path: "research/backtests/:backtestId/replay",

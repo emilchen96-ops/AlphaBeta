@@ -20,6 +20,11 @@ Redis 和 Web 可以继续使用 Docker；XtQuant 只存在于主机侧 Adapter/
 .\apps\api\.venv\Scripts\python.exe -m alphadesk_api.cli.miniqmt run-agent
 ```
 
+日常使用可直接双击 `scripts/启动 AlphaDesk.cmd`：脚本会在 Docker、API 和前端就绪后
+自动启动只读行情代理，并使用 `work/miniqmt-agent.pid` 避免重复进程。双击
+`scripts/关闭 AlphaDesk.cmd` 会安全停止该代理。MiniQMT 未登录时不阻断离线研究功能，
+但历史补数和实时行情会保持不可用状态。
+
 一次诊断可使用 `run-agent --once`。常用只读命令：
 
 ```powershell

@@ -21,9 +21,19 @@ class UniverseSpecBody(StrictBody):
 
 
 class ScreeningConditionBody(StrictBody):
+    node_type: Literal["CONDITION"] = "CONDITION"
     condition_key: str = Field(min_length=2, max_length=64, pattern=r"^[A-Z][A-Z0-9_]+$")
     condition_version: str | None = Field(default=None, min_length=1, max_length=32)
     parameters: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+
+
+class ScreeningConditionGroupBody(StrictBody):
+    node_type: Literal["GROUP"] = "GROUP"
+    operator: Literal["AND", "OR"] = "AND"
+    children: list["ScreeningConditionBody | ScreeningConditionGroupBody"] = Field(
+        min_length=1,
+        max_length=20,
+    )
 
 
 class RankingRuleBody(StrictBody):
@@ -38,7 +48,7 @@ class RankingRuleBody(StrictBody):
 
 
 class ScreeningSpecPayload(StrictBody):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     name: str = Field(min_length=1, max_length=128)
     origin: Literal[
         "USER_STRUCTURED",
@@ -51,7 +61,8 @@ class ScreeningSpecPayload(StrictBody):
     universe_spec: UniverseSpecBody = Field(default_factory=UniverseSpecBody)
     as_of_date: date
     timeframe: Literal["DAY_1"] = "DAY_1"
-    conditions: list[ScreeningConditionBody] = Field(min_length=1, max_length=32)
+    conditions: list[ScreeningConditionBody] = Field(default_factory=list, max_length=32)
+    root_group: ScreeningConditionGroupBody | None = None
     exclusions: dict[str, Any] = Field(default_factory=dict)
     ranking_rules: list[RankingRuleBody] = Field(default_factory=list, max_length=8)
     top_n: int | None = Field(default=None, ge=1, le=10_000)
@@ -143,6 +154,10 @@ class ConditionParameterResponse(BaseModel):
     max_value: str | None
     enum_values: list[str]
     unit: str | None
+    display_unit: str | None = None
+    precision: int | None = None
+    placeholder: str | None = None
+    help_text: str | None = None
 
 
 class ConditionDefinitionResponse(BaseModel):
@@ -159,6 +174,9 @@ class ConditionDefinitionResponse(BaseModel):
     explanation_template: str
     version: str
     enabled: bool
+    aliases: list[str] = Field(default_factory=list)
+    deprecated: bool = False
+    replacement_condition_key: str | None = None
 
 
 class ScreeningTemplateResponse(BaseModel):
@@ -279,6 +297,18 @@ class ScreeningProgressResponse(BaseModel):
     provider_failed_count: int
     quality_failed_count: int
     not_applicable_count: int
+    listing_history_short_count: int
+    currently_suspended_count: int
+    stale_data_count: int
+    data_gap_count: int
+    calendar_mismatch_count: int
+    calendar_mismatch_dates: list[str]
+    excluded_count: int
+    backfill_total_batches: int
+    backfill_pending_batches: int | None
+    backfill_processed_batches: int
+    backfill_progress_percent: int | None
+    backfill_estimated_remaining_seconds: int | None
 
 
 class ScreeningResultResponse(BaseModel):

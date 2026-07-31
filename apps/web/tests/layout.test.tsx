@@ -42,9 +42,9 @@ test("主导航按用户任务收敛并隐藏内部事实页面", () => {
     "行情",
     "自选股",
     "智能选股",
-    "策略研究",
-    "资讯研究",
-    "研究记录",
+    "策略回测",
+    "AI调研",
+    "研究档案",
     "数据中心",
     "设置",
   ]) {
@@ -59,10 +59,10 @@ test("主导航按用户任务收敛并隐藏内部事实页面", () => {
   }
 });
 
-test("策略研究以快速回测为主入口并保留统一工作区标签", async () => {
+test("策略回测以快速回测为主入口并保留统一工作区标签", async () => {
   renderRoute("/strategy-research");
   expect(
-    await screen.findByRole("heading", { name: "策略研究" }),
+    await screen.findByRole("heading", { name: "策略回测" }),
   ).toBeInTheDocument();
   for (const label of ["快速回测", "策略模板", "参数对比", "我的策略"]) {
     expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();

@@ -16,7 +16,10 @@ from alphadesk_api.application.market_reference import (
 )
 from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.infrastructure.database import DatabaseService
-from alphadesk_api.infrastructure.market_reference import FixtureMarketReferenceProvider
+from alphadesk_api.infrastructure.market_reference import (
+    FixtureMarketReferenceProvider,
+    VerifiedAshareMarketReferenceProvider,
+)
 
 
 async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, object]:
@@ -26,13 +29,17 @@ async def execute(args: argparse.Namespace, settings: Settings) -> dict[str, obj
         if args.command in {"status", "verify"}:
             value = await MarketReferenceQueryService(uow_factory).status()
             return asdict(value)
-        if args.provider != "fixture":
+        if args.provider not in {"verified", "fixture"}:
             raise ApplicationError(
                 "MARKET_REFERENCE_PROVIDER_NOT_CONFIGURED",
-                "CLI 当前仅启用离线 Fixture; Tushare 需配置后联调",
+                "CLI 当前仅启用已核验A股交易日历与离线Fixture",
             )
-        provider = FixtureMarketReferenceProvider()
-        service = ReferenceMarketDataSyncService(uow_factory, provider, "FIXTURE")
+        provider = (
+            VerifiedAshareMarketReferenceProvider()
+            if args.provider == "verified"
+            else FixtureMarketReferenceProvider()
+        )
+        service = ReferenceMarketDataSyncService(uow_factory, provider, provider.source)
         end = args.end or date.today()
         start = args.start or end - timedelta(days=365)
         if args.command == "sync-calendar":
@@ -79,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--end", type=date.fromisoformat)
         command.add_argument("--universe", default="research")
         command.add_argument("--instrument", action="append", type=UUID)
-        command.add_argument("--provider", default="fixture")
+        command.add_argument("--provider", default="verified")
         command.add_argument("--dry-run", action="store_true")
         command.add_argument("--max-instruments", type=int, default=30, choices=range(1, 501))
     commands.add_parser("verify")

@@ -53,7 +53,7 @@ export function StrategyRunsPage() {
     <section>
       <PageHeader
         title="研究运行"
-        description="历史策略研究运行及其持久化研究信号（Signal）。"
+        description="历史策略回测运行及其持久化研究信号（Signal）。"
       />
       <Alert
         showIcon

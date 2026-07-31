@@ -1,12 +1,14 @@
 """BT01 synchronous daily backtest orchestration and read models."""
 
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 import builtins
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import ROUND_FLOOR, Decimal
 from itertools import pairwise
 from typing import TypedDict
@@ -32,6 +34,7 @@ from alphadesk_api.application.simulated_execution import (
     BACKTEST_SUPPRESSION_REASON,
     SimulatedBrokerExecutionService,
     SimulatedExecutionMarketInput,
+    SimulatedExecutionResult,
 )
 from alphadesk_api.application.strategy_runner import (
     persisted_signal_from_draft,
@@ -47,6 +50,7 @@ from alphadesk_domain.backtest import (
     BacktestError,
     BacktestEvent,
     BacktestEventType,
+    BacktestExecutionPriceMode,
     BacktestFillMetricInput,
     BacktestMetricSet,
     BacktestPerformanceService,
@@ -113,11 +117,14 @@ class CreateBacktestRequest:
     initial_cash: Decimal
     order_type: OrderType
     time_in_force: TimeInForce
+    execution_price_mode: BacktestExecutionPriceMode
+    maximum_entry_gap_ratio: Decimal | None
     fee_configuration: AshareSimpleFeeModel
     slippage_configuration: FixedBasisPointsSlippageModel
     maximum_volume_participation: Decimal | None
     benchmark_symbol: str | None
     idempotency_key: str
+    position_size_ratio: Decimal | None = None
     risk_configuration_reference: str = "r01-default-v1"
     data_source_code: str | None = None
     correlation_id: UUID | None = None
@@ -180,6 +187,57 @@ def _available_volume(bar: StrategyBar, participation: Decimal | None, lot: Deci
     return lots * lot
 
 
+def _same_day_bars(
+    bars: list[StrategyBar],
+    trading_date: date,
+) -> tuple[StrategyBar, StrategyBar]:
+    """Return the last fully visible bar before 14:55 and the following bar.
+
+    Minute timestamps denote interval starts.  A 14:54 bar is therefore fully
+    known at 14:55; the first bar starting at or after 14:55 is the earliest
+    admissible execution input.
+    """
+
+    cutoff = datetime.combine(trading_date, time(14, 55), tzinfo=ASHARE_TIMEZONE)
+    visible = [bar for bar in bars if bar.timestamp.astimezone(ASHARE_TIMEZONE) < cutoff]
+    executable = [bar for bar in bars if bar.timestamp.astimezone(ASHARE_TIMEZONE) >= cutoff]
+    if not visible or not executable:
+        raise ApplicationError(
+            "BACKTEST_MINUTE_DATA_NOT_READY",
+            "当日尾盘成交需要完整的本地1分钟行情（至少覆盖14:54和14:55之后）",
+        )
+    return visible[-1], executable[0]
+
+
+def _partial_daily_bar(
+    daily: StrategyBar,
+    minutes: list[StrategyBar],
+    last_visible: StrategyBar,
+) -> StrategyBar:
+    visible = [bar for bar in minutes if bar.timestamp <= last_visible.timestamp]
+    if not visible:
+        raise ApplicationError(
+            "BACKTEST_MINUTE_DATA_NOT_READY",
+            "没有找到判断时点之前可见的分钟行情",
+        )
+    amounts = [bar.amount for bar in visible if bar.amount is not None]
+    return StrategyBar(
+        instrument_id=daily.instrument_id,
+        symbol=daily.symbol,
+        exchange=daily.exchange,
+        timeframe=MarketTimeframe.DAY_1,
+        timestamp=daily.timestamp,
+        open=visible[0].open,
+        high=max(bar.high for bar in visible),
+        low=min(bar.low for bar in visible),
+        close=last_visible.close,
+        volume=sum((bar.volume for bar in visible), ZERO),
+        amount=(sum(amounts, ZERO) if len(amounts) == len(visible) else None),
+        adjustment_mode=PriceAdjustmentMode.RAW,
+        raw_reference_price=last_visible.close,
+    )
+
+
 def _fill_fees(fill: Fill) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     transfer = Decimal(str(fill.metadata.get("transfer_fee", "0")))
     other = max(fill.other_fee - transfer, ZERO)
@@ -223,7 +281,17 @@ class BacktestService:
             max_total_exposure=configured_limits.max_total_exposure,
             max_orders_per_window=configured_limits.max_orders_per_window,
             order_frequency_window_seconds=configured_limits.order_frequency_window_seconds,
-            allow_market_orders=configured_limits.allow_market_orders,
+            # Historical BACKTEST orders never leave AlphaDesk.  NEXT_OPEN
+            # therefore uses a captured market-order allowance without changing
+            # the configured gate for manual or live orders.
+            allow_market_orders=(
+                configured_limits.allow_market_orders
+                or request.execution_price_mode
+                in (
+                    BacktestExecutionPriceMode.NEXT_OPEN,
+                    BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+                )
+            ),
             require_reference_price_for_market_order=(
                 configured_limits.require_reference_price_for_market_order
             ),
@@ -259,6 +327,9 @@ class BacktestService:
             initial_cash=request.initial_cash,
             order_type=request.order_type,
             time_in_force=request.time_in_force,
+            execution_price_mode=request.execution_price_mode,
+            position_size_ratio=request.position_size_ratio,
+            maximum_entry_gap_ratio=request.maximum_entry_gap_ratio,
             fee_configuration=request.fee_configuration,
             slippage_configuration=request.slippage_configuration,
             risk_configuration_reference=request.risk_configuration_reference,
@@ -418,6 +489,35 @@ class BacktestService:
                 accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
                 price_adjustment_mode=config.strategy_price_adjustment_mode,
             )
+            minute_bars: list[StrategyBar] = []
+            if config.execution_price_mode is BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE:
+                minute_readiness = await uow.historical_bars.readiness(
+                    instrument_ids=config.instrument_ids,
+                    timeframe=MarketTimeframe.MINUTE_1,
+                    start_at=config.start_at,
+                    end_at=config.end_at,
+                    source_code=config.data_source_code,
+                    adjustment_type=AdjustmentType.NONE,
+                    accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                    minimum_bars_per_instrument=2,
+                )
+                if minute_readiness.status not in (
+                    MarketDataReadinessStatus.READY,
+                    MarketDataReadinessStatus.PARTIAL,
+                ):
+                    raise ApplicationError(
+                        "BACKTEST_MINUTE_DATA_NOT_READY",
+                        "当日尾盘成交需要先在数据中心准备本地1分钟行情",
+                    )
+                minute_bars = await uow.historical_bars.list_authoritative_bars(
+                    instrument_ids=config.instrument_ids,
+                    timeframe=MarketTimeframe.MINUTE_1,
+                    start_at=config.start_at,
+                    end_at=config.end_at,
+                    source_code=config.data_source_code,
+                    adjustment_type=AdjustmentType.NONE,
+                    accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                )
             calendar_rows = await uow.trading_calendar.list(
                 exchange=None,
                 start=config.start_at.date(),
@@ -445,6 +545,14 @@ class BacktestService:
         strategy_bars_by_date: dict[date, dict[UUID, StrategyBar]] = defaultdict(dict)
         for bar in strategy_bars:
             strategy_bars_by_date[_bar_date(bar)][bar.instrument_id] = bar
+        minute_bars_by_date: dict[date, dict[UUID, list[StrategyBar]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        for bar in minute_bars:
+            minute_bars_by_date[_bar_date(bar)][bar.instrument_id].append(bar)
+        for instrument_bars in minute_bars_by_date.values():
+            for values in instrument_bars.values():
+                values.sort(key=lambda item: item.timestamp)
         calendar_dates = {item.session_date for item in calendar_rows if item.is_open}
         session_dates = sorted(bars_by_date)
         if calendar_dates:
@@ -537,6 +645,8 @@ class BacktestService:
         signal_risk = SignalRiskAssessmentService(self._uow_factory, captured_limits)
         confirmation = OrderConfirmationService(self._uow_factory)
         pending: dict[UUID, list[Order]] = defaultdict(list)
+        pending_weight_signals: dict[UUID, list[Signal]] = defaultdict(list)
+        order_reference_prices: dict[UUID, Decimal] = {}
         sequence = 0
         event_sequence = 2
         next_date = _next_dates(bars)
@@ -555,7 +665,19 @@ class BacktestService:
             current_time = clock.current_time
             day_bars = bars_by_date[session.trading_date]
             strategy_day_bars = strategy_bars_by_date[session.trading_date]
-            context.advance_time(current_time)
+            same_day_mode = (
+                config.execution_price_mode is BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE
+            )
+            decision_time = (
+                datetime.combine(
+                    session.trading_date,
+                    time(14, 55),
+                    tzinfo=ASHARE_TIMEZONE,
+                )
+                if phase is BacktestPhase.SESSION_CLOSE and same_day_mode
+                else current_time
+            )
+            context.advance_time(decision_time)
             if phase is BacktestPhase.SESSION_OPEN:
                 event_sequence += 1
                 await self._event(
@@ -569,6 +691,8 @@ class BacktestService:
                     bar = day_bars[instrument_id]
                     executable = list(pending[instrument_id])
                     pending[instrument_id].clear()
+                    weighted_signals = list(pending_weight_signals[instrument_id])
+                    pending_weight_signals[instrument_id].clear()
                     async with self._uow_factory() as uow:
                         instrument = await uow.instruments.get_by_id(instrument_id)
                         statuses = await uow.instrument_trading_statuses.list(
@@ -581,6 +705,7 @@ class BacktestService:
                         raise ApplicationError("INSTRUMENT_NOT_FOUND", "instrument was not found")
                     if any(item.status is InstrumentTradingState.SUSPENDED for item in statuses):
                         pending[instrument_id].extend(executable)
+                        pending_weight_signals[instrument_id].extend(weighted_signals)
                         event_sequence += 1
                         await self._event(
                             run.id,
@@ -590,7 +715,148 @@ class BacktestService:
                             f"Instrument {instrument_id} suspended; execution deferred",
                         )
                         continue
+                    for signal in weighted_signals:
+                        reference_price = signal.reference_price
+                        if (
+                            signal.side is OrderSide.BUY
+                            and config.maximum_entry_gap_ratio is not None
+                            and reference_price is not None
+                            and bar.open
+                            > reference_price * (Decimal("1") + config.maximum_entry_gap_ratio)
+                        ):
+                            gap_ratio = (bar.open / reference_price) - Decimal("1")
+                            if config.time_in_force is TimeInForce.GTC:
+                                pending_weight_signals[instrument_id].append(signal)
+                            event_sequence += 1
+                            await self._event(
+                                run.id,
+                                event_sequence,
+                                BacktestEventType.WARNING,
+                                current_time,
+                                (
+                                    "Position-sized buy skipped because the opening "
+                                    "gap exceeded the limit"
+                                ),
+                                details={
+                                    "code": "BACKTEST_ENTRY_GAP_EXCEEDED",
+                                    "signal_id": str(signal.id),
+                                    "reference_close": str(reference_price),
+                                    "next_open": str(bar.open),
+                                    "gap_ratio": str(gap_ratio),
+                                    "maximum_entry_gap_ratio": str(config.maximum_entry_gap_ratio),
+                                    "time_in_force": config.time_in_force.value,
+                                },
+                            )
+                            await self._persist_progress(run)
+                            continue
+                        quantity = await self._position_sized_quantity(
+                            run,
+                            signal,
+                            opening_price=bar.open,
+                            lot_size=instrument.lot_size,
+                        )
+                        outcome, returned_order, decision_id = await self._signal_to_order(
+                            run,
+                            signal,
+                            bar,
+                            current_time,
+                            session.trading_date,
+                            risk_orders,
+                            signal_risk,
+                            confirmation,
+                            quantity_override=(quantity if quantity > ZERO else None),
+                            reference_price_override=bar.open,
+                        )
+                        if outcome is RiskDecisionType.ALLOW:
+                            run.risk_passed += 1
+                        elif outcome is RiskDecisionType.REJECT:
+                            run.risk_rejected += 1
+                        else:
+                            run.risk_reviewed += 1
+                        event_sequence += 1
+                        await self._event(
+                            run.id,
+                            event_sequence,
+                            BacktestEventType.RISK_DECIDED,
+                            current_time,
+                            f"Signal {signal.id} risk decision: {outcome.value}",
+                            details={
+                                "risk_decision_id": str(decision_id),
+                                "signal_id": str(signal.id),
+                                "decision": outcome.value,
+                                "position_sized_quantity": str(quantity),
+                            },
+                        )
+                        if returned_order is None:
+                            if quantity <= ZERO:
+                                event_sequence += 1
+                                await self._event(
+                                    run.id,
+                                    event_sequence,
+                                    BacktestEventType.WARNING,
+                                    current_time,
+                                    (
+                                        "Position size was below one tradable lot or "
+                                        "no position was available"
+                                    ),
+                                    details={
+                                        "code": "BACKTEST_POSITION_SIZE_NOT_TRADABLE",
+                                        "signal_id": str(signal.id),
+                                        "side": signal.side.value,
+                                        "position_size_ratio": str(config.position_size_ratio),
+                                    },
+                                )
+                            await self._persist_progress(run)
+                            continue
+                        run.orders_created += 1
+                        executable.append(returned_order)
+                        event_sequence += 1
+                        await self._event(
+                            run.id,
+                            event_sequence,
+                            BacktestEventType.ORDER_CREATED,
+                            returned_order.created_at,
+                            f"Order {returned_order.id} created",
+                            details={
+                                "order_id": str(returned_order.id),
+                                "signal_id": str(signal.id),
+                                "position_sized_quantity": str(quantity),
+                            },
+                        )
                     for order in executable:
+                        reference_price = order_reference_prices.get(order.id)
+                        if (
+                            order.side is OrderSide.BUY
+                            and config.execution_price_mode is BacktestExecutionPriceMode.NEXT_OPEN
+                            and config.maximum_entry_gap_ratio is not None
+                            and reference_price is not None
+                            and bar.open
+                            > reference_price * (Decimal("1") + config.maximum_entry_gap_ratio)
+                        ):
+                            gap_ratio = (bar.open / reference_price) - Decimal("1")
+                            if config.time_in_force is TimeInForce.DAY:
+                                day_orders_to_end.append(order.id)
+                            else:
+                                pending[instrument_id].append(order)
+                            event_sequence += 1
+                            await self._event(
+                                run.id,
+                                event_sequence,
+                                BacktestEventType.WARNING,
+                                current_time,
+                                "Buy order skipped because the next open gap exceeded the limit",
+                                details={
+                                    "code": "BACKTEST_ENTRY_GAP_EXCEEDED",
+                                    "order_id": str(order.id),
+                                    "reference_close": str(reference_price),
+                                    "next_open": str(bar.open),
+                                    "gap_ratio": str(gap_ratio),
+                                    "maximum_entry_gap_ratio": str(config.maximum_entry_gap_ratio),
+                                    "time_in_force": config.time_in_force.value,
+                                },
+                            )
+                            await self._persist_progress(run)
+                            continue
                         result = await execution.execute_market_input(
                             SimulatedExecutionMarketInput(
                                 order_id=order.id,
@@ -692,8 +958,12 @@ class BacktestService:
                     run.id,
                     event_sequence,
                     BacktestEventType.SESSION_CLOSE,
-                    current_time,
-                    f"Session {session.trading_date} close",
+                    decision_time,
+                    (
+                        f"Session {session.trading_date} 14:55 decision cutoff"
+                        if same_day_mode
+                        else f"Session {session.trading_date} close"
+                    ),
                 )
                 # T-day closes are known at SESSION_CLOSE.  Persisting the valuation
                 # here repairs the UNAVAILABLE projection left by T-day open fills and
@@ -710,6 +980,21 @@ class BacktestService:
                 for instrument_id in sorted(day_bars, key=str):
                     bar = day_bars[instrument_id]
                     strategy_bar = strategy_day_bars[instrument_id]
+                    execution_minute: StrategyBar | None = None
+                    if same_day_mode:
+                        instrument_minutes = minute_bars_by_date[session.trading_date].get(
+                            instrument_id,
+                            [],
+                        )
+                        last_visible, execution_minute = _same_day_bars(
+                            instrument_minutes,
+                            session.trading_date,
+                        )
+                        strategy_bar = _partial_daily_bar(
+                            strategy_bar,
+                            instrument_minutes,
+                            last_visible,
+                        )
                     run.bars_processed += 1
                     for draft in strategy.on_bar(context, strategy_bar):
                         validate_signal_draft(
@@ -717,12 +1002,17 @@ class BacktestService:
                             run=strategy_run,
                             current_bar_instrument_id=strategy_bar.instrument_id,
                             current_bar_timestamp=strategy_bar.timestamp,
-                            expected_generated_at=current_time,
+                            expected_generated_at=decision_time,
                         )
                         sequence += 1
                         signal = persisted_signal_from_draft(
                             strategy_run, draft, sequence, account_id=account.id
                         )
+                        if config.position_size_ratio is not None:
+                            signal.target_quantity = None
+                            signal.target_weight = (
+                                config.position_size_ratio if signal.side is OrderSide.BUY else ZERO
+                            )
                         signal.valid_until = config.end_at
                         async with self._uow_factory() as uow:
                             await uow.signals.add(signal)
@@ -739,18 +1029,52 @@ class BacktestService:
                                 "signal_id": str(signal.id),
                                 "instrument_id": str(signal.instrument_id),
                                 "side": signal.side.value,
+                                "decision_time": decision_time.isoformat(),
+                                "execution_timing": config.execution_price_mode.value,
                             },
                         )
-                        following_date = next_date.get((instrument_id, session.trading_date))
+                        following_date = (
+                            session.trading_date
+                            if same_day_mode
+                            else next_date.get((instrument_id, session.trading_date))
+                        )
+                        if config.position_size_ratio is not None and not same_day_mode:
+                            if following_date is not None:
+                                pending_weight_signals[instrument_id].append(signal)
+                            await self._persist_progress(run)
+                            continue
+                        quantity_override: Decimal | None = None
+                        reference_override: Decimal | None = None
+                        if (
+                            same_day_mode
+                            and config.position_size_ratio is not None
+                            and execution_minute is not None
+                        ):
+                            async with self._uow_factory() as uow:
+                                instrument = await uow.instruments.get_by_id(instrument_id)
+                            if instrument is None:
+                                raise ApplicationError(
+                                    "INSTRUMENT_NOT_FOUND",
+                                    "instrument was not found",
+                                )
+                            quantity_override = await self._position_sized_quantity(
+                                run,
+                                signal,
+                                opening_price=execution_minute.open,
+                                lot_size=instrument.lot_size,
+                            )
+                            reference_override = execution_minute.open
                         outcome, returned_order, decision_id = await self._signal_to_order(
                             run,
                             signal,
-                            bar,
-                            current_time,
+                            strategy_bar,
+                            decision_time,
                             following_date,
                             risk_orders,
                             signal_risk,
                             confirmation,
+                            quantity_override=quantity_override,
+                            reference_price_override=reference_override,
                         )
                         if outcome is RiskDecisionType.ALLOW:
                             run.risk_passed += 1
@@ -763,7 +1087,7 @@ class BacktestService:
                             run.id,
                             event_sequence,
                             BacktestEventType.RISK_DECIDED,
-                            current_time,
+                            decision_time,
                             f"Signal {signal.id} risk decision: {outcome.value}",
                             details={
                                 "risk_decision_id": str(decision_id),
@@ -773,10 +1097,9 @@ class BacktestService:
                         )
                         if returned_order is not None:
                             run.orders_created += 1
-                            if config.time_in_force is TimeInForce.DAY and following_date is None:
-                                day_orders_to_end.append(returned_order.id)
-                            else:
-                                pending[instrument_id].append(returned_order)
+                            order_reference_prices[returned_order.id] = (
+                                strategy_bar.raw_reference_price or strategy_bar.close
+                            )
                             event_sequence += 1
                             await self._event(
                                 run.id,
@@ -787,8 +1110,83 @@ class BacktestService:
                                 details={
                                     "order_id": str(returned_order.id),
                                     "signal_id": str(signal.id),
+                                    "decision_time": decision_time.isoformat(),
                                 },
                             )
+                            if same_day_mode and execution_minute is not None:
+                                async with self._uow_factory() as uow:
+                                    instrument = await uow.instruments.get_by_id(instrument_id)
+                                if instrument is None:
+                                    raise ApplicationError(
+                                        "INSTRUMENT_NOT_FOUND",
+                                        "instrument was not found",
+                                    )
+                                (
+                                    result,
+                                    fill_inputs,
+                                    new_trades,
+                                ) = await self._execute_same_day_order(
+                                    run=run,
+                                    execution=execution,
+                                    order=returned_order,
+                                    minute_bar=execution_minute,
+                                    lot_size=instrument.lot_size,
+                                    position_opened_at=position_opened_at,
+                                )
+                                metric_fills.extend(fill_inputs)
+                                trades.extend(new_trades)
+                                run.fills_generated += len(result.fills)
+                                event_sequence += 1
+                                await self._event(
+                                    run.id,
+                                    event_sequence,
+                                    BacktestEventType.EXECUTION_ATTEMPTED,
+                                    result.attempt.started_at,
+                                    f"Order {result.order.id} executed after 14:55 decision",
+                                    details={
+                                        "attempt_id": str(result.attempt.id),
+                                        "order_id": str(result.order.id),
+                                        "fill_count": len(result.fills),
+                                        "decision_time": decision_time.isoformat(),
+                                        "order_time": returned_order.created_at.isoformat(),
+                                        "execution_time": execution_minute.timestamp.isoformat(),
+                                        "price_source": (
+                                            "first local 1-minute bar after 14:55 cutoff"
+                                        ),
+                                    },
+                                )
+                                for fill in result.fills:
+                                    event_sequence += 1
+                                    await self._event(
+                                        run.id,
+                                        event_sequence,
+                                        BacktestEventType.FILL_GENERATED,
+                                        fill.executed_at,
+                                        f"Fill {fill.id} generated",
+                                        details={
+                                            "fill_id": str(fill.id),
+                                            "order_id": str(result.order.id),
+                                            "quantity": str(fill.quantity),
+                                            "price": str(fill.price),
+                                            "price_source": (
+                                                "first local 1-minute bar after 14:55 cutoff"
+                                            ),
+                                        },
+                                    )
+                                if (
+                                    config.time_in_force is TimeInForce.DAY
+                                    and result.order.status not in OrderStateMachine.terminal_states
+                                ):
+                                    day_orders_to_end.append(result.order.id)
+                                elif (
+                                    config.time_in_force is not TimeInForce.DAY
+                                    and result.order.status is not OrderStatus.FILLED
+                                ):
+                                    pending[instrument_id].append(result.order)
+                            elif config.time_in_force is TimeInForce.DAY and following_date is None:
+                                day_orders_to_end.append(returned_order.id)
+                            else:
+                                pending[instrument_id].append(returned_order)
                         await self._persist_progress(run)
                     await self._persist_progress(run)
 
@@ -870,17 +1268,22 @@ class BacktestService:
         risk_orders: RiskGatedOrderService,
         signal_risk: SignalRiskAssessmentService,
         confirmation: OrderConfirmationService,
+        *,
+        quantity_override: Decimal | None = None,
+        reference_price_override: Decimal | None = None,
     ) -> tuple[RiskDecisionType, Order | None, UUID]:
         if run.account_id is None:
             raise ApplicationError("BACKTEST_ACCOUNT_CREATION_FAILED", "run has no account")
         key = f"bt:{run.id}:signal:{signal.id}"
-        if signal.target_quantity is None:
+        quantity = quantity_override or signal.target_quantity
+        reference_price = reference_price_override or signal.reference_price
+        if quantity is None:
             outcome = await signal_risk.assess(
                 signal.id,
                 run.account_id,
                 f"{key}:risk",
                 run.correlation_id,
-                reference_price=signal.reference_price,
+                reference_price=reference_price,
             )
             return outcome.decision.overall_decision, None, outcome.decision.id
         expiry_date = next_trading_date or _bar_date(bar)
@@ -892,7 +1295,8 @@ class BacktestService:
             expires_at = run.configuration.end_at
         limit_price = (
             (bar.raw_reference_price or bar.close)
-            if run.configuration.order_type is OrderType.LIMIT
+            if run.configuration.execution_price_mode
+            is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
             else None
         )
         outcome = await risk_orders.create(
@@ -902,7 +1306,7 @@ class BacktestService:
                 side=signal.side.value,
                 order_type=run.configuration.order_type.value,
                 time_in_force=run.configuration.time_in_force.value,
-                quantity=signal.target_quantity,
+                quantity=quantity,
                 limit_price=limit_price,
                 expires_at=expires_at,
                 idempotency_key=f"{key}:risk-order",
@@ -913,7 +1317,7 @@ class BacktestService:
                 intent_source=OrderIntentSource.STRATEGY,
                 source_id=signal.id,
                 strategy_key=run.configuration.strategy_key,
-                reference_price=bar.raw_reference_price or bar.close,
+                reference_price=reference_price or bar.raw_reference_price or bar.close,
             )
         )
         order = outcome.order
@@ -933,6 +1337,126 @@ class BacktestService:
             )
         )
         return outcome.decision.overall_decision, confirmed, outcome.decision.id
+
+    async def _position_sized_quantity(
+        self,
+        run: BacktestRun,
+        signal: Signal,
+        *,
+        opening_price: Decimal,
+        lot_size: Decimal,
+    ) -> Decimal:
+        """Resolve a target weight at the actual execution open without look-ahead."""
+
+        if run.account_id is None or run.configuration.position_size_ratio is None:
+            return ZERO
+        async with self._uow_factory() as uow:
+            account = await uow.accounts.get_by_id(run.account_id)
+            position = await uow.positions.get_for_account_instrument(
+                run.account_id, signal.instrument_id
+            )
+            balance = (
+                None
+                if account is None
+                else await uow.cash_balances.get(run.account_id, account.base_currency)
+            )
+        if signal.side is OrderSide.SELL:
+            return ZERO if position is None else position.available_quantity
+        if balance is None or balance.available_cash <= ZERO:
+            return ZERO
+        execution_price = run.configuration.slippage_configuration.apply(
+            side=OrderSide.BUY,
+            reference_price=opening_price,
+            price_limit_up=None,
+            price_limit_down=None,
+        )
+        budget = balance.available_cash * run.configuration.position_size_ratio
+        lots = (budget / execution_price / lot_size).to_integral_value(rounding=ROUND_FLOOR)
+        quantity = lots * lot_size
+        while quantity > ZERO:
+            fees = run.configuration.fee_configuration.calculate(
+                side=OrderSide.BUY,
+                quantity=quantity,
+                price=execution_price,
+            ).total_fee
+            required_cash = (quantity * execution_price) + fees
+            if required_cash <= budget and required_cash <= balance.available_cash:
+                return quantity
+            quantity -= lot_size
+        return ZERO
+
+    async def _execute_same_day_order(
+        self,
+        *,
+        run: BacktestRun,
+        execution: SimulatedBrokerExecutionService,
+        order: Order,
+        minute_bar: StrategyBar,
+        lot_size: Decimal,
+        position_opened_at: dict[UUID, datetime],
+    ) -> tuple[
+        SimulatedExecutionResult,
+        list[BacktestFillMetricInput],
+        list[BacktestTradeSummary],
+    ]:
+        """Execute one order from the first minute bar strictly after decision time."""
+
+        result = await execution.execute_market_input(
+            SimulatedExecutionMarketInput(
+                order_id=order.id,
+                idempotency_key=(
+                    f"bt:{run.id}:same-day:{order.id}:{minute_bar.timestamp.isoformat()}"
+                ),
+                correlation_id=run.correlation_id,
+                timestamp=minute_bar.timestamp,
+                trading_status=TradingStatus.TRADING,
+                source="BACKTEST_MINUTE_BAR_NEXT_AFTER_CUTOFF",
+                is_stale=False,
+                open=minute_bar.open,
+                high=minute_bar.open,
+                low=minute_bar.open,
+                close=minute_bar.open,
+                last_price=minute_bar.open,
+                bid_price=minute_bar.open,
+                ask_price=minute_bar.open,
+                available_volume=_available_volume(
+                    minute_bar,
+                    run.configuration.maximum_volume_participation,
+                    lot_size,
+                ),
+            )
+        )
+        accounting_by_fill = {item.fill_id: item for item in result.accounting_results}
+        metric_inputs: list[BacktestFillMetricInput] = []
+        new_trades: list[BacktestTradeSummary] = []
+        for fill in result.fills:
+            fees = _fill_fees(fill)
+            metric_inputs.append(
+                BacktestFillMetricInput(
+                    side=result.order.side,
+                    quantity=fill.quantity,
+                    price=fill.price,
+                    commission=fees[0],
+                    stamp_duty=fees[1],
+                    transfer_fee=fees[2],
+                    other_fee=fees[3],
+                )
+            )
+            trade = self._trade_from_accounting(
+                run.id,
+                result.order,
+                fill,
+                accounting_by_fill[fill.id],
+                sum(fees, ZERO),
+                position_opened_at,
+            )
+            if trade is not None:
+                new_trades.append(trade)
+        if new_trades:
+            async with self._uow_factory() as uow:
+                await uow.backtest_trades.append_many(new_trades)
+                await uow.commit()
+        return result, metric_inputs, new_trades
 
     async def _valuation_snapshot(
         self,

@@ -30,7 +30,7 @@ const moduleLabels: Record<string, string> = {
   infrastructure: "基础设施",
   historical_market_data: "历史行情",
   scanner: "条件扫描",
-  strategy_research: "策略研究",
+  strategy_research: "策略回测",
   strategy_experiments: "批量研究",
   information_center: "资讯中心",
   ai_research: "AI 研究",

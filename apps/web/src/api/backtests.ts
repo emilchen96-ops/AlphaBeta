@@ -24,7 +24,9 @@ export const createBacktest = (body: CreateBacktestRequest) =>
   );
 
 export const listBacktests = (page = 1) =>
-  apiRequest<BacktestPage>(`/api/v1/backtests?page=${page}&page_size=20`);
+  apiRequest<BacktestPage>(
+    `/api/v1/research/backtests?page=${page}&page_size=100`,
+  );
 
 export const getBacktest = (id: string) =>
   apiRequest<BacktestRun>(`/api/v1/backtests/${id}`);

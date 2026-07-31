@@ -1,5 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 
+import { screeningConditionCount } from "../src/pages/ScannersPage";
+import type { ScreeningSpecSnapshot } from "../src/types/screenings";
 import { healthyStatus, renderRoute } from "./test-utils";
 
 const runId = "33333333-3333-4333-8333-333333333333";
@@ -231,6 +233,76 @@ const screeningConditions = [
     version: "1.0.0",
     enabled: true,
   },
+  {
+    condition_key: "RECENT_LIMIT_UP_EVENT",
+    display_name: "近期涨停事件",
+    description: "在最近N个共同市场交易日内至少出现指定次数的可靠涨停",
+    category: "LIMIT_UP_EVENT",
+    parameter_schema: [
+      {
+        name: "lookback_days",
+        display_name: "回看交易日数",
+        type: "trading_day_window",
+        description: "以市场共同交易日为准向前回看的窗口",
+        default: 5,
+        required: true,
+        nullable: false,
+        min_value: "1",
+        max_value: "250",
+        enum_values: [],
+        unit: "交易日",
+        display_unit: "个交易日",
+      },
+      {
+        name: "minimum_occurrences",
+        display_name: "最少涨停次数",
+        type: "integer",
+        description: "回看窗口内至少出现的涨停次数",
+        default: 1,
+        required: true,
+        nullable: false,
+        min_value: "1",
+        max_value: "50",
+        enum_values: [],
+        unit: "次",
+      },
+      {
+        name: "event_selection",
+        display_name: "事件选择方式",
+        type: "enum",
+        description: "存在多次涨停时用于展示和解释的事件",
+        default: "LATEST_VALID",
+        required: true,
+        nullable: false,
+        min_value: null,
+        max_value: null,
+        enum_values: ["LATEST_VALID", "EARLIEST_VALID"],
+        unit: null,
+      },
+      {
+        name: "require_reliable_limit_price",
+        display_name: "要求可靠涨停价",
+        type: "boolean",
+        description: "无法取得可靠涨停价时不使用固定比例猜测",
+        default: true,
+        required: true,
+        nullable: false,
+        min_value: null,
+        max_value: null,
+        enum_values: [],
+        unit: null,
+      },
+    ],
+    required_fields: ["close", "price_limit", "trading_calendar"],
+    required_history_bars: 7,
+    supported_timeframes: ["DAY_1"],
+    price_adjustment_mode: "RAW",
+    version: "1.0.0",
+    enabled: true,
+    aliases: ["近5日涨停", "近期涨停", "涨停次数", "涨停事件"],
+    deprecated: false,
+    replacement_condition_key: null,
+  },
 ];
 const naturalSpec = {
   ...screeningTemplates[0].spec,
@@ -410,6 +482,50 @@ let lastPreviewLookback: unknown;
 let userScreeningItems: unknown[] = [];
 let savedScreeningRunRequests = 0;
 let savedScreeningRunDate: string | undefined;
+let screeningRunOverride: Record<string, unknown> | undefined;
+let screeningProgressOverride: Record<string, unknown> | undefined;
+
+test("版本2组合条件按实际原子条件数量显示", () => {
+  expect(
+    screeningConditionCount(
+      {
+        ...naturalSpec,
+        schema_version: 2,
+        conditions: [],
+        root_group: {
+          node_type: "GROUP",
+          operator: "AND",
+          children: [
+            {
+              node_type: "CONDITION",
+              condition_key: "AMOUNT_THRESHOLD",
+              condition_version: "1.0.0",
+              parameters: { minimum_amount: "5000000000" },
+            },
+            {
+              node_type: "GROUP",
+              operator: "OR",
+              children: [
+                {
+                  node_type: "CONDITION",
+                  condition_key: "N_DAY_HIGH_BREAKOUT",
+                  condition_version: "1.0.0",
+                  parameters: { window: 20 },
+                },
+                {
+                  node_type: "CONDITION",
+                  condition_key: "BULLISH_CANDLE",
+                  condition_version: "1.0.0",
+                  parameters: {},
+                },
+              ],
+            },
+          ],
+        },
+      } as ScreeningSpecSnapshot,
+    ),
+  ).toBe(3);
+});
 
 function installFetch() {
   vi.stubGlobal(
@@ -535,10 +651,14 @@ function installFetch() {
         }
         createRequests += 1;
         createPayload = JSON.parse(init.body) as Record<string, unknown>;
-        body = { ...screeningRun, status: "QUEUED", current_phase: "QUEUED" };
+        body = {
+          ...(screeningRunOverride ?? screeningRun),
+          status: "QUEUED",
+          current_phase: "QUEUED",
+        };
         status = 202;
       } else if (url.includes(`/research/screenings/${runId}/progress`))
-        body = {
+        body = screeningProgressOverride ?? {
           screening_id: runId,
           status: "COMPLETED",
           total_instruments: 5200,
@@ -550,6 +670,25 @@ function installFetch() {
           matched_count: 1,
           progress_percent: 100,
           elapsed_ms: 1234,
+          current_stage: "COMPLETED",
+          stage_label: "已完成",
+          current_action: "筛选完成",
+          downloading_count: 0,
+          provider_failed_count: 0,
+          quality_failed_count: 0,
+          not_applicable_count: 0,
+          listing_history_short_count: 0,
+          currently_suspended_count: 0,
+          stale_data_count: 0,
+          data_gap_count: 3,
+          calendar_mismatch_count: 0,
+          calendar_mismatch_dates: [],
+          excluded_count: 120,
+          backfill_total_batches: 0,
+          backfill_pending_batches: 0,
+          backfill_processed_batches: 0,
+          backfill_progress_percent: null,
+          backfill_estimated_remaining_seconds: null,
         };
       else if (url.includes(`/research/screenings/${runId}/results`))
         body = {
@@ -559,7 +698,7 @@ function installFetch() {
           page_size: 100,
         };
       else if (url.endsWith(`/research/screenings/${runId}`))
-        body = screeningRun;
+        body = screeningRunOverride ?? screeningRun;
       else if (url.includes("/research/screenings?"))
         body = { items: [screeningRun], page: 1, page_size: 20, total: 1 };
       else if (url.includes("/scanners/catalog")) body = catalog;
@@ -616,6 +755,8 @@ beforeEach(() => {
   userScreeningItems = [];
   savedScreeningRunRequests = 0;
   savedScreeningRunDate = undefined;
+  screeningRunOverride = undefined;
+  screeningProgressOverride = undefined;
   vi.stubGlobal("WebSocket", undefined);
   installFetch();
 });
@@ -686,6 +827,27 @@ test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭�
   expect(document.body).not.toHaveTextContent("ScreeningSpec");
 });
 
+test("SC03-A自然语言页始终展示完整原子条件目录并按输入实时推荐", async () => {
+  renderRoute("/scanners");
+
+  expect(await screen.findByText("原子条件目录（共2项）")).toBeInTheDocument();
+  expect(screen.getByText("全部原子条件")).toBeInTheDocument();
+  expect(screen.getAllByText("涨停回踩").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("近期涨停事件").length).toBeGreaterThan(0);
+
+  fireEvent.change(screen.getByLabelText("选股描述"), {
+    target: { value: "过去20天内有涨停" },
+  });
+  expect(screen.getByText("根据当前描述推荐")).toBeInTheDocument();
+  expect(screen.getAllByText("近期涨停事件").length).toBeGreaterThan(1);
+
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "添加近期涨停事件" })[0],
+  );
+  expect(await screen.findByText("确认或修改条件")).toBeInTheDocument();
+  expect(screen.getByLabelText("回看交易日数")).toHaveValue("20");
+});
+
 test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async () => {
   renderRoute("/scanners");
   expect((await screen.findAllByText("自然语言选股")).length).toBeGreaterThan(
@@ -704,6 +866,67 @@ test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async
   ).toBeInTheDocument();
   expect(screen.getByText("确认或修改条件")).toBeInTheDocument();
   expect(screen.getByLabelText("回看交易日数")).toBeInTheDocument();
+});
+
+test("SC02-D补数阶段展示独立的历史行情下载进度", async () => {
+  screeningRunOverride = {
+    ...screeningRun,
+    status: "BACKFILLING_MARKET_DATA",
+    current_phase: "BACKFILLING_MARKET_DATA",
+    progress_percent: 30,
+    total_instruments: 5532,
+    processed_instruments: 0,
+    ready_instruments: 0,
+    matched_count: 0,
+    completed_at: null,
+  };
+  screeningProgressOverride = {
+    screening_id: runId,
+    status: "BACKFILLING_MARKET_DATA",
+    total_instruments: 5532,
+    processed_instruments: 0,
+    ready_instruments: 0,
+    insufficient_data_count: 0,
+    indeterminate_count: 0,
+    failed_count: 0,
+    matched_count: 0,
+    progress_percent: 30,
+    elapsed_ms: 0,
+    current_stage: "BACKFILLING_MARKET_DATA",
+    stage_label: "正在补齐历史行情",
+    current_action: "正在等待MiniQMT返回历史行情",
+    downloading_count: 4397,
+    provider_failed_count: 0,
+    quality_failed_count: 0,
+    not_applicable_count: 0,
+    listing_history_short_count: 0,
+    currently_suspended_count: 0,
+    stale_data_count: 0,
+    data_gap_count: 0,
+    calendar_mismatch_count: 0,
+    calendar_mismatch_dates: [],
+    excluded_count: 1135,
+    backfill_total_batches: 164,
+    backfill_pending_batches: 82,
+    backfill_processed_batches: 82,
+    backfill_progress_percent: 50,
+    backfill_estimated_remaining_seconds: 2460,
+  };
+  renderRoute("/scanners");
+  fireEvent.change(await screen.findByLabelText("选股描述"), {
+    target: { value: "找过去20日涨停回踩并且缩量的股票" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
+  const startButton = await screen.findByRole("button", { name: /开始选股/ });
+  await waitFor(() => expect(startButton).toBeEnabled());
+  fireEvent.click(startButton);
+  await waitFor(() => expect(createRequests).toBe(1));
+
+  expect(await screen.findByLabelText("历史行情下载进度")).toBeInTheDocument();
+  expect(screen.getByText(/已处理 82 \/ 164 批/)).toBeInTheDocument();
+  expect(screen.getByText(/剩余 82 批/)).toBeInTheDocument();
+  expect(screen.getByText(/预计剩余：约41分钟/)).toBeInTheDocument();
+  expect(screen.getByText("整体流程进度")).toBeInTheDocument();
 });
 
 test("SC02-C从已保存方案确认后按最新交易日关联版本重跑", async () => {

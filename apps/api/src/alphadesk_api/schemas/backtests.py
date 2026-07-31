@@ -6,12 +6,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from alphadesk_domain.backtest import BacktestExecutionPriceMode
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 
 class BacktestFeeBody(BaseModel):
     commission_rate: str = "0.0003"
-    minimum_commission: str = "5"
+    minimum_commission: str | None = "5"
     stamp_duty_rate: str = "0.0005"
     transfer_fee_rate: str = "0.00001"
 
@@ -29,8 +30,13 @@ class BacktestCreateBody(BaseModel):
     start_at: datetime
     end_at: datetime
     initial_cash: str
-    order_type: str = "LIMIT"
+    order_type: str = "MARKET"
     time_in_force: str = "DAY"
+    execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    # Omitted by legacy API clients that still use fixed strategy quantities.
+    # The current web workbench sends an explicit ratio for NEXT_OPEN runs.
+    position_size_ratio: str | None = None
+    maximum_entry_gap_ratio: str | None = "0.05"
     fee_configuration: BacktestFeeBody = Field(default_factory=BacktestFeeBody)
     slippage_configuration: BacktestSlippageBody = Field(default_factory=BacktestSlippageBody)
     maximum_volume_participation: str | None = None
