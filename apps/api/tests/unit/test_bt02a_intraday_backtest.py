@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from alphadesk_api.application.backtests import (
+    _intraday_replay_context,
     _limit_locked_available_volume,
     _reliable_price_limits,
 )
@@ -14,6 +15,8 @@ from alphadesk_domain.backtest import (
     BacktestConfiguration,
     BacktestError,
     BacktestExecutionPriceMode,
+    BacktestPhase,
+    BacktestSession,
     backtest_configuration_from_dict,
     backtest_configuration_to_dict,
     backtest_request_fingerprint,
@@ -36,7 +39,7 @@ from alphadesk_domain.intraday_backtest import (
     signal_confirmation_points,
 )
 from alphadesk_domain.market_reference import PriceAdjustmentMode
-from alphadesk_domain.strategy import StrategyBar
+from alphadesk_domain.strategy import StrategyBar, StrategyContext
 
 pytestmark = [pytest.mark.unit, pytest.mark.bt02]
 
@@ -182,6 +185,24 @@ def _configuration() -> BacktestConfiguration:
         signal_timeframe=MarketTimeframe.MINUTE_1,
         data_source_code="MINIQMT",
     )
+
+
+def test_intraday_replay_uses_an_instrument_local_monotonic_clock() -> None:
+    day = date(2026, 7, 30)
+    session = BacktestSession(trading_date=day, instrument_ids=(INSTRUMENT_ID,))
+    base = StrategyContext(
+        strategy_key="price_volume_breakout_sma_exit",
+        strategy_version="1.0.0",
+        run_id=uuid4(),
+        current_time=session.time_for(BacktestPhase.SESSION_CLOSE),
+        parameters={},
+    )
+
+    replay = _intraday_replay_context(base, session)
+    replay.advance_time(_timestamp(day, time(9, 31)))
+
+    assert replay.current_time == _timestamp(day, time(9, 31))
+    assert base.current_time == session.time_for(BacktestPhase.SESSION_CLOSE)
 
 
 def test_partial_daily_bar_uses_only_supplied_closed_minutes() -> None:
@@ -465,7 +486,32 @@ def test_daily_minute_price_conflict_is_not_usable() -> None:
         _bar(day, value=Decimal("11"), volume=Decimal("240")), _full_session(day)
     )
     assert quality.usable is False
-    assert "DAILY_OPEN_MISMATCH" in quality.issues
+    assert "DAILY_LOW_MISMATCH" in quality.issues
+    assert "DAILY_CLOSE_MISMATCH" in quality.issues
+
+
+def test_opening_auction_differences_are_safe_warnings() -> None:
+    day = date(2026, 7, 30)
+    daily = replace(
+        _bar(
+            day,
+            value=Decimal("10"),
+            high=Decimal("10"),
+            low=Decimal("9"),
+            volume=Decimal("246"),
+        ),
+        open=Decimal("9"),
+    )
+
+    quality = inspect_minute_session(daily, _full_session(day))
+
+    assert quality.usable is True
+    assert quality.issues == ()
+    assert quality.warnings == (
+        "OPEN_AUCTION_NOT_IN_MINUTE_BARS",
+        "AUCTION_LOW_NOT_IN_MINUTE_BARS",
+        "AUCTION_VOLUME_NOT_IN_MINUTE_BARS",
+    )
 
 
 def test_minute_outside_ashare_session_is_not_usable() -> None:

@@ -198,6 +198,31 @@ def _is_intraday_trigger_mode(mode: BacktestExecutionPriceMode | None) -> bool:
     )
 
 
+def _intraday_replay_context(
+    base: StrategyContext,
+    session: BacktestSession,
+) -> StrategyContext:
+    """Create an instrument-local clock for an already closed candidate session.
+
+    The outer daily event loop reaches ``SESSION_CLOSE`` before it knows whether a
+    session needs minute replay.  Reusing that context would move its clock from
+    15:00 back to the first confirmed minute.  A replay context preserves the
+    immutable run identity and initialized state while letting minute events move
+    monotonically from the session open.  It also keeps independent instruments
+    in a batch from moving one another's clocks backwards.
+    """
+
+    return StrategyContext(
+        strategy_key=base.strategy_key,
+        strategy_version=base.strategy_version,
+        run_id=base.run_id,
+        current_time=session.time_for(BacktestPhase.SESSION_OPEN),
+        parameters=base.parameters,
+        state=base.state,
+        environment=base.environment,
+    )
+
+
 def _next_valid_minute_after(
     ordered_minutes: list[StrategyBar],
     source_index: int,
@@ -1417,7 +1442,7 @@ class BacktestService:
                             minute_bars=minute_bars_by_date[session.trading_date].get(
                                 instrument_id, []
                             ),
-                            context=context,
+                            context=_intraday_replay_context(context, session),
                             account_id=account.id,
                             execution=execution,
                             risk_orders=risk_orders,

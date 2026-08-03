@@ -220,9 +220,14 @@ def inspect_minute_session(
     """Check whether local minute data can safely replay one A-share session.
 
     A gap inside a session is reported but is not automatically fatal because it
-    can represent a genuine temporary suspension.  Missing session edges,
-    duplicate/off-session timestamps, or disagreement with the authoritative RAW
-    daily envelope are unsafe and must be refreshed before a backtest proceeds.
+    can represent a genuine temporary suspension.  MiniQMT's 09:30-14:59 minute
+    series does not include the opening call auction while its authoritative RAW
+    daily bar does.  Consequently the daily open/extremes/volume may contain an
+    auction contribution that cannot be reconstructed from the 240 continuous-
+    auction minutes.  Such one-sided differences are safe and are warnings;
+    minute prices outside the daily envelope, a different close, excess minute
+    volume, missing session edges, or duplicate/off-session timestamps remain
+    fatal quality problems.
     """
 
     if not minute_bars:
@@ -271,16 +276,22 @@ def inspect_minute_session(
 
     aggregate = build_partial_daily_bar(daily_bar, ordered)
     if aggregate.open != daily_bar.open:
-        issues.append("DAILY_OPEN_MISMATCH")
-    if aggregate.high != daily_bar.high:
+        warnings.append("OPEN_AUCTION_NOT_IN_MINUTE_BARS")
+    if aggregate.high > daily_bar.high:
         issues.append("DAILY_HIGH_MISMATCH")
-    if aggregate.low != daily_bar.low:
+    elif aggregate.high < daily_bar.high:
+        warnings.append("AUCTION_HIGH_NOT_IN_MINUTE_BARS")
+    if aggregate.low < daily_bar.low:
         issues.append("DAILY_LOW_MISMATCH")
+    elif aggregate.low > daily_bar.low:
+        warnings.append("AUCTION_LOW_NOT_IN_MINUTE_BARS")
     if aggregate.close != daily_bar.close:
         issues.append("DAILY_CLOSE_MISMATCH")
     volume_tolerance = max(Decimal("1"), abs(daily_bar.volume) * Decimal("0.005"))
-    if abs(aggregate.volume - daily_bar.volume) > volume_tolerance:
+    if aggregate.volume > daily_bar.volume + volume_tolerance:
         issues.append("DAILY_VOLUME_MISMATCH")
+    elif aggregate.volume < daily_bar.volume - volume_tolerance:
+        warnings.append("AUCTION_VOLUME_NOT_IN_MINUTE_BARS")
     return MinuteSessionQuality(
         usable=not issues,
         issues=tuple(dict.fromkeys(issues)),
