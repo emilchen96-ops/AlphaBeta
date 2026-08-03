@@ -1,5 +1,13 @@
 # PostgreSQL 持久化模型
 
+## BT02-A 分钟级回测增量
+
+Migration `0032_bt02a_intraday_backtests` 扩展既有 `backtest_runs`，保存日线预筛候选/排除数、
+实际加载的分钟交易日和分钟 K 线数、数据准备耗时、策略回放耗时，以及数据准备和性能 JSON
+快照。Signal、RiskDecision、Order、Fill、账本和追加式 BacktestEvent 继续复用 BT01 事实表，
+不建立第二套分钟成交事实。批量任务继续复用既有 batch/item 状态，并通过状态和调度时间实现
+取消、延迟重试和 Worker 重启恢复。
+
 ## SC02-A 标准条件筛选
 
 Migration `0024_sc02a_condition_catalog` 为既有 `scan_runs` 增加
@@ -130,8 +138,10 @@ M02 在 PostgreSQL 中建立核心领域事实、审计和可靠消息准备表�
 | `ai_analysis_runs` | AI 研究运行与审计状态 | `idempotency_key` 唯一；请求指纹、状态、Prompt 版本、Token/成本和输入 ID 受约束 |
 | `research_insights` | 追加式结构化 AI 研究输出 | 每个 AnalysisRun 至多一个；重要度 0–100、置信度 0–1、schema 版本受约束 |
 | `research_evidence` | Insight 的来源证据 | 每条证据只能关联 InformationItem 或 MarketEvent 之一；证据文本长度受限 |
-| `ai_research_tasks` | TA01 持久化多智能体调研任务 | 幂等键唯一；保存股票、问题、深度、时间范围、阶段、进度、请求/资料快照与稳定错误码 |
-| `ai_research_agent_runs` | TA01 角色执行步骤 | `(task_id, ordinal)` 唯一；按任务保存角色状态、结构化输出、引用、Token 与错误摘要 |
+| `ai_research_tasks` | TA01 持久化多智能体调研任务 | 幂等键唯一；保存股票、问题、深度、时间范围、Graph 版本、检查点、执行次数、阶段、进度、请求/资料快照与稳定错误码 |
+| `ai_research_agent_runs` | TA01 角色执行步骤 | `(task_id, ordinal)` 唯一；按任务保存 12 个真实 TradingAgents 角色状态、报告摘要、引用、Token 与错误摘要 |
+| `ai_research_workflow_events` | TA01 Graph 与工具审计事件 | `(task_id, sequence)` 唯一；追加保存节点/工具名称、状态、受限输入输出摘要和时间 |
+| `ai_research_artifacts` | TA01 独立角色报告 | `(task_id, artifact_key)` 唯一；保存每个分析师、辩论、风险及组合经理 Markdown 与来源编号 |
 | `ai_research_reports` | TA01 不可变结构化报告 | 每个任务至多一份；保存十章节、引用、限制、Markdown 快照与 Schema 版本 |
 
 ## 关系概览

@@ -14,7 +14,11 @@ from alphadesk_api.application.ai_workbench import (
 from alphadesk_api.application.common import UnitOfWorkFactory
 from alphadesk_api.infrastructure.ai_workbench_provider import FakeWorkbenchProvider
 from alphadesk_api.infrastructure.unit_of_work import SqlAlchemyUnitOfWork
-from alphadesk_domain.ai_workbench import ResearchDepth, ResearchTaskStatus
+from alphadesk_domain.ai_workbench import (
+    MultiAgentResearchArtifact,
+    ResearchDepth,
+    ResearchTaskStatus,
+)
 from alphadesk_domain.entities import Instrument
 from alphadesk_domain.enums import (
     AdjustmentType,
@@ -82,6 +86,7 @@ async def test_task_worker_report_and_idempotency_survive_separate_uow_sessions(
         await uow.commit()
 
     provider = FakeWorkbenchProvider()
+    provider.selectable_models = (provider.model_name, "qwen-max")
     service = AIResearchWorkbenchService(factory, provider)
     request = CreateResearchTaskRequest(
         instrument_id=instrument.id,
@@ -91,10 +96,13 @@ async def test_task_worker_report_and_idempotency_survive_separate_uow_sessions(
         end_date=date(2026, 4, 30),
         idempotency_key=f"ta01-{uuid4()}",
         correlation_id=uuid4(),
+        model_name="qwen-max",
     )
     created = await service.create(request)
     replayed = await service.create(request)
     assert replayed.id == created.id
+    assert created.model_name == "qwen-max"
+    assert created.request_snapshot["model_name"] == "qwen-max"
 
     processor = AIResearchTaskProcessor(factory, provider, stale_seconds=0)
     assert await processor.run_once() == created.id
@@ -104,3 +112,32 @@ async def test_task_worker_report_and_idempotency_survive_separate_uow_sessions(
     assert len(detail.report.sections) == 10
     assert all(step.status.value == "COMPLETED" for step in detail.steps)
     assert "Fake Provider" in detail.report.markdown
+
+    artifacts = [
+        MultiAgentResearchArtifact(
+            task_id=created.id,
+            artifact_key=f"test-role-{index}",
+            artifact_type="AGENT_REPORT",
+            title=f"测试角色 {index}",
+            content_markdown=f"# 角色 {index}\n\n独立报告",
+            ordinal=index,
+            artifact_metadata={"role": "MARKET_ANALYST", "attempt": index + 1},
+            source_ids=(f"market-bar:2026-04-{index + 1:02d}",),
+        )
+        for index in range(2)
+    ]
+    async with factory() as uow:
+        await uow.ai_research_artifacts.add_many(artifacts)
+        # Replaying terminal persistence must be idempotent.
+        await uow.ai_research_artifacts.add_many(artifacts)
+        await uow.commit()
+    async with factory() as uow:
+        persisted = await uow.ai_research_artifacts.list_by_task(created.id)
+    assert [item.artifact_key for item in persisted] == [
+        "test-role-0",
+        "test-role-1",
+    ]
+    assert persisted[0].artifact_metadata == {
+        "role": "MARKET_ANALYST",
+        "attempt": 1,
+    }

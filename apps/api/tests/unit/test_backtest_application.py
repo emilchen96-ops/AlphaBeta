@@ -8,6 +8,7 @@ import pytest
 
 from alphadesk_api.application.backtests import (
     BacktestService,
+    _next_valid_minute_after,
     _partial_daily_bar,
     _safe_failure,
     _same_day_bars,
@@ -63,6 +64,27 @@ def test_same_day_cutoff_never_reads_the_execution_minute() -> None:
     assert partial.close == Decimal("10")
     assert partial.high == Decimal("10")
     assert partial.volume == Decimal("100")
+
+
+def test_intraday_next_valid_minute_crosses_lunch_without_inventing_rows() -> None:
+    source = _bar(datetime(2025, 1, 2, 3, 29, tzinfo=UTC), close="10")
+    afternoon = _bar(datetime(2025, 1, 2, 5, 0, tzinfo=UTC), close="10.1")
+
+    assert _next_valid_minute_after(
+        [source, afternoon],
+        0,
+        datetime(2025, 1, 2, 3, 30, tzinfo=UTC),
+    ) is afternoon
+
+
+def test_intraday_last_minute_has_no_same_day_execution_bar() -> None:
+    last = _bar(datetime(2025, 1, 2, 6, 59, tzinfo=UTC), close="10")
+
+    assert _next_valid_minute_after(
+        [last],
+        0,
+        datetime(2025, 1, 2, 7, 0, tzinfo=UTC),
+    ) is None
 
 
 def test_backtest_preserves_safe_strategy_data_errors() -> None:

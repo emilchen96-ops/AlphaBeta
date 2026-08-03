@@ -41,9 +41,11 @@ from alphadesk_api.infrastructure.repositories import (
     SqlAlchemyMarketEventRepository,
     SqlAlchemyMarketRealtimeRunRepository,
     SqlAlchemyMarketSyncRunRepository,
+    SqlAlchemyMultiAgentResearchArtifactRepository,
     SqlAlchemyMultiAgentResearchReportRepository,
     SqlAlchemyMultiAgentResearchStepRepository,
     SqlAlchemyMultiAgentResearchTaskRepository,
+    SqlAlchemyMultiAgentResearchWorkflowEventRepository,
     SqlAlchemyOrderActionRepository,
     SqlAlchemyOrderCommandRepository,
     SqlAlchemyOrderRepository,
@@ -122,6 +124,8 @@ class SqlAlchemyUnitOfWork:
         self.ai_research_tasks = SqlAlchemyMultiAgentResearchTaskRepository(session)
         self.ai_research_steps = SqlAlchemyMultiAgentResearchStepRepository(session)
         self.ai_research_reports = SqlAlchemyMultiAgentResearchReportRepository(session)
+        self.ai_research_events = SqlAlchemyMultiAgentResearchWorkflowEventRepository(session)
+        self.ai_research_artifacts = SqlAlchemyMultiAgentResearchArtifactRepository(session)
         self.user_strategies = SqlAlchemyUserStrategyRepository(session)
         self.user_screenings = SqlAlchemyUserScreeningRepository(session)
         self.research_backtest_specs = SqlAlchemyResearchBacktestSpecRepository(session)

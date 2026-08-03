@@ -1,5 +1,7 @@
 """Product-facing quick-backtest endpoints using BT01 as the execution engine."""
 
+import json
+from collections.abc import Awaitable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -17,6 +19,7 @@ from alphadesk_api.application.backtest_batches import (
     CreateBacktestBatchRequest,
 )
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
 from alphadesk_api.application.research_backtests import (
     QuickBacktestRequest,
     QuickBacktestService,
@@ -43,6 +46,25 @@ def _settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
 
+def _backfill_enqueuer(request: Request):
+    client = getattr(request.app.state.redis, "client", None)
+    if client is None:
+        return None
+
+    async def enqueue(payload: dict[str, object]) -> int:
+        return int(
+            await cast(
+                Awaitable[int],
+                client.rpush(
+                    HISTORY_QUEUE_KEY,
+                    json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                ),
+            )
+        )
+
+    return enqueue
+
+
 def _decimal(value: str, name: str) -> Decimal:
     try:
         result = Decimal(value)
@@ -61,7 +83,10 @@ async def quick_backtest(request: Request, body: QuickBacktestBody) -> dict[str,
     try:
         spec = None if body.spec is None else strategy_spec_from_dict(body.spec)
         return await QuickBacktestService(
-            uow_factory(request), _registry(request), _settings(request)
+            uow_factory(request),
+            _registry(request),
+            _settings(request),
+            _backfill_enqueuer(request),
         ).run(
             QuickBacktestRequest(
                 instrument_id=body.instrument_id,
@@ -82,6 +107,9 @@ async def quick_backtest(request: Request, body: QuickBacktestBody) -> dict[str,
                     else _decimal(body.maximum_volume_participation, "最大成交量参与率")
                 ),
                 execution_price_mode=body.execution_price_mode,
+                signal_timeframe=body.signal_timeframe,
+                auto_prepare_minute_data=body.auto_prepare_minute_data,
+                optimistic_fill_assumption=body.optimistic_fill_assumption,
                 position_size_ratio=(
                     None
                     if body.position_size_ratio is None
@@ -191,6 +219,9 @@ async def create_backtest_batch(request: Request, body: BacktestBatchBody) -> di
                     )
                 ),
                 execution_price_mode=body.execution_price_mode,
+                signal_timeframe=body.signal_timeframe,
+                auto_prepare_minute_data=body.auto_prepare_minute_data,
+                optimistic_fill_assumption=body.optimistic_fill_assumption,
                 position_size_ratio=(
                     None
                     if body.position_size_ratio is None
@@ -231,6 +262,28 @@ async def list_backtest_batches(
 async def get_backtest_batch(request: Request, batch_id: UUID) -> dict[str, Any]:
     try:
         return await BacktestBatchQueryService(uow_factory(request)).detail(batch_id)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post("/backtest-batches/{batch_id}/cancel")
+async def cancel_backtest_batch(request: Request, batch_id: UUID) -> dict[str, Any]:
+    try:
+        return await BacktestBatchService(
+            uow_factory(request), _registry(request), _settings(request)
+        ).cancel(batch_id)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.post("/backtest-batches/{batch_id}/retry-failed")
+async def retry_failed_backtest_batch(
+    request: Request, batch_id: UUID
+) -> dict[str, Any]:
+    try:
+        return await BacktestBatchService(
+            uow_factory(request), _registry(request), _settings(request)
+        ).retry_failed(batch_id)
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
 

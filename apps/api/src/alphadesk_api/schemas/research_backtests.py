@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphadesk_domain.backtest import BacktestExecutionPriceMode
-from alphadesk_domain.enums import TimeInForce
+from alphadesk_domain.enums import MarketTimeframe, TimeInForce
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 
@@ -28,6 +28,9 @@ class QuickBacktestBody(BaseModel):
     slippage_basis_points: str = "2"
     maximum_volume_participation: str | None = "0.1"
     execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     position_size_ratio: str | None = "1"
     maximum_entry_gap_ratio: str | None = "0.05"
     time_in_force: TimeInForce = TimeInForce.DAY
@@ -75,6 +78,9 @@ class BacktestBatchBody(BaseModel):
     slippage_basis_points: str = "2"
     maximum_volume_participation: str | None = "0.1"
     execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     position_size_ratio: str | None = "1"
     maximum_entry_gap_ratio: str | None = "0.05"
     time_in_force: TimeInForce = TimeInForce.DAY

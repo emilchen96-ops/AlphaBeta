@@ -33,7 +33,11 @@ def test_openapi_exposes_product_quick_backtest_endpoints(client: TestClient) ->
     assert "get" in paths["/api/v1/research/backtests/{run_id}/summary"]
     assert "post" in paths["/api/v1/research/backtest-batches"]
     assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}"]
+    assert "post" in paths["/api/v1/research/backtest-batches/{batch_id}/cancel"]
+    assert "post" in paths["/api/v1/research/backtest-batches/{batch_id}/retry-failed"]
     assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/results"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/summary"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/export.csv"]
 
 
 def test_quick_backtest_requires_exactly_one_strategy(client: TestClient) -> None:
@@ -204,3 +208,79 @@ def test_batch_backtest_accepts_full_a_share_scope_and_filters(
     assert request.exclude_bse is True
     assert request.exclude_star_market is True
     assert request.exclude_chinext is False
+
+
+def test_batch_cancel_calls_durable_batch_service(
+    client: TestClient, monkeypatch
+) -> None:
+    batch_id = "77777777-7777-4777-8777-777777777777"
+    captured: dict[str, Any] = {}
+
+    async def fake_cancel(self: BacktestBatchService, requested_batch_id) -> dict[str, Any]:
+        captured["batch_id"] = requested_batch_id
+        return {
+            "id": batch_id,
+            "scope": "ALL_A_SHARES",
+            "status": "CANCELLED",
+            "total_count": 10,
+            "pending_count": 0,
+            "running_count": 0,
+            "completed_count": 3,
+            "failed_count": 0,
+            "cancelled_count": 7,
+        }
+
+    monkeypatch.setattr(BacktestBatchService, "cancel", fake_cancel)
+
+    def fake_dependency(request: Request) -> object:
+        del request
+        return object()
+
+    monkeypatch.setattr(api_module, "uow_factory", fake_dependency)
+    monkeypatch.setattr(api_module, "_registry", fake_dependency)
+    monkeypatch.setattr(api_module, "_settings", fake_dependency)
+
+    response = client.post(f"/api/v1/research/backtest-batches/{batch_id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "CANCELLED"
+    assert str(captured["batch_id"]) == batch_id
+
+
+def test_batch_retry_failed_calls_durable_batch_service(
+    client: TestClient, monkeypatch
+) -> None:
+    batch_id = "88888888-8888-4888-8888-888888888888"
+    captured: dict[str, Any] = {}
+
+    async def fake_retry(self: BacktestBatchService, requested_batch_id) -> dict[str, Any]:
+        captured["batch_id"] = requested_batch_id
+        return {
+            "id": batch_id,
+            "scope": "WATCHLIST",
+            "status": "RUNNING",
+            "total_count": 4,
+            "pending_count": 2,
+            "running_count": 0,
+            "completed_count": 2,
+            "failed_count": 0,
+            "cancelled_count": 0,
+        }
+
+    monkeypatch.setattr(BacktestBatchService, "retry_failed", fake_retry)
+
+    def fake_dependency(request: Request) -> object:
+        del request
+        return object()
+
+    monkeypatch.setattr(api_module, "uow_factory", fake_dependency)
+    monkeypatch.setattr(api_module, "_registry", fake_dependency)
+    monkeypatch.setattr(api_module, "_settings", fake_dependency)
+
+    response = client.post(
+        f"/api/v1/research/backtest-batches/{batch_id}/retry-failed"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "RUNNING"
+    assert str(captured["batch_id"]) == batch_id

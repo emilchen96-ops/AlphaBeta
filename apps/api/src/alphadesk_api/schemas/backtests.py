@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from alphadesk_domain.backtest import BacktestExecutionPriceMode
+from alphadesk_domain.enums import MarketTimeframe
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 
 
@@ -33,6 +34,9 @@ class BacktestCreateBody(BaseModel):
     order_type: str = "MARKET"
     time_in_force: str = "DAY"
     execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     # Omitted by legacy API clients that still use fixed strategy quantities.
     # The current web workbench sends an explicit ratio for NEXT_OPEN runs.
     position_size_ratio: str | None = None
@@ -62,6 +66,12 @@ class BacktestRunResponse(BaseModel):
     risk_reviewed: int
     orders_created: int
     fills_generated: int
+    candidate_session_count: int = 0
+    minute_replay_session_count: int = 0
+    processed_minute_bar_count: int = 0
+    skipped_reason: str | None = None
+    data_preparation_summary: dict[str, Any] = Field(default_factory=dict)
+    performance_summary: dict[str, Any] = Field(default_factory=dict)
     started_at: datetime | None
     completed_at: datetime | None
     failed_at: datetime | None

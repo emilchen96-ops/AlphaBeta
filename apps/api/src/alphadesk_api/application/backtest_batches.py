@@ -15,6 +15,7 @@ from statistics import mean, median
 from typing import Any
 from uuid import UUID, uuid4
 
+from alphadesk_api.application.backtests import BackfillEnqueuer
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.application.research_backtests import (
     QuickBacktestRequest,
@@ -31,7 +32,7 @@ from alphadesk_domain.backtest_batches import (
     BacktestBatchScope,
 )
 from alphadesk_domain.entities import Instrument
-from alphadesk_domain.enums import TimeInForce
+from alphadesk_domain.enums import MarketTimeframe, TimeInForce
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.scanners import is_st_instrument
 from alphadesk_domain.screening import UniverseSpec
@@ -64,6 +65,9 @@ class CreateBacktestBatchRequest:
     slippage_basis_points: Decimal = Decimal("2")
     maximum_volume_participation: Decimal | None = Decimal("0.1")
     execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     position_size_ratio: Decimal | None = Decimal("1")
     maximum_entry_gap_ratio: Decimal | None = Decimal("0.05")
     time_in_force: TimeInForce = TimeInForce.DAY
@@ -163,6 +167,9 @@ class BacktestBatchService:
                 else format(request.maximum_volume_participation, "f")
             ),
             "execution_price_mode": request.execution_price_mode.value,
+            "signal_timeframe": request.signal_timeframe.value,
+            "auto_prepare_minute_data": request.auto_prepare_minute_data,
+            "optimistic_fill_assumption": request.optimistic_fill_assumption,
             "position_size_ratio": (
                 None
                 if request.position_size_ratio is None
@@ -231,6 +238,34 @@ class BacktestBatchService:
             await uow.commit()
         return _batch_response(batch)
 
+    async def cancel(self, batch_id: UUID) -> dict[str, Any]:
+        async with self._uow_factory() as uow:
+            batch = await uow.backtest_batches.cancel(batch_id, occurred_at=utc_now())
+            if batch is None:
+                raise ApplicationError(
+                    "BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务"
+                )
+            await uow.commit()
+        return _batch_response(batch)
+
+    async def retry_failed(self, batch_id: UUID) -> dict[str, Any]:
+        async with self._uow_factory() as uow:
+            existing = await uow.backtest_batches.get_by_id(batch_id)
+            if existing is None:
+                raise ApplicationError(
+                    "BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务"
+                )
+            if existing.failed_count + existing.cancelled_count == 0:
+                raise ApplicationError(
+                    "BACKTEST_BATCH_NOT_RETRYABLE", "当前任务没有失败或已取消的股票"
+                )
+            batch = await uow.backtest_batches.retry_failed(
+                batch_id, occurred_at=utc_now()
+            )
+            assert batch is not None
+            await uow.commit()
+        return _batch_response(batch)
+
     async def _resolve_instruments(self, request: CreateBacktestBatchRequest) -> list[Instrument]:
         if request.scope is BacktestBatchScope.WATCHLIST:
             if request.watchlist_id is None:
@@ -286,9 +321,15 @@ class BacktestBatchProcessor:
         uow_factory: UnitOfWorkFactory,
         registry: StrategyRegistry,
         settings: Settings,
+        enqueue_backfill: BackfillEnqueuer | None = None,
     ) -> None:
         self._uow_factory = uow_factory
-        self._quick = QuickBacktestService(uow_factory, registry, settings)
+        self._quick = QuickBacktestService(
+            uow_factory,
+            registry,
+            settings,
+            enqueue_backfill,
+        )
         self._settings = settings
 
     async def process_next(self) -> UUID | None:
@@ -321,19 +362,59 @@ class BacktestBatchProcessor:
                     execution_price_mode=BacktestExecutionPriceMode(
                         str(payload["execution_price_mode"])
                     ),
+                    signal_timeframe=MarketTimeframe(
+                        str(payload.get("signal_timeframe", MarketTimeframe.MINUTE_1.value))
+                    ),
+                    auto_prepare_minute_data=bool(
+                        payload.get("auto_prepare_minute_data", True)
+                    ),
+                    optimistic_fill_assumption=bool(
+                        payload.get("optimistic_fill_assumption", False)
+                    ),
                     position_size_ratio=_optional_decimal(payload.get("position_size_ratio")),
                     maximum_entry_gap_ratio=_optional_decimal(
                         payload.get("maximum_entry_gap_ratio")
                     ),
                     time_in_force=TimeInForce(str(payload["time_in_force"])),
-                    idempotency_key=f"batch:{batch.id}:{item.instrument_id}",
+                    idempotency_key=(
+                        f"batch:{batch.id}:{item.instrument_id}:attempt:{item.attempt_count}"
+                    ),
                     correlation_id=batch.correlation_id,
                 )
             )
-            item.status = BacktestBatchItemStatus.COMPLETED
             item.backtest_run_id = UUID(str(result["id"]))
-            item.completed_at = utc_now()
-            item.updated_at = item.completed_at
+            result_status = str(result.get("status", ""))
+            error_code = str(result.get("error_code") or "")
+            error_message = str(result.get("error_message") or "")
+            if (
+                result_status == "FAILED"
+                and error_code
+                in {
+                    "BACKTEST_DAILY_DATA_PREPARING",
+                    "BACKTEST_MINUTE_DATA_PREPARING",
+                }
+                and bool(payload.get("auto_prepare_minute_data", True))
+                and item.attempt_count < self._settings.backtest_batch_data_max_attempts
+            ):
+                item.status = BacktestBatchItemStatus.PENDING
+                item.error_code = error_code
+                item.error_message = error_message[:512]
+                item.completed_at = None
+                item.updated_at = utc_now() + timedelta(
+                    seconds=self._settings.backtest_batch_data_retry_seconds
+                )
+            elif result_status == "FAILED":
+                item.status = BacktestBatchItemStatus.FAILED
+                item.error_code = error_code or "BACKTEST_BATCH_ITEM_FAILED"
+                item.error_message = error_message[:512] or "单股回测执行失败"
+                item.completed_at = utc_now()
+                item.updated_at = item.completed_at
+            else:
+                item.status = BacktestBatchItemStatus.COMPLETED
+                item.error_code = None
+                item.error_message = None
+                item.completed_at = utc_now()
+                item.updated_at = item.completed_at
         except ApplicationError as exc:
             item.status = BacktestBatchItemStatus.FAILED
             item.error_code = exc.code
@@ -461,6 +542,41 @@ class BacktestBatchQueryService:
                 {"code": code, "count": count}
                 for code, count in sorted(failures.items(), key=lambda item: (-item[1], item[0]))
             ],
+            "intraday_execution": {
+                "daily_bars_checked": sum(row.bars_processed or 0 for row in completed),
+                "daily_prefilter_candidates": sum(
+                    row.candidate_session_count or 0 for row in completed
+                ),
+                "daily_prefilter_excluded": sum(
+                    int((row.data_preparation_summary or {}).get(
+                        "prefilter_excluded_session_count", 0
+                    ))
+                    for row in completed
+                ),
+                "minute_sessions_loaded": sum(
+                    row.minute_replay_session_count or 0 for row in completed
+                ),
+                "minute_bars_processed": sum(
+                    row.processed_minute_bar_count or 0 for row in completed
+                ),
+                "signals_generated": sum(row.signals_generated or 0 for row in completed),
+                "stocks_with_signals": sum(
+                    (row.signals_generated or 0) > 0 for row in completed
+                ),
+                "stocks_with_fills": len(traded),
+                "data_preparation_seconds": sum(
+                    float((row.performance_summary or {}).get(
+                        "data_preparation_seconds", 0
+                    ))
+                    for row in completed
+                ),
+                "strategy_replay_seconds": sum(
+                    float((row.performance_summary or {}).get(
+                        "strategy_replay_seconds", 0
+                    ))
+                    for row in completed
+                ),
+            },
         }
 
     async def csv(self, batch_id: UUID) -> str:

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -32,6 +33,9 @@ def real_settings(*, api_key: str | None) -> Settings:
         ai_base_url="https://ai.example.test/secret-deployment/v1",
         ai_api_key=api_key,
         ai_model="research-model",
+        ai_quick_model="research-model",
+        ai_deep_model="research-model",
+        ai_selectable_models="research-model,qwen-max",
     )
 
 
@@ -47,6 +51,7 @@ def test_unavailable_provider_status_and_test_are_safe() -> None:
     assert status.status_code == 200
     assert status.json()["mode"] == "REAL_UNAVAILABLE"
     assert status.json()["base_url_summary"] == "https://ai.example.test"
+    assert status.json()["selectable_models"] == ["research-model", "qwen-max"]
     assert tested.status_code == 200
     assert tested.json()["error_code"] == "AI_PROVIDER_NOT_CONFIGURED"
     assert rejected.status_code == 422
@@ -55,7 +60,10 @@ def test_unavailable_provider_status_and_test_are_safe() -> None:
 
 
 def test_successful_provider_connectivity_updates_status_without_returning_output() -> None:
-    def handler(_: httpx.Request) -> httpx.Response:
+    requested_models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_models.append(json.loads(request.content)["model"])
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": "connected"}}]},
@@ -72,12 +80,14 @@ def test_successful_provider_connectivity_updates_status_without_returning_outpu
     try:
         with TestClient(app) as client:
             before = client.get("/api/v1/ai/providers/status")
-            tested = client.post("/api/v1/ai/providers/test", json={})
+            tested = client.post("/api/v1/ai/providers/test", json={"model_name": "qwen-max"})
             after = client.get("/api/v1/ai/providers/status")
     finally:
         asyncio.run(provider.close())
     assert before.json()["mode"] == "REAL_CONFIGURED"
     assert tested.json()["success"] is True
+    assert tested.json()["model_name"] == "qwen-max"
+    assert requested_models == ["qwen-max"]
     assert "connected" not in tested.text
     assert after.json()["mode"] == "REAL_AVAILABLE"
     assert "never-return-this-key" not in before.text + tested.text + after.text

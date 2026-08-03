@@ -29,22 +29,51 @@ def task() -> MultiAgentResearchTask:
     )
 
 
-def test_depths_select_progressively_richer_role_groups() -> None:
-    assert len(roles_for_depth(ResearchDepth.FAST)) == 4
-    assert len(roles_for_depth(ResearchDepth.STANDARD)) == 6
-    assert roles_for_depth(ResearchDepth.DEEP) == tuple(ResearchAgentRole)
-    assert ResearchAgentRole.RISK_REVIEWER in roles_for_depth(ResearchDepth.FAST)
-    assert ResearchAgentRole.RESEARCH_MANAGER in roles_for_depth(ResearchDepth.FAST)
+def test_all_depths_keep_the_complete_tradingagents_role_chain() -> None:
+    expected = (
+        ResearchAgentRole.MARKET_ANALYST,
+        ResearchAgentRole.SENTIMENT_ANALYST,
+        ResearchAgentRole.NEWS_ANALYST,
+        ResearchAgentRole.FUNDAMENTAL_ANALYST,
+        ResearchAgentRole.BULL_RESEARCHER,
+        ResearchAgentRole.BEAR_RESEARCHER,
+        ResearchAgentRole.RESEARCH_MANAGER,
+        ResearchAgentRole.TRADER,
+        ResearchAgentRole.AGGRESSIVE_RISK_ANALYST,
+        ResearchAgentRole.NEUTRAL_RISK_ANALYST,
+        ResearchAgentRole.CONSERVATIVE_RISK_ANALYST,
+        ResearchAgentRole.PORTFOLIO_MANAGER,
+    )
+    assert roles_for_depth(ResearchDepth.FAST) == expected
+    assert roles_for_depth(ResearchDepth.STANDARD) == expected
+    assert roles_for_depth(ResearchDepth.DEEP) == expected
 
 
 def test_failed_task_can_be_requeued_without_changing_identity() -> None:
     value = task()
+    value.execution_attempt = 1
     value.fail("AI_PROVIDER_TIMEOUT", "temporary")
     value.retry()
     assert value.status is ResearchTaskStatus.CREATED
     assert value.progress_percent == 0
     assert value.error_code is None
     assert value.completed_at is None
+    assert value.execution_attempt == 1
+
+
+def test_new_attempt_and_success_clear_previous_terminal_error() -> None:
+    value = task()
+    value.fail("AI_PROVIDER_TIMEOUT", "temporary")
+    value.retry()
+    value.advance(ResearchTaskStatus.RUNNING_AGENTS, 18, "真实 Graph 正在运行")
+    assert value.error_code is None
+    assert value.error_message is None
+    assert value.completed_at is None
+
+    value.finish(partial=False)
+    assert value.status is ResearchTaskStatus.COMPLETED
+    assert value.error_code is None
+    assert value.error_message is None
 
 
 @pytest.mark.asyncio
@@ -53,6 +82,7 @@ async def test_fake_provider_is_structured_and_explicitly_non_real() -> None:
     response = await provider.complete_structured(
         StructuredResearchRequest(
             role=ResearchAgentRole.RESEARCH_MANAGER,
+            model_name="fake-v1",
             system_prompt="test",
             payload={
                 "instrument": {"name": "长信科技"},

@@ -34,7 +34,12 @@
 
 > 第一次使用请先阅读 [AlphaDesk 使用指南](user_guide.md)：包含开机启动、首次数据准备、菜单与按钮说明、推荐业务流程、真实页面截图和常见故障排查。
 
-> 当前回测里程碑为 **BT01-R 完成**：日线回测总览见 [daily_backtest.md](daily_backtest.md)，严格时间边界见 [backtest_time_model.md](backtest_time_model.md)，指标口径见 [backtest_metrics.md](backtest_metrics.md)，页面见 [backtest_ui.md](backtest_ui.md)，决策见 [ADR 0017](adr/0017-deterministic-daily-backtest-pipeline.md)。分钟回测尚未完成，下一阶段仅为 U01。
+> 当前回测里程碑为 **BT02-A 完成开发、等待在线环境验收**：日线基线见
+> [daily_backtest.md](daily_backtest.md)，分钟触发、候选日预筛、按需加载和批量恢复见
+> [BT02-A 分钟级触发回测](bt02_intraday_backtest.md)，严格时间边界见
+> [backtest_time_model.md](backtest_time_model.md)，页面见 [backtest_ui.md](backtest_ui.md)。
+> 性能与环境验收分别见 [BT02-A 基准](verification/bt02a_benchmark.md) 和
+> [BT02-A 验收记录](verification/bt02a_acceptance.md)。
 
 > 数据里程碑 **D01 已完成**：BaoStock A 股 Instrument/研究池、历史补数、每日增量、质量事实、覆盖率、Readiness、API/CLI 和数据中心页面见 [D01 历史行情](historical_market_data.md)、[每日增量](daily_market_data_update.md)、[质量检查](market_data_quality.md) 与 [数据中心页面](market_data_center_ui.md)。D01 本身不包含实时行情、MiniQMT 或交易写入；其历史日线现已被 BT01-R 使用。
 
@@ -121,6 +126,7 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | UX03-R 研究档案与批量总报告     | `ux03_research_archive.md`、`backtest_rules.md`、`backtest_ui.md`                         |
 | UX02-B 研究工作台               | `research_product_mode.md`、`strategy_spec.md`、`natural_language_strategy.md`、`visual_strategy_editor.md`、`quick_backtest_workflow.md` |
 | BT01 A 股日线回测               | `daily_backtest.md`、`backtest_time_model.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0017 |
+| BT02-A 分钟级触发回测           | `bt02_intraday_backtest.md`、`backtest_time_model.md`、`backtest_ui.md`、`verification/bt02a_benchmark.md` |
 | RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |

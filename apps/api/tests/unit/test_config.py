@@ -45,6 +45,22 @@ def test_ai_provider_defaults_fake_and_incomplete_real_configuration() -> None:
     assert incomplete.ai_api_key is None
 
 
+def test_ai_selectable_models_are_normalized_and_include_configured_defaults() -> None:
+    settings = Settings(
+        ai_model="qwen3.7-plus",
+        ai_quick_model="qwen3.7-flash",
+        ai_deep_model="qwen3.7-max",
+        ai_selectable_models="qwen-max, qwen3.6-plus,qwen-max",
+    )
+    assert settings.selectable_ai_models == (
+        "qwen3.7-plus",
+        "qwen3.7-flash",
+        "qwen3.7-max",
+        "qwen-max",
+        "qwen3.6-plus",
+    )
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

@@ -18,11 +18,11 @@ const jsonHeaders = { "Content-Type": "application/json" };
 export const getAIProviderStatus = () =>
   apiRequest<AIProviderStatus>("/api/v1/ai/providers/status");
 
-export const testAIProvider = () =>
+export const testAIProvider = (modelName?: string) =>
   apiRequest<AIProviderTestResult>("/api/v1/ai/providers/test", {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({}),
+    body: JSON.stringify({ model_name: modelName }),
   });
 
 export const createAIAnalysis = (body: AIAnalysisCreateBody) =>

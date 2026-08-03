@@ -12,6 +12,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Collapse,
   Descriptions,
@@ -221,7 +222,13 @@ interface BacktestFormValues {
   order_type: "MARKET" | "LIMIT";
   time_in_force: "DAY" | "GTC";
   execution_price_mode:
-    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE"
+    | "INTRADAY_NEXT_MINUTE"
+    | "INTRADAY_SIGNAL_CLOSE";
+  signal_timeframe: "MINUTE_1" | "MINUTE_5" | "MINUTE_15";
+  auto_prepare_minute_data: boolean;
   maximum_entry_gap_percent?: string | null;
   commission_rate: string;
   minimum_commission: string;
@@ -307,8 +314,13 @@ export function BacktestPage() {
           : "LIMIT",
       time_in_force: values.time_in_force,
       execution_price_mode: values.execution_price_mode,
+      signal_timeframe: values.signal_timeframe,
+      auto_prepare_minute_data: values.auto_prepare_minute_data,
+      optimistic_fill_assumption:
+        values.execution_price_mode === "INTRADAY_SIGNAL_CLOSE",
       maximum_entry_gap_ratio:
-        values.execution_price_mode !== "NEXT_OPEN" ||
+        (values.execution_price_mode !== "NEXT_OPEN" &&
+          values.execution_price_mode !== "INTRADAY_NEXT_MINUTE") ||
         !values.maximum_entry_gap_percent?.trim()
           ? null
           : String(Number(values.maximum_entry_gap_percent) / 100),
@@ -383,7 +395,9 @@ export function BacktestPage() {
             position_size_percent: "100",
             order_type: "MARKET",
             time_in_force: "DAY",
-            execution_price_mode: "NEXT_OPEN",
+            execution_price_mode: "INTRADAY_NEXT_MINUTE",
+            signal_timeframe: "MINUTE_1",
+            auto_prepare_minute_data: true,
             maximum_entry_gap_percent: "5",
             commission_rate: "0.03",
             minimum_commission: "5",
@@ -495,8 +509,12 @@ export function BacktestPage() {
                 <Select
                   options={[
                     {
+                      value: "INTRADAY_NEXT_MINUTE",
+                      label: "盘中分钟触发，下一根分钟开盘（推荐）",
+                    },
+                    {
                       value: "NEXT_OPEN",
-                      label: "下一交易日开盘价（推荐）",
+                      label: "日线收盘确认，下一交易日开盘",
                     },
                     {
                       value: "SAME_DAY_NEXT_MINUTE",
@@ -506,6 +524,25 @@ export function BacktestPage() {
                       value: "SIGNAL_CLOSE_LIMIT",
                       label: "信号日收盘价限价（可能不成交）",
                     },
+                    {
+                      value: "INTRADAY_SIGNAL_CLOSE",
+                      label: "当根分钟收盘价（乐观对照）",
+                    },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={3}>
+              <Form.Item name="signal_timeframe" label="盘中信号周期">
+                <Select
+                  disabled={
+                    formExecutionPriceMode !== "INTRADAY_NEXT_MINUTE" &&
+                    formExecutionPriceMode !== "INTRADAY_SIGNAL_CLOSE"
+                  }
+                  options={[
+                    { value: "MINUTE_1", label: "1分钟" },
+                    { value: "MINUTE_5", label: "5分钟" },
+                    { value: "MINUTE_15", label: "15分钟" },
                   ]}
                 />
               </Form.Item>
@@ -513,12 +550,15 @@ export function BacktestPage() {
             <Col xs={12} md={3}>
               <Form.Item
                 name="maximum_entry_gap_percent"
-                label="最大允许高开（%）"
-                tooltip="次日高开超过该幅度则不追高；留空表示不限制。"
+                label="最大允许跳空（%）"
+                tooltip="下一交易日或下一分钟开盘价超过信号价的该幅度时不追高；留空表示不限制。"
               >
                 <Input
                   allowClear
-                  disabled={formExecutionPriceMode !== "NEXT_OPEN"}
+                  disabled={
+                    formExecutionPriceMode !== "NEXT_OPEN" &&
+                    formExecutionPriceMode !== "INTRADAY_NEXT_MINUTE"
+                  }
                   placeholder="例如 5"
                 />
               </Form.Item>
@@ -534,6 +574,26 @@ export function BacktestPage() {
               </Form.Item>
             </Col>
           </Row>
+          {(formExecutionPriceMode === "INTRADAY_NEXT_MINUTE" ||
+            formExecutionPriceMode === "INTRADAY_SIGNAL_CLOSE") ? (
+            <Space orientation="vertical" style={{ marginBottom: 16 }}>
+              <Form.Item
+                name="auto_prepare_minute_data"
+                valuePropName="checked"
+                noStyle
+              >
+                <Checkbox>自动检查并补齐候选日期的分钟行情</Checkbox>
+              </Form.Item>
+              {formExecutionPriceMode === "INTRADAY_SIGNAL_CLOSE" ? (
+                <Alert
+                  showIcon
+                  type="warning"
+                  title="同一分钟收盘成交属于乐观假设"
+                  description="信号在分钟收盘后才确认，真实交易未必能以该收盘价成交；报告会保留此假设标记。"
+                />
+              ) : null}
+            </Space>
+          ) : null}
           {strategy?.parameters.length ? (
             <Card
               size="small"
@@ -823,6 +883,94 @@ const timelineColumns: ColumnsType<BacktestTimelineEvent> = [
   },
 ];
 
+interface IntradayExecutionAuditRow {
+  key: string;
+  signal_id: string;
+  order_id: string | null;
+  signal_confirmed_at: string | null;
+  order_submitted_at: string | null;
+  filled_at: string | null;
+  signal_price: string | null;
+  fill_price: string | null;
+  execution_status: string | null;
+  rejection_code: string | null;
+}
+
+function intradayExecutionAudit(
+  timeline: BacktestTimelineEvent[],
+): IntradayExecutionAuditRow[] {
+  const bySignal = new Map<string, IntradayExecutionAuditRow>();
+  const byOrder = new Map<string, IntradayExecutionAuditRow>();
+  for (const event of [...timeline].sort(
+    (left, right) => left.sequence_number - right.sequence_number,
+  )) {
+    const signalId = factText(event.details.signal_id, "");
+    const orderId = factText(event.details.order_id, "");
+    if (event.event_type === "SIGNAL_GENERATED" && signalId) {
+      bySignal.set(signalId, {
+        key: signalId,
+        signal_id: signalId,
+        order_id: null,
+        signal_confirmed_at: factText(
+          event.details.signal_confirmed_at,
+          event.occurred_at,
+        ),
+        order_submitted_at: null,
+        filled_at: null,
+        signal_price: factText(event.details.signal_price, "") || null,
+        fill_price: null,
+        execution_status: null,
+        rejection_code: null,
+      });
+      continue;
+    }
+    if (event.event_type === "ORDER_CREATED" && signalId && orderId) {
+      const row = bySignal.get(signalId);
+      if (!row) continue;
+      row.order_id = orderId;
+      row.order_submitted_at = factText(
+        event.details.order_submitted_at,
+        event.occurred_at,
+      );
+      byOrder.set(orderId, row);
+      continue;
+    }
+    if (event.event_type === "EXECUTION_ATTEMPTED" && orderId) {
+      const row = byOrder.get(orderId);
+      if (!row) continue;
+      row.filled_at = factText(event.details.execution_time, "") || null;
+      row.fill_price = factText(event.details.fill_price, "") || null;
+      row.execution_status =
+        factText(event.details.execution_status, "") || null;
+      row.rejection_code = factText(event.details.rejection_code, "") || null;
+    }
+  }
+  return [...bySignal.values()];
+}
+
+const intradayAuditColumns: ColumnsType<IntradayExecutionAuditRow> = [
+  {
+    title: "信号确认时间",
+    dataIndex: "signal_confirmed_at",
+    render: formatDate,
+  },
+  {
+    title: "订单提交时间",
+    dataIndex: "order_submitted_at",
+    render: formatDate,
+  },
+  { title: "执行分钟", dataIndex: "filled_at", render: formatDate },
+  { title: "信号价", dataIndex: "signal_price", render: formatPrice },
+  { title: "成交价", dataIndex: "fill_price", render: formatPrice },
+  {
+    title: "执行结果",
+    render: (_, item) =>
+      item.rejection_code
+        ? `${displayEnum(item.execution_status)}（${item.rejection_code}）`
+        : displayEnum(item.execution_status),
+  },
+];
+
 export function BacktestDetailPage() {
   const { backtestId = "" } = useParams();
   const detail = useQuery({
@@ -938,6 +1086,17 @@ export function BacktestDetailPage() {
   const maximumEntryGapRatio = runConfiguration.maximum_entry_gap_ratio;
   const positionSizeRatio = runConfiguration.position_size_ratio;
   const unfilledPolicy = factText(runConfiguration.time_in_force, "DAY");
+  const signalTimeframe = factText(runConfiguration.signal_timeframe, "MINUTE_1");
+  const isIntradayMode =
+    executionPriceMode === "INTRADAY_NEXT_MINUTE" ||
+    executionPriceMode === "INTRADAY_SIGNAL_CLOSE";
+  const preparationStatus = factText(
+    data.run.data_preparation_summary?.status,
+    "UNKNOWN",
+  );
+  const executionAudit = isIntradayMode
+    ? intradayExecutionAudit(data.timeline)
+    : [];
   const bars = chartBars.data?.items ?? [];
   const firstEquityAt = data.equity[0]?.timestamp;
   const lastEquityAt = data.equity.at(-1)?.timestamp;
@@ -1060,7 +1219,7 @@ export function BacktestDetailPage() {
           <Tag color={statusColor[data.run.status]}>
             {statusText[data.run.status]}
           </Tag>
-          <Tag>日线回测</Tag>
+          <Tag>{isIntradayMode ? "日线策略·分钟触发回测" : "日线回测"}</Tag>
         </Space>
         <Descriptions bordered size="small" column={{ xs: 1, md: 2, xl: 3 }}>
           <Descriptions.Item label="策略版本">
@@ -1076,12 +1235,40 @@ export function BacktestDetailPage() {
             {formatDate(data.run.created_at)}
           </Descriptions.Item>
           <Descriptions.Item label="买入执行价格">
-            {executionPriceMode === "NEXT_OPEN"
+            {executionPriceMode === "INTRADAY_NEXT_MINUTE"
+              ? "分钟收盘确认，下一根有效分钟开盘成交"
+              : executionPriceMode === "INTRADAY_SIGNAL_CLOSE"
+                ? "分钟收盘确认并按当根收盘成交（乐观假设）"
+                : executionPriceMode === "NEXT_OPEN"
               ? "下一交易日开盘价（另计滑点）"
               : executionPriceMode === "SAME_DAY_NEXT_MINUTE"
                 ? "14:55前可见数据判断，下一分钟开盘价"
                 : "信号日收盘价限价"}
           </Descriptions.Item>
+          {isIntradayMode ? (
+            <Descriptions.Item label="盘中信号周期">
+              {signalTimeframe === "MINUTE_15"
+                ? "15分钟"
+                : signalTimeframe === "MINUTE_5"
+                  ? "5分钟"
+                  : "1分钟"}
+            </Descriptions.Item>
+          ) : null}
+          {isIntradayMode ? (
+            <Descriptions.Item label="日线预筛候选交易日">
+              {data.run.candidate_session_count}
+            </Descriptions.Item>
+          ) : null}
+          {isIntradayMode ? (
+            <Descriptions.Item label="实际分钟回放交易日">
+              {data.run.minute_replay_session_count}
+            </Descriptions.Item>
+          ) : null}
+          {isIntradayMode ? (
+            <Descriptions.Item label="已处理分钟K线">
+              {data.run.processed_minute_bar_count.toLocaleString("zh-CN")}
+            </Descriptions.Item>
+          ) : null}
           <Descriptions.Item label="单次买入仓位">
             {positionSizeRatio === null || positionSizeRatio === undefined
               ? "按旧策略固定股数"
@@ -1111,6 +1298,21 @@ export function BacktestDetailPage() {
               data.run.error_message ??
               "请检查历史数据状态后重试。"
             }
+          />
+        ) : null}
+        {isIntradayMode ? (
+          <Alert
+            showIcon
+            type={preparationStatus === "READY" ? "success" : "info"}
+            title={
+              preparationStatus === "READY"
+                ? "候选日期分钟行情已就绪"
+                : preparationStatus === "QUEUED"
+                  ? "分钟行情缺口已进入 MiniQMT 下载队列"
+                  : "分钟行情数据准备状态"
+            }
+            description={`状态：${preparationStatus}；候选交易日 ${data.run.candidate_session_count} 个；实际回放 ${data.run.minute_replay_session_count} 个；已处理 ${data.run.processed_minute_bar_count.toLocaleString("zh-CN")} 根分钟K线。已有本地数据会直接复用，只补齐候选日期缺口。`}
+            style={{ marginTop: 12 }}
           />
         ) : null}
       </Card>
@@ -1185,7 +1387,9 @@ export function BacktestDetailPage() {
                   (signal.side === "BUY" || signal.side === "SELL"),
               )
               .map((signal) => ({
-                time: signal.bar_timestamp!,
+                time: isIntradayMode
+                  ? signal.generated_at
+                  : signal.bar_timestamp!,
                 side: signal.side as "BUY" | "SELL",
                 kind: "SIGNAL" as const,
                 label: `${displayEnum(signal.side)}信号：${localizeReason(signal.reason)}`,
@@ -1212,6 +1416,32 @@ export function BacktestDetailPage() {
           ]}
         />
       </Card>
+      {isIntradayMode ? (
+        <Card title="分钟触发与成交审计" className="backtest-section">
+          <Alert
+            showIcon
+            type={
+              executionPriceMode === "INTRADAY_SIGNAL_CLOSE"
+                ? "warning"
+                : "info"
+            }
+            title={
+              executionPriceMode === "INTRADAY_SIGNAL_CLOSE"
+                ? "本次使用同一分钟收盘成交的乐观假设"
+                : "默认在信号确认后的下一根有效分钟开盘成交"
+            }
+            description="信号确认、订单提交和实际成交使用独立时间字段；午休、停牌、缺失分钟和当日最后一分钟不会被伪造成可成交时点。"
+            style={{ marginBottom: 12 }}
+          />
+          <Table
+            rowKey="key"
+            dataSource={executionAudit}
+            columns={intradayAuditColumns}
+            pagination={{ pageSize: 10 }}
+            scroll={{ x: true }}
+          />
+        </Card>
+      ) : null}
       <Card title="现金与市值" className="backtest-section">
         <Table<BacktestEquityPoint>
           rowKey="id"

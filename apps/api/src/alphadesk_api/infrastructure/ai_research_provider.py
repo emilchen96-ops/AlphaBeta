@@ -153,6 +153,7 @@ class OpenAICompatibleResearchProvider:
             None if settings.ai_api_key is None else settings.ai_api_key.get_secret_value()
         )
         self.model_name = settings.ai_model or "none"
+        self.selectable_models = settings.selectable_ai_models
         self._timeout = settings.ai_request_timeout_seconds
         self._max_retries = settings.ai_max_retries
         self._max_input_characters = settings.ai_max_input_characters
@@ -326,13 +327,19 @@ class OpenAICompatibleResearchProvider:
         self._record_success(())
         return ScreeningAIResponse(payload=validated.model_dump(mode="python"))
 
-    async def test_connection(self) -> AIProviderTestResult:
+    async def test_connection(self, *, model_name: str | None = None) -> AIProviderTestResult:
         started = perf_counter()
+        selected_model = (model_name or self.model_name).strip()
         try:
             self._require_configuration()
+            if selected_model not in self.selectable_models:
+                raise AIResearchError(
+                    "AI_MODEL_NOT_ALLOWED",
+                    "selected model is not in the configured allowlist",
+                )
             response = await self._post_with_retries(
                 {
-                    "model": self.model_name,
+                    "model": selected_model,
                     "messages": [
                         {
                             "role": "system",
@@ -349,7 +356,7 @@ class OpenAICompatibleResearchProvider:
             return AIProviderTestResult(
                 success=True,
                 provider_key=self.provider_key,
-                model_name=self.model_name,
+                model_name=selected_model,
                 mode="REAL_AVAILABLE",
                 latency_ms=max(0, int((perf_counter() - started) * 1000)),
             )
@@ -358,7 +365,7 @@ class OpenAICompatibleResearchProvider:
             return AIProviderTestResult(
                 success=False,
                 provider_key=self.provider_key,
-                model_name=self.model_name,
+                model_name=selected_model,
                 mode="REAL_UNAVAILABLE",
                 latency_ms=max(0, int((perf_counter() - started) * 1000)),
                 error_code=exc.code,
@@ -659,9 +666,11 @@ def describe_ai_provider(provider: AIResearchProvider) -> AIProviderStatusSnapsh
     )
 
 
-async def test_ai_provider(provider: AIResearchProvider) -> AIProviderTestResult:
+async def test_ai_provider(
+    provider: AIResearchProvider, *, model_name: str | None = None
+) -> AIProviderTestResult:
     if isinstance(provider, OpenAICompatibleResearchProvider):
-        return await provider.test_connection()
+        return await provider.test_connection(model_name=model_name)
     snapshot = describe_ai_provider(provider)
     return AIProviderTestResult(
         success=snapshot.mode == "FAKE",

@@ -13,15 +13,17 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import {
   backtestBatchCsvUrl,
+  cancelBacktestBatch,
   getBacktestBatch,
   getBacktestBatchResults,
   getBacktestBatchSummary,
+  retryFailedBacktestBatch,
 } from "../api/strategySpecs";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type { BacktestBatchResult } from "../types/strategySpecs";
@@ -53,6 +55,7 @@ export function BacktestBatchPage() {
   const { batchId = "" } = useParams();
   const [resultPage, setResultPage] = useState(1);
   const resultPageSize = 50;
+  const queryClient = useQueryClient();
   const batch = useQuery({
     queryKey: ["backtest-batch", batchId],
     queryFn: () => getBacktestBatch(batchId),
@@ -75,6 +78,25 @@ export function BacktestBatchPage() {
       terminal.has(batch.data?.status ?? "") ? false : 5000,
   });
   const data = batch.data;
+  const refreshBatch = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["backtest-batch", batchId] }),
+      queryClient.invalidateQueries({
+        queryKey: ["backtest-batch-results", batchId],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["backtest-batch-summary", batchId],
+      }),
+    ]);
+  };
+  const cancel = useMutation({
+    mutationFn: () => cancelBacktestBatch(batchId),
+    onSuccess: refreshBatch,
+  });
+  const retryFailed = useMutation({
+    mutationFn: () => retryFailedBacktestBatch(batchId),
+    onSuccess: refreshBatch,
+  });
   const maxHistogramCount = Math.max(
     1,
     ...(summary.data?.return_histogram.map((item) => item.count) ?? [1]),
@@ -100,6 +122,30 @@ export function BacktestBatchPage() {
         />
       ) : null}
       <Card title="任务进度" loading={batch.isLoading}>
+        {cancel.error ? (
+          <Alert
+            showIcon
+            type="error"
+            title="取消批量任务失败"
+            description={
+              cancel.error instanceof Error ? cancel.error.message : "请稍后重试"
+            }
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
+        {retryFailed.error ? (
+          <Alert
+            showIcon
+            type="error"
+            title="重新运行失败或已取消股票失败"
+            description={
+              retryFailed.error instanceof Error
+                ? retryFailed.error.message
+                : "请稍后重试"
+            }
+            style={{ marginBottom: 16 }}
+          />
+        ) : null}
         <Progress
           percent={data?.progress_percent ?? 0}
           status={data?.status === "FAILED" ? "exception" : undefined}
@@ -124,6 +170,27 @@ export function BacktestBatchPage() {
               },
             ]}
           />
+        ) : null}
+        {data ? (
+          <Space style={{ marginTop: 16 }}>
+            {!terminal.has(data.status) ? (
+              <Button
+                danger
+                loading={cancel.isPending}
+                onClick={() => cancel.mutate()}
+              >
+                取消批量任务
+              </Button>
+            ) : null}
+            {data.failed_count + data.cancelled_count > 0 ? (
+              <Button
+                loading={retryFailed.isPending}
+                onClick={() => retryFailed.mutate()}
+              >
+                仅重试失败或已取消股票
+              </Button>
+            ) : null}
+          </Space>
         ) : null}
         <Alert
           showIcon
@@ -203,6 +270,64 @@ export function BacktestBatchPage() {
                 />
               </Col>
             </Row>
+            <Card size="small" title="分钟触发执行统计" style={{ marginTop: 16 }}>
+              <Row gutter={[16, 16]}>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="日线预筛候选日"
+                    value={summary.data.intraday_execution.daily_prefilter_candidates}
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="日线安全排除日"
+                    value={summary.data.intraday_execution.daily_prefilter_excluded}
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="加载分钟交易日"
+                    value={summary.data.intraday_execution.minute_sessions_loaded}
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="处理分钟K线"
+                    value={summary.data.intraday_execution.minute_bars_processed}
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="产生信号股票"
+                    value={summary.data.intraday_execution.stocks_with_signals}
+                    suffix="只"
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="产生成交股票"
+                    value={summary.data.intraday_execution.stocks_with_fills}
+                    suffix="只"
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="数据准备耗时"
+                    value={summary.data.intraday_execution.data_preparation_seconds}
+                    precision={1}
+                    suffix="秒"
+                  />
+                </Col>
+                <Col xs={12} md={6}>
+                  <Statistic
+                    title="策略回放耗时"
+                    value={summary.data.intraday_execution.strategy_replay_seconds}
+                    precision={1}
+                    suffix="秒"
+                  />
+                </Col>
+              </Row>
+            </Card>
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
               <Col xs={24} lg={12}>
                 <Card size="small" title="收益分布">

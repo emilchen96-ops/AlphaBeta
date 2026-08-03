@@ -144,5 +144,12 @@ class BacktestBatchResultRow:
     maximum_drawdown: str | None
     sharpe_ratio: str | None
     fill_count: int | None
+    bars_processed: int | None
+    signals_generated: int | None
+    candidate_session_count: int | None
+    minute_replay_session_count: int | None
+    processed_minute_bar_count: int | None
+    data_preparation_summary: dict[str, Any] | None
+    performance_summary: dict[str, Any] | None
     error_code: str | None
     error_message: str | None

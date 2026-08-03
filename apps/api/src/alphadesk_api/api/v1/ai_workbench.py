@@ -16,11 +16,13 @@ from alphadesk_api.application.common import ApplicationError
 from alphadesk_api.infrastructure.pdf_report import markdown_to_pdf
 from alphadesk_api.schemas.ai_workbench import (
     ResearchAgentStepResponse,
+    ResearchArtifactResponse,
     ResearchReportResponse,
     ResearchReportSummaryResponse,
     ResearchTaskCreateBody,
     ResearchTaskPageResponse,
     ResearchTaskResponse,
+    ResearchWorkflowEventResponse,
 )
 from alphadesk_domain.ai_workbench import MultiAgentResearchProvider, ResearchDepth
 
@@ -58,6 +60,11 @@ def task_response(detail: ResearchTaskDetail) -> ResearchTaskResponse:
         end_date=task.end_date,
         provider_key=task.provider_key,
         model_name=task.model_name,
+        engine_key=task.engine_key,
+        engine_version=task.engine_version,
+        checkpoint_key=task.checkpoint_key,
+        execution_attempt=task.execution_attempt,
+        last_checkpoint_at=task.last_checkpoint_at,
         is_real_provider=task.provider_key == "openai_compatible",
         status=task.status.value,
         progress_percent=task.progress_percent,
@@ -99,6 +106,36 @@ def task_response(detail: ResearchTaskDetail) -> ResearchTaskResponse:
             )
             for step in detail.steps
         ],
+        events=[
+            ResearchWorkflowEventResponse(
+                event_id=event.id,
+                sequence=event.sequence,
+                event_type=event.event_type,
+                status=event.status,
+                node_name=event.node_name,
+                agent_role=None if event.agent_role is None else event.agent_role.value,
+                tool_name=event.tool_name,
+                payload=dict(event.payload),
+                started_at=event.started_at,
+                completed_at=event.completed_at,
+                created_at=event.created_at,
+            )
+            for event in detail.events
+        ],
+        artifacts=[
+            ResearchArtifactResponse(
+                artifact_id=artifact.id,
+                artifact_key=artifact.artifact_key,
+                artifact_type=artifact.artifact_type,
+                title=artifact.title,
+                content_markdown=artifact.content_markdown,
+                ordinal=artifact.ordinal,
+                metadata=dict(artifact.artifact_metadata),
+                source_ids=list(artifact.source_ids),
+                created_at=artifact.created_at,
+            )
+            for artifact in detail.artifacts
+        ],
         report=report_summary(detail),
         capabilities={
             "creates_signals": False,
@@ -108,6 +145,10 @@ def task_response(detail: ResearchTaskDetail) -> ResearchTaskResponse:
             "supports_cancel": True,
             "supports_markdown_export": True,
             "supports_pdf_export": True,
+            "uses_tradingagents_graph": task.engine_key == "tradingagents_graph",
+            "persists_agent_reports": True,
+            "persists_tool_trace": True,
+            "supports_checkpoint_resume": True,
         },
     )
 
@@ -125,6 +166,7 @@ async def create_research_task(
         task = await service(request).create(
             CreateResearchTaskRequest(
                 instrument_id=body.instrument_id,
+                model_name=body.model_name,
                 question=body.question,
                 depth=depth,
                 start_date=body.start_date,

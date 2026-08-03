@@ -105,6 +105,17 @@ export const createBacktestBatch = (body: BacktestBatchRequest) =>
 export const getBacktestBatch = (id: string) =>
   apiRequest<BacktestBatch>(`/api/v1/research/backtest-batches/${id}`);
 
+export const cancelBacktestBatch = (id: string) =>
+  apiRequest<BacktestBatch>(`/api/v1/research/backtest-batches/${id}/cancel`, {
+    method: "POST",
+  });
+
+export const retryFailedBacktestBatch = (id: string) =>
+  apiRequest<BacktestBatch>(
+    `/api/v1/research/backtest-batches/${id}/retry-failed`,
+    { method: "POST" },
+  );
+
 export const listBacktestBatches = () =>
   apiRequest<{
     items: BacktestBatch[];

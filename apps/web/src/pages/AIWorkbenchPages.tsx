@@ -10,6 +10,7 @@ import {
   App,
   Button,
   Card,
+  Collapse,
   DatePicker,
   Descriptions,
   Empty,
@@ -24,7 +25,7 @@ import {
   Typography,
 } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import {
@@ -41,9 +42,11 @@ import {
 import { getInstruments } from "../api/market";
 import { PageHeader } from "../components/PageHeader/PageHeader";
 import type {
+  AIResearchArtifact,
   AIResearchDepth,
   AIResearchTask,
   AIResearchTaskStatus,
+  AIResearchWorkflowEvent,
 } from "../types/aiResearch";
 
 const { RangePicker } = DatePicker;
@@ -97,6 +100,7 @@ const fieldText: Record<string, string> = {
 
 interface FormValues {
   instrument_id: string;
+  model_name: string;
   question: string;
   depth: AIResearchDepth;
   date_range: [Dayjs, Dayjs];
@@ -109,6 +113,23 @@ function taskTitle(task: AIResearchTask) {
 function taskStatus(task: AIResearchTask) {
   const color = task.status === "FAILED" ? "red" : task.status === "COMPLETED" ? "green" : "blue";
   return <Tag color={color}>{statusText[task.status]}</Tag>;
+}
+
+function eventName(event: AIResearchWorkflowEvent) {
+  if (event.tool_name) return event.tool_name;
+  if (event.node_name) return event.node_name;
+  return event.agent_role ?? event.event_type;
+}
+
+function eventTypeText(event: AIResearchWorkflowEvent) {
+  if (event.event_type === "TOOL_CALL") return "工具调用";
+  if (event.event_type === "GRAPH_NODE") return "智能体节点";
+  if (event.event_type === "CHECKPOINT") return "执行检查点";
+  return event.event_type;
+}
+
+function artifactSourceCount(artifacts: AIResearchArtifact[]) {
+  return new Set(artifacts.flatMap((artifact) => artifact.source_ids)).size;
 }
 
 export function AIResearchWorkbenchPage() {
@@ -139,7 +160,7 @@ export function AIResearchWorkbenchPage() {
     mutationFn: testAIProvider,
     onSuccess: (result) =>
       result.success
-        ? void message.success(`AI 模型服务可用（${result.latency_ms ?? 0}ms）`)
+        ? void message.success(`${result.model_name} 可用（${result.latency_ms ?? 0}ms）`)
         : void message.error(result.error_code ?? "AI 模型服务不可用"),
     onError: (error: Error) => void message.error(error.message),
   });
@@ -152,10 +173,22 @@ export function AIResearchWorkbenchPage() {
     onError: (error: Error) => void message.error(error.message),
   });
 
+  useEffect(() => {
+    const defaultModel = provider.data?.model_name;
+    if (
+      defaultModel &&
+      defaultModel !== "none" &&
+      !form.getFieldValue("model_name")
+    ) {
+      form.setFieldValue("model_name", defaultModel);
+    }
+  }, [form, provider.data?.model_name]);
+
   const submit = async () => {
     const value = await form.validateFields();
     createTask.mutate({
       instrument_id: value.instrument_id,
+      model_name: value.model_name,
       question: value.question.trim(),
       depth: value.depth,
       start_date: value.date_range[0].format("YYYY-MM-DD"),
@@ -183,8 +216,12 @@ export function AIResearchWorkbenchPage() {
                 : provider.data?.message ?? "请在项目根目录 .env 中配置模型服务并重启。"}
             </Typography.Text>
             {provider.data?.provider_key === "openai_compatible" ? (
-              <Button size="small" loading={providerTest.isPending} onClick={() => providerTest.mutate()}>
-                测试模型连接
+              <Button
+                size="small"
+                loading={providerTest.isPending}
+                onClick={() => providerTest.mutate(form.getFieldValue("model_name"))}
+              >
+                测试所选模型连接
               </Button>
             ) : null}
           </Space>
@@ -220,6 +257,22 @@ export function AIResearchWorkbenchPage() {
             />
           </Form.Item>
           <Space size="large" wrap>
+            <Form.Item
+              name="model_name"
+              label="本次调研模型"
+              rules={[{ required: true, message: "请选择一个模型" }]}
+              extra="本任务的所有分析角色统一使用该模型；重试仍沿用原选择。额度由模型平台管理。"
+            >
+              <Select
+                showSearch
+                style={{ width: 300 }}
+                placeholder="选择仍有额度的兼容模型"
+                options={(provider.data?.selectable_models ?? []).map((model) => ({
+                  value: model,
+                  label: model,
+                }))}
+              />
+            </Form.Item>
             <Form.Item name="depth" label="调研深度" rules={[{ required: true }]}>
               <Select
                 style={{ width: 240 }}
@@ -258,6 +311,7 @@ export function AIResearchWorkbenchPage() {
             { title: "研究股票", render: (_, task) => <Link to={`/ai-research/tasks/${task.task_id}`}>{taskTitle(task)}</Link> },
             { title: "研究问题", dataIndex: "question", ellipsis: true },
             { title: "深度", render: (_, task) => depthText[task.depth] },
+            { title: "模型", dataIndex: "model_name", ellipsis: true },
             { title: "状态", render: (_, task) => taskStatus(task) },
             { title: "进度", render: (_, task) => `${task.progress_percent}%` },
           ]}
@@ -303,6 +357,9 @@ export function AIResearchTaskPage() {
               { key: "status", label: "状态", children: taskStatus(data) },
               { key: "depth", label: "调研深度", children: depthText[data.depth] },
               { key: "range", label: "资料范围", children: `${data.start_date} 至 ${data.end_date}` },
+              { key: "engine", label: "研究引擎", children: `${data.engine_key}${data.engine_version ? ` / ${data.engine_version}` : ""}` },
+              { key: "attempt", label: "执行次数", children: `${data.execution_attempt} 次` },
+              { key: "artifacts", label: "已保存独立报告", children: `${data.artifacts.length} 份` },
             ]}
           />
           <Progress percent={data.progress_percent} status={data.status === "FAILED" ? "exception" : undefined} />
@@ -321,6 +378,29 @@ export function AIResearchTaskPage() {
               icon: step.status === "COMPLETED" ? <CheckCircleOutlined /> : undefined,
             }))}
           />
+          <Card size="small" title={`执行轨迹（${data.events.length} 条）`}>
+            <Table<AIResearchWorkflowEvent>
+              rowKey="event_id"
+              size="small"
+              dataSource={data.events}
+              pagination={{ pageSize: 12, hideOnSinglePage: true }}
+              locale={{ emptyText: "Graph 完成首个节点后会在这里显示可审计轨迹" }}
+              columns={[
+                { title: "序号", dataIndex: "sequence", width: 70 },
+                { title: "类型", render: (_, event) => eventTypeText(event), width: 110 },
+                { title: "智能体 / 工具", render: (_, event) => eventName(event) },
+                {
+                  title: "状态",
+                  render: (_, event) => (
+                    <Tag color={event.status === "FAILED" ? "red" : event.status === "COMPLETED" ? "green" : "blue"}>
+                      {event.status === "FAILED" ? "失败" : event.status === "COMPLETED" ? "已完成" : "运行中"}
+                    </Tag>
+                  ),
+                  width: 100,
+                },
+              ]}
+            />
+          </Card>
           <Space>
             {data.report ? <Button type="primary"><Link to={`/ai-research/tasks/${taskId}/report`}>查看完整报告</Link></Button> : null}
             {!terminal.has(data.status) ? <Button danger icon={<StopOutlined />} loading={cancel.isPending} onClick={() => cancel.mutate()}>取消任务</Button> : null}
@@ -366,6 +446,12 @@ export function AIResearchReportPage() {
   const report = useQuery({ queryKey: ["ai-research-report", taskId], queryFn: () => getAIResearchReport(taskId), enabled: Boolean(taskId) });
   if (!report.data) return <Typography.Text>加载结构化报告…</Typography.Text>;
   const data = report.data;
+  const artifacts = task.data?.artifacts ?? [];
+  const events = task.data?.events ?? [];
+  const toolEvents = events.filter((event) => event.event_type === "TOOL_CALL");
+  const completedTools = toolEvents.filter((event) => event.status === "COMPLETED").length;
+  const expectedRoles = task.data?.steps.length ?? 0;
+  const roleCoverage = expectedRoles === 0 ? 0 : Math.round((artifacts.length / expectedRoles) * 100);
   return (
     <section>
       <PageHeader title={data.title} description={task.data?.question ?? "多智能体 AI 调研报告"} />
@@ -377,14 +463,53 @@ export function AIResearchReportPage() {
             { key: "stance", label: "综合观点", children: data.stance },
             { key: "confidence", label: "置信度", children: data.confidence },
             { key: "provider", label: "模型服务", children: `${task.data?.provider_key ?? "-"} / ${task.data?.model_name ?? "-"}` },
+            { key: "engine", label: "研究引擎", children: `${task.data?.engine_key ?? "-"}${task.data?.engine_version ? ` / ${task.data.engine_version}` : ""}` },
+            { key: "coverage", label: "角色报告覆盖", children: `${artifacts.length} / ${expectedRoles || "-"}` },
+            { key: "tools", label: "工具调用", children: `${completedTools} / ${toolEvents.length} 次成功` },
+            { key: "sources", label: "可追溯来源", children: `${artifactSourceCount(artifacts)} 项` },
           ]}
         />
+        {expectedRoles > 0 ? <Progress percent={Math.min(roleCoverage, 100)} format={() => `角色覆盖 ${artifacts.length}/${expectedRoles}`} /> : null}
         <Typography.Title level={3}>执行摘要</Typography.Title>
         <Typography.Paragraph>{data.executive_summary}</Typography.Paragraph>
       </Card>
-      {Object.keys(sectionText).map((key) => (
+      {artifacts.length > 0 ? (
+        <Card title="各智能体独立报告" style={{ marginTop: 16 }}>
+          <Collapse
+            items={artifacts
+              .slice()
+              .sort((left, right) => left.ordinal - right.ordinal)
+              .map((artifact) => ({
+                key: artifact.artifact_id,
+                label: (
+                  <Space>
+                    <Typography.Text strong>{artifact.title}</Typography.Text>
+                    <Tag>{artifact.source_ids.length} 项来源</Tag>
+                  </Space>
+                ),
+                children: (
+                  <>
+                    <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>
+                      {artifact.content_markdown}
+                    </Typography.Paragraph>
+                    {artifact.source_ids.length > 0 ? (
+                      <Typography.Text type="secondary">
+                        来源编号：{artifact.source_ids.join("、")}
+                      </Typography.Text>
+                    ) : null}
+                  </>
+                ),
+              }))}
+          />
+        </Card>
+      ) : Object.keys(sectionText).map((key) => (
         <Card key={key} title={sectionText[key]} style={{ marginTop: 16 }}>{renderSection(data.sections[key])}</Card>
       ))}
+      {artifacts.length > 0 ? (
+        <Card title="完整多智能体报告" style={{ marginTop: 16 }}>
+          <Typography.Paragraph style={{ whiteSpace: "pre-wrap" }}>{data.markdown}</Typography.Paragraph>
+        </Card>
+      ) : null}
       <Card title="报告局限" style={{ marginTop: 16 }}>
         <ul>{data.limitations.map((item) => <li key={item}>{item}</li>)}</ul>
       </Card>

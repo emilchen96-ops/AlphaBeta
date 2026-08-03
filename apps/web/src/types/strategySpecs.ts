@@ -93,7 +93,14 @@ export interface QuickBacktestRequest {
   slippage_basis_points: string;
   maximum_volume_participation: string | null;
   execution_price_mode:
-    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE"
+    | "INTRADAY_NEXT_MINUTE"
+    | "INTRADAY_SIGNAL_CLOSE";
+  signal_timeframe?: "MINUTE_1" | "MINUTE_5" | "MINUTE_15";
+  auto_prepare_minute_data?: boolean;
+  optimistic_fill_assumption?: boolean;
   position_size_ratio: string | null;
   maximum_entry_gap_ratio: string | null;
   time_in_force: "DAY" | "GTC";
@@ -160,6 +167,13 @@ export interface BacktestBatchResult {
   maximum_drawdown: string | null;
   sharpe_ratio: string | null;
   fill_count: number | null;
+  bars_processed: number | null;
+  signals_generated: number | null;
+  candidate_session_count: number | null;
+  minute_replay_session_count: number | null;
+  processed_minute_bar_count: number | null;
+  data_preparation_summary: Record<string, unknown> | null;
+  performance_summary: Record<string, unknown> | null;
   error_code: string | null;
   error_message: string | null;
 }
@@ -207,4 +221,16 @@ export interface BacktestBatchSummary {
   top: Array<BacktestBatchResult & { instrument_display: string }>;
   bottom: Array<BacktestBatchResult & { instrument_display: string }>;
   failure_reasons: Array<{ code: string; count: number }>;
+  intraday_execution: {
+    daily_bars_checked: number;
+    daily_prefilter_candidates: number;
+    daily_prefilter_excluded: number;
+    minute_sessions_loaded: number;
+    minute_bars_processed: number;
+    signals_generated: number;
+    stocks_with_signals: number;
+    stocks_with_fills: number;
+    data_preparation_seconds: number;
+    strategy_replay_seconds: number;
+  };
 }

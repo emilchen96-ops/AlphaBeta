@@ -65,7 +65,13 @@ interface BacktestFormValues {
   slippage_basis_points: number | null;
   maximum_volume_participation: number | null;
   execution_price_mode:
-    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE"
+    | "INTRADAY_NEXT_MINUTE"
+    | "INTRADAY_SIGNAL_CLOSE";
+  signal_timeframe: "MINUTE_1" | "MINUTE_5" | "MINUTE_15";
+  auto_prepare_minute_data: boolean;
   maximum_entry_gap_percent: number | null;
   time_in_force: "DAY" | "GTC";
 }
@@ -198,8 +204,13 @@ export function QuickBacktestPage() {
                 numberOrDefault(values.maximum_volume_participation, 10) / 100,
               ),
         execution_price_mode: values.execution_price_mode,
+        signal_timeframe: values.signal_timeframe,
+        auto_prepare_minute_data: values.auto_prepare_minute_data,
+        optimistic_fill_assumption:
+          values.execution_price_mode === "INTRADAY_SIGNAL_CLOSE",
         maximum_entry_gap_ratio:
-          values.execution_price_mode === "NEXT_OPEN" &&
+          (values.execution_price_mode === "NEXT_OPEN" ||
+            values.execution_price_mode === "INTRADAY_NEXT_MINUTE") &&
           values.maximum_entry_gap_percent !== null
             ? String(values.maximum_entry_gap_percent / 100)
             : null,
@@ -370,7 +381,9 @@ export function QuickBacktestPage() {
             transfer_fee_rate: 0.001,
             slippage_basis_points: 2,
             maximum_volume_participation: 10,
-            execution_price_mode: "NEXT_OPEN",
+            execution_price_mode: "INTRADAY_NEXT_MINUTE",
+            signal_timeframe: "MINUTE_1",
+            auto_prepare_minute_data: true,
             maximum_entry_gap_percent: 5,
             time_in_force: "DAY",
           }}
@@ -510,7 +523,11 @@ export function QuickBacktestPage() {
             type="info"
             title="成交价格规则"
             description={
-              executionPriceMode === "SAME_DAY_NEXT_MINUTE"
+              executionPriceMode === "INTRADAY_NEXT_MINUTE"
+                ? "先用日线安全预筛候选日期，再只加载候选区间的分钟K线。每根分钟K线收完后，用已完成日线和当天截至该分钟的累计行情重新判断；首次满足条件后，下一根有效分钟K线开盘模拟成交，不读取未来数据。"
+                : executionPriceMode === "INTRADAY_SIGNAL_CLOSE"
+                  ? "乐观研究模式：分钟收盘确认信号后，假设可以按同一分钟收盘价成交。这无法保证真实可成交，仅用于敏感性对照，报告会明确标记乐观假设。"
+                  : executionPriceMode === "SAME_DAY_NEXT_MINUTE"
                 ? "系统只使用14:55之前已经完整形成的分钟K线估算当日日线条件，并以14:55之后第一根可成交分钟K线的开盘价模拟成交。不会读取15:00收盘结果后倒推当天成交。缺少分钟行情时将直接停止并提示。"
                 : "策略在 T 日收盘后确认信号，最早于下一交易日开盘执行。默认按下一交易日开盘价并计入滑点；若买入时高开超过允许幅度，则按下方未成交处理方式处理。"
             }
@@ -526,8 +543,12 @@ export function QuickBacktestPage() {
                 style={{ width: 320 }}
                 options={[
                   {
+                    value: "INTRADAY_NEXT_MINUTE",
+                    label: "盘中分钟触发，下一根分钟开盘成交（推荐）",
+                  },
+                  {
                     value: "NEXT_OPEN",
-                    label: "下一交易日开盘价成交（推荐）",
+                    label: "日线收盘确认，下一交易日开盘成交",
                   },
                   {
                     value: "SAME_DAY_NEXT_MINUTE",
@@ -537,19 +558,44 @@ export function QuickBacktestPage() {
                     value: "SIGNAL_CLOSE_LIMIT",
                     label: "信号日收盘价限价（可能无法成交）",
                   },
+                  {
+                    value: "INTRADAY_SIGNAL_CLOSE",
+                    label: "分钟触发后按当根收盘成交（乐观对照）",
+                  },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item
+              name="signal_timeframe"
+              label="盘中信号周期"
+              tooltip="1分钟最精细；5分钟和15分钟只在对应K线完整收盘后判断。"
+            >
+              <Select
+                style={{ width: 220 }}
+                disabled={
+                  executionPriceMode !== "INTRADAY_NEXT_MINUTE" &&
+                  executionPriceMode !== "INTRADAY_SIGNAL_CLOSE"
+                }
+                options={[
+                  { value: "MINUTE_1", label: "1分钟" },
+                  { value: "MINUTE_5", label: "5分钟" },
+                  { value: "MINUTE_15", label: "15分钟" },
                 ]}
               />
             </Form.Item>
             <Form.Item
               name="maximum_entry_gap_percent"
-              label="最大允许高开幅度（%）"
-              tooltip="例如填 5：次日开盘价若比信号日收盘价高出超过 5%，本次不追高。留空表示不限制。"
+              label="最大允许跳空幅度（%）"
+              tooltip="例如填 5：下一交易日或下一分钟开盘价若比信号价高出超过 5%，本次不追高。留空表示不限制。"
             >
               <InputNumber
                 min={0}
                 max={100}
                 step={0.5}
-                disabled={executionPriceMode !== "NEXT_OPEN"}
+                disabled={
+                  executionPriceMode !== "NEXT_OPEN" &&
+                  executionPriceMode !== "INTRADAY_NEXT_MINUTE"
+                }
                 placeholder="留空表示不限制"
                 style={{ width: 220 }}
               />
@@ -568,6 +614,29 @@ export function QuickBacktestPage() {
               />
             </Form.Item>
           </Space>
+          {(executionPriceMode === "INTRADAY_NEXT_MINUTE" ||
+            executionPriceMode === "INTRADAY_SIGNAL_CLOSE") ? (
+            <Space orientation="vertical" style={{ marginBottom: 16 }}>
+              <Form.Item
+                name="auto_prepare_minute_data"
+                valuePropName="checked"
+                noStyle
+              >
+                <Checkbox>自动检查并补齐候选交易日的分钟行情</Checkbox>
+              </Form.Item>
+              <Typography.Text type="secondary">
+                系统先用本地日线缩小候选范围，再复用 PostgreSQL 中已有分钟数据；只向已登录的 MiniQMT 请求缺口，不会全量加载全部股票的全部分钟K线。
+              </Typography.Text>
+              {executionPriceMode === "INTRADAY_SIGNAL_CLOSE" ? (
+                <Alert
+                  showIcon
+                  type="warning"
+                  title="这是乐观成交假设"
+                  description="同一分钟收盘后才知道信号，却假设仍能按该收盘价成交，可能高估策略表现；默认推荐使用下一根分钟开盘成交。"
+                />
+              ) : null}
+            </Space>
+          ) : null}
           <Collapse
             ghost
             items={[

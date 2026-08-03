@@ -27,6 +27,7 @@ from alphadesk_domain.ai_workbench import (
 class DisabledWorkbenchProvider:
     provider_key = "disabled"
     model_name = "none"
+    selectable_models: tuple[str, ...] = ()
     configured = False
 
     async def complete_structured(
@@ -41,6 +42,7 @@ class FakeWorkbenchProvider:
 
     provider_key = "fake"
     model_name = "alphadesk-fake-multi-agent-v1"
+    selectable_models = (model_name,)
     configured = True
 
     async def complete_structured(
@@ -50,6 +52,7 @@ class FakeWorkbenchProvider:
         name = str(instrument.get("name") or instrument.get("symbol") or "研究标的")
         role_names = {
             ResearchAgentRole.MARKET_ANALYST: "市场环境分析",
+            ResearchAgentRole.SENTIMENT_ANALYST: "市场情绪分析",
             ResearchAgentRole.TECHNICAL_ANALYST: "技术面分析",
             ResearchAgentRole.FUNDAMENTAL_ANALYST: "基本面分析",
             ResearchAgentRole.NEWS_ANALYST: "资讯与事件分析",
@@ -57,6 +60,11 @@ class FakeWorkbenchProvider:
             ResearchAgentRole.BEAR_RESEARCHER: "看空论证",
             ResearchAgentRole.RISK_REVIEWER: "风险复核",
             ResearchAgentRole.RESEARCH_MANAGER: "研究经理综合结论",
+            ResearchAgentRole.TRADER: "交易方案研究",
+            ResearchAgentRole.AGGRESSIVE_RISK_ANALYST: "积极型风险分析",
+            ResearchAgentRole.NEUTRAL_RISK_ANALYST: "中性风险分析",
+            ResearchAgentRole.CONSERVATIVE_RISK_ANALYST: "保守型风险分析",
+            ResearchAgentRole.PORTFOLIO_MANAGER: "组合经理最终结论",
         }
         bars = cast(list[dict[str, object]], request.payload.get("market_bars", []))
         sources = cast(list[dict[str, object]], request.payload.get("information", []))
@@ -115,6 +123,7 @@ class OpenAICompatibleWorkbenchProvider:
         self._delegate = delegate
         self.provider_key = delegate.provider_key
         self.model_name = delegate.model_name
+        self.selectable_models = delegate.selectable_models
         self.configured = delegate.configured
 
     async def complete_structured(
@@ -122,7 +131,7 @@ class OpenAICompatibleWorkbenchProvider:
     ) -> StructuredResearchResponse:
         self._delegate._require_configuration()
         payload: dict[str, object] = {
-            "model": self.model_name,
+            "model": request.model_name,
             "messages": [
                 {"role": "system", "content": request.system_prompt},
                 {

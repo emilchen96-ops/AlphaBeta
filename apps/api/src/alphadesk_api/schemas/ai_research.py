@@ -10,6 +10,7 @@ class AIProviderStatusResponse(BaseModel):
     provider_key: str
     model: str
     model_name: str
+    selectable_models: list[str]
     configured: bool
     available: bool
     mode: str
@@ -34,9 +35,10 @@ class AIProviderTestResponse(BaseModel):
 
 
 class AIProviderTestBody(BaseModel):
-    """Intentionally empty: clients cannot override provider settings or secrets."""
+    """Select a configured model without allowing provider or secret overrides."""
 
     model_config = ConfigDict(extra="forbid")
+    model_name: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AIAnalysisCreateBody(BaseModel):

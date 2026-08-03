@@ -63,9 +63,11 @@ from alphadesk_api.infrastructure.models import (
     MarketEventModel,
     MarketRealtimeRunModel,
     MarketSyncRunModel,
+    MultiAgentResearchArtifactModel,
     MultiAgentResearchReportModel,
     MultiAgentResearchStepModel,
     MultiAgentResearchTaskModel,
+    MultiAgentResearchWorkflowEventModel,
     OrderActionModel,
     OrderCommandModel,
     OrderModel,
@@ -112,9 +114,11 @@ from alphadesk_domain.accounting import (
 )
 from alphadesk_domain.ai_research import AIAnalysisRun, ResearchEvidence, ResearchInsight
 from alphadesk_domain.ai_workbench import (
+    MultiAgentResearchArtifact,
     MultiAgentResearchReport,
     MultiAgentResearchStep,
     MultiAgentResearchTask,
+    MultiAgentResearchWorkflowEvent,
     ResearchTaskStatus,
 )
 from alphadesk_domain.backtest import (
@@ -292,6 +296,12 @@ def _backtest_run_from_model(
         risk_reviewed=model.risk_reviewed,
         orders_created=model.orders_created,
         fills_generated=model.fills_generated,
+        candidate_session_count=model.candidate_session_count,
+        minute_replay_session_count=model.minute_replay_session_count,
+        processed_minute_bar_count=model.processed_minute_bar_count,
+        skipped_reason=model.skipped_reason,
+        data_preparation_summary=dict(model.data_preparation_summary or {}),
+        performance_summary=dict(model.performance_summary or {}),
         started_at=model.started_at,
         completed_at=model.completed_at,
         failed_at=model.failed_at,
@@ -321,6 +331,12 @@ def _backtest_run_values(entity: BacktestRun) -> dict[str, Any]:
         "risk_reviewed": entity.risk_reviewed,
         "orders_created": entity.orders_created,
         "fills_generated": entity.fills_generated,
+        "candidate_session_count": entity.candidate_session_count,
+        "minute_replay_session_count": entity.minute_replay_session_count,
+        "processed_minute_bar_count": entity.processed_minute_bar_count,
+        "skipped_reason": entity.skipped_reason,
+        "data_preparation_summary": dict(entity.data_preparation_summary),
+        "performance_summary": dict(entity.performance_summary),
         "started_at": entity.started_at,
         "completed_at": entity.completed_at,
         "failed_at": entity.failed_at,
@@ -541,7 +557,10 @@ class SqlAlchemyBacktestBatchRepository:
             .where(
                 BacktestBatchModel.status.in_(("CREATED", "RUNNING")),
                 or_(
-                    BacktestBatchItemModel.status == BacktestBatchItemStatus.PENDING.value,
+                    (
+                        (BacktestBatchItemModel.status == BacktestBatchItemStatus.PENDING.value)
+                        & (BacktestBatchItemModel.updated_at <= func.now())
+                    ),
                     (
                         (BacktestBatchItemModel.status == BacktestBatchItemStatus.RUNNING.value)
                         & (BacktestBatchItemModel.updated_at <= stale_before)
@@ -624,7 +643,13 @@ class SqlAlchemyBacktestBatchRepository:
         finished = (
             batch_model.completed_count + batch_model.failed_count + batch_model.cancelled_count
         )
-        if finished == batch_model.total_count:
+        cancelled = batch_model.status == BacktestBatchStatus.CANCELLED.value
+        if cancelled:
+            # A worker that was already executing when cancellation was requested may
+            # still finish its current stock.  Preserve the user's terminal batch
+            # decision and never reactivate the remaining queue.
+            batch_model.status = BacktestBatchStatus.CANCELLED.value
+        elif finished == batch_model.total_count:
             if batch_model.completed_count == batch_model.total_count:
                 batch_model.status = BacktestBatchStatus.COMPLETED.value
             elif batch_model.completed_count == 0:
@@ -635,6 +660,136 @@ class SqlAlchemyBacktestBatchRepository:
         else:
             batch_model.status = BacktestBatchStatus.RUNNING.value
         batch_model.updated_at = entity.updated_at
+        await self._session.flush()
+        return _backtest_batch_from_model(batch_model)
+
+    async def cancel(
+        self, entity_id: UUID, *, occurred_at: datetime
+    ) -> BacktestBatch | None:
+        batch_model = await self._session.scalar(
+            select(BacktestBatchModel)
+            .where(BacktestBatchModel.id == entity_id)
+            .with_for_update()
+        )
+        if batch_model is None:
+            return None
+        if batch_model.status in {
+            BacktestBatchStatus.COMPLETED.value,
+            BacktestBatchStatus.PARTIAL_FAILED.value,
+            BacktestBatchStatus.FAILED.value,
+            BacktestBatchStatus.CANCELLED.value,
+        }:
+            return _backtest_batch_from_model(batch_model)
+        await self._session.execute(
+            update(BacktestBatchItemModel)
+            .where(
+                BacktestBatchItemModel.batch_id == entity_id,
+                BacktestBatchItemModel.status.in_(
+                    (
+                        BacktestBatchItemStatus.PENDING.value,
+                        BacktestBatchItemStatus.RUNNING.value,
+                    )
+                ),
+            )
+            .values(
+                status=BacktestBatchItemStatus.CANCELLED.value,
+                completed_at=occurred_at,
+                updated_at=occurred_at,
+                error_code="BACKTEST_BATCH_CANCELLED",
+                error_message="用户取消了批量回测 不再启动或继续等待该股票",
+            )
+        )
+        counts = {
+            status: int(count)
+            for status, count in (
+                await self._session.execute(
+                    select(BacktestBatchItemModel.status, func.count())
+                    .where(BacktestBatchItemModel.batch_id == entity_id)
+                    .group_by(BacktestBatchItemModel.status)
+                )
+            ).all()
+        }
+        batch_model.pending_count = counts.get("PENDING", 0)
+        batch_model.running_count = counts.get("RUNNING", 0)
+        batch_model.completed_count = counts.get("COMPLETED", 0)
+        batch_model.failed_count = counts.get("FAILED", 0)
+        batch_model.cancelled_count = counts.get("CANCELLED", 0)
+        batch_model.status = BacktestBatchStatus.CANCELLED.value
+        batch_model.completed_at = occurred_at
+        batch_model.updated_at = occurred_at
+        await self._session.flush()
+        return _backtest_batch_from_model(batch_model)
+
+    async def retry_failed(
+        self, entity_id: UUID, *, occurred_at: datetime
+    ) -> BacktestBatch | None:
+        batch_model = await self._session.scalar(
+            select(BacktestBatchModel)
+            .where(BacktestBatchModel.id == entity_id)
+            .with_for_update()
+        )
+        if batch_model is None:
+            return None
+        retryable = int(
+            await self._session.scalar(
+                select(func.count())
+                .select_from(BacktestBatchItemModel)
+                .where(
+                    BacktestBatchItemModel.batch_id == entity_id,
+                    BacktestBatchItemModel.status.in_(
+                        (
+                            BacktestBatchItemStatus.FAILED.value,
+                            BacktestBatchItemStatus.CANCELLED.value,
+                        )
+                    ),
+                )
+            )
+            or 0
+        )
+        if retryable == 0:
+            return _backtest_batch_from_model(batch_model)
+        await self._session.execute(
+            update(BacktestBatchItemModel)
+            .where(
+                BacktestBatchItemModel.batch_id == entity_id,
+                BacktestBatchItemModel.status.in_(
+                    (
+                        BacktestBatchItemStatus.FAILED.value,
+                        BacktestBatchItemStatus.CANCELLED.value,
+                    )
+                ),
+            )
+            .values(
+                status=BacktestBatchItemStatus.PENDING.value,
+                backtest_run_id=None,
+                attempt_count=0,
+                started_at=None,
+                completed_at=None,
+                error_code=None,
+                error_message=None,
+                updated_at=occurred_at,
+            )
+        )
+        counts = {
+            status: int(count)
+            for status, count in (
+                await self._session.execute(
+                    select(BacktestBatchItemModel.status, func.count())
+                    .where(BacktestBatchItemModel.batch_id == entity_id)
+                    .group_by(BacktestBatchItemModel.status)
+                )
+            ).all()
+        }
+        batch_model.pending_count = counts.get("PENDING", 0)
+        batch_model.running_count = counts.get("RUNNING", 0)
+        batch_model.completed_count = counts.get("COMPLETED", 0)
+        batch_model.failed_count = counts.get("FAILED", 0)
+        batch_model.cancelled_count = counts.get("CANCELLED", 0)
+        batch_model.status = BacktestBatchStatus.CREATED.value
+        batch_model.completed_at = None
+        batch_model.error_code = None
+        batch_model.error_message = None
+        batch_model.updated_at = occurred_at
         await self._session.flush()
         return _backtest_batch_from_model(batch_model)
 
@@ -655,6 +810,7 @@ class SqlAlchemyBacktestBatchRepository:
                     BacktestBatchItemModel,
                     InstrumentModel,
                     BacktestMetricModel,
+                    BacktestRunModel,
                 )
                 .join(
                     InstrumentModel,
@@ -663,6 +819,10 @@ class SqlAlchemyBacktestBatchRepository:
                 .outerjoin(
                     BacktestMetricModel,
                     BacktestMetricModel.run_id == BacktestBatchItemModel.backtest_run_id,
+                )
+                .outerjoin(
+                    BacktestRunModel,
+                    BacktestRunModel.id == BacktestBatchItemModel.backtest_run_id,
                 )
                 .where(BacktestBatchItemModel.batch_id == batch_id)
                 .order_by(
@@ -707,10 +867,25 @@ class SqlAlchemyBacktestBatchRepository:
                     else format(metric.sharpe_ratio, "f")
                 ),
                 fill_count=None if metric is None else metric.fill_count,
+                bars_processed=None if run is None else run.bars_processed,
+                signals_generated=None if run is None else run.signals_generated,
+                candidate_session_count=(
+                    None if run is None else run.candidate_session_count
+                ),
+                minute_replay_session_count=(
+                    None if run is None else run.minute_replay_session_count
+                ),
+                processed_minute_bar_count=(
+                    None if run is None else run.processed_minute_bar_count
+                ),
+                data_preparation_summary=(
+                    None if run is None else run.data_preparation_summary
+                ),
+                performance_summary=None if run is None else run.performance_summary,
                 error_code=item.error_code,
                 error_message=item.error_message,
             )
-            for item, instrument, metric in rows
+            for item, instrument, metric, run in rows
         ], total
 
     async def list_all_results(self, batch_id: UUID) -> builtins.list[BacktestBatchResultRow]:
@@ -2935,7 +3110,12 @@ class SqlAlchemyMultiAgentResearchTaskRepository(
         await self._add(entity)
 
     async def update(self, entity: MultiAgentResearchTask) -> None:
-        values = model_values(model_from_entity(MultiAgentResearchTaskModel, entity))
+        # Retry intentionally clears the previous terminal error/checkpoint
+        # fields.  Research tasks therefore need NULL values to participate in
+        # an update instead of inheriting stale failure details in the UI.
+        values = model_values(
+            model_from_entity(MultiAgentResearchTaskModel, entity), include_none=True
+        )
         values.pop("id", None)
         await self._session.execute(
             update(MultiAgentResearchTaskModel)
@@ -3013,7 +3193,9 @@ class SqlAlchemyMultiAgentResearchStepRepository:
         await self._session.flush()
 
     async def update(self, entity: MultiAgentResearchStep) -> None:
-        values = model_values(model_from_entity(MultiAgentResearchStepModel, entity))
+        values = model_values(
+            model_from_entity(MultiAgentResearchStepModel, entity), include_none=True
+        )
         values.pop("id", None)
         await self._session.execute(
             update(MultiAgentResearchStepModel)
@@ -3047,6 +3229,70 @@ class SqlAlchemyMultiAgentResearchReportRepository(
             )
         )
         return None if row is None else entity_from_model(MultiAgentResearchReport, row)
+
+
+class SqlAlchemyMultiAgentResearchWorkflowEventRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append_many(self, entities: list[MultiAgentResearchWorkflowEvent]) -> None:
+        if not entities:
+            return
+        values = [
+            model_values(model_from_entity(MultiAgentResearchWorkflowEventModel, entity))
+            for entity in entities
+        ]
+        await self._session.execute(
+            pg_insert(MultiAgentResearchWorkflowEventModel)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["task_id", "sequence"])
+        )
+        await self._session.flush()
+
+    async def list_by_task(self, task_id: UUID) -> list[MultiAgentResearchWorkflowEvent]:
+        rows = await self._session.scalars(
+            select(MultiAgentResearchWorkflowEventModel)
+            .where(MultiAgentResearchWorkflowEventModel.task_id == task_id)
+            .order_by(
+                MultiAgentResearchWorkflowEventModel.sequence,
+                MultiAgentResearchWorkflowEventModel.id,
+            )
+        )
+        return [entity_from_model(MultiAgentResearchWorkflowEvent, row) for row in rows]
+
+
+class SqlAlchemyMultiAgentResearchArtifactRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_many(self, entities: list[MultiAgentResearchArtifact]) -> None:
+        if not entities:
+            return
+        values = [
+            model_values(model_from_entity(MultiAgentResearchArtifactModel, entity))
+            for entity in entities
+        ]
+        # The physical JSONB column is named ``metadata`` while the ORM
+        # attribute is ``artifact_metadata``.  ORM-enabled bulk INSERT treats
+        # the physical name as DeclarativeBase.metadata and crashes.  Target
+        # the Core table so column names are interpreted exactly as persisted.
+        await self._session.execute(
+            pg_insert(MultiAgentResearchArtifactModel.__table__)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["task_id", "artifact_key"])
+        )
+        await self._session.flush()
+
+    async def list_by_task(self, task_id: UUID) -> list[MultiAgentResearchArtifact]:
+        rows = await self._session.scalars(
+            select(MultiAgentResearchArtifactModel)
+            .where(MultiAgentResearchArtifactModel.task_id == task_id)
+            .order_by(
+                MultiAgentResearchArtifactModel.ordinal,
+                MultiAgentResearchArtifactModel.id,
+            )
+        )
+        return [entity_from_model(MultiAgentResearchArtifact, row) for row in rows]
 
 
 class SqlAlchemyStrategyExperimentRepository(

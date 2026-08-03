@@ -16,6 +16,12 @@ export interface BacktestRun {
   risk_reviewed: number;
   orders_created: number;
   fills_generated: number;
+  candidate_session_count: number;
+  minute_replay_session_count: number;
+  processed_minute_bar_count: number;
+  skipped_reason: string | null;
+  data_preparation_summary?: Record<string, unknown>;
+  performance_summary?: Record<string, unknown>;
   started_at: string | null;
   completed_at: string | null;
   failed_at: string | null;
@@ -195,7 +201,14 @@ export interface CreateBacktestRequest {
   order_type: "MARKET" | "LIMIT";
   time_in_force: "DAY" | "GTC";
   execution_price_mode:
-    "NEXT_OPEN" | "SIGNAL_CLOSE_LIMIT" | "SAME_DAY_NEXT_MINUTE";
+    | "NEXT_OPEN"
+    | "SIGNAL_CLOSE_LIMIT"
+    | "SAME_DAY_NEXT_MINUTE"
+    | "INTRADAY_NEXT_MINUTE"
+    | "INTRADAY_SIGNAL_CLOSE";
+  signal_timeframe?: "MINUTE_1" | "MINUTE_5" | "MINUTE_15";
+  auto_prepare_minute_data?: boolean;
+  optimistic_fill_assumption?: boolean;
   position_size_ratio: string | null;
   maximum_entry_gap_ratio: string | null;
   fee_configuration: {

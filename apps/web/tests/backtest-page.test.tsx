@@ -291,7 +291,10 @@ test("创建表单固定使用MiniQMT并允许成交量参与率留空", async (
     data_source_code: "MINIQMT",
     instrument_ids: ["instrument-1"],
     order_type: "MARKET",
-    execution_price_mode: "NEXT_OPEN",
+    execution_price_mode: "INTRADAY_NEXT_MINUTE",
+    signal_timeframe: "MINUTE_1",
+    auto_prepare_minute_data: true,
+    optimistic_fill_assumption: false,
     maximum_entry_gap_ratio: "0.05",
     time_in_force: "DAY",
   });

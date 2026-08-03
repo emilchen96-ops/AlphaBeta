@@ -8,6 +8,7 @@ export interface AIProviderStatus {
   provider_key: string;
   model: string;
   model_name: string;
+  selectable_models: string[];
   configured: boolean;
   available: boolean;
   mode:
@@ -156,6 +157,32 @@ export interface AIResearchReportSummary {
   created_at: string;
 }
 
+export interface AIResearchWorkflowEvent {
+  event_id: string;
+  sequence: number;
+  event_type: string;
+  status: string;
+  node_name: string;
+  agent_role: string | null;
+  tool_name: string | null;
+  payload: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface AIResearchArtifact {
+  artifact_id: string;
+  artifact_key: string;
+  artifact_type: string;
+  title: string;
+  content_markdown: string;
+  ordinal: number;
+  metadata: Record<string, unknown>;
+  source_ids: string[];
+  created_at: string;
+}
+
 export interface AIResearchTask {
   task_id: string;
   instrument: { id: string; symbol: string; exchange: string; name: string };
@@ -165,6 +192,11 @@ export interface AIResearchTask {
   end_date: string;
   provider_key: string;
   model_name: string;
+  engine_key: string;
+  engine_version: string;
+  checkpoint_key: string;
+  execution_attempt: number;
+  last_checkpoint_at: string | null;
   is_real_provider: boolean;
   status: AIResearchTaskStatus;
   progress_percent: number;
@@ -177,6 +209,8 @@ export interface AIResearchTask {
   created_at: string;
   updated_at: string;
   steps: AIResearchAgentStep[];
+  events: AIResearchWorkflowEvent[];
+  artifacts: AIResearchArtifact[];
   report: AIResearchReportSummary | null;
   capabilities: Record<string, boolean>;
 }
@@ -199,6 +233,7 @@ export interface AIResearchReport extends AIResearchReportSummary {
 
 export interface AIResearchTaskCreateBody {
   instrument_id: string;
+  model_name: string;
   question: string;
   depth: AIResearchDepth;
   start_date: string;

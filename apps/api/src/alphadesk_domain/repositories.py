@@ -15,9 +15,11 @@ from alphadesk_domain.accounting import (
 )
 from alphadesk_domain.ai_research import AIAnalysisRun, ResearchEvidence, ResearchInsight
 from alphadesk_domain.ai_workbench import (
+    MultiAgentResearchArtifact,
     MultiAgentResearchReport,
     MultiAgentResearchStep,
     MultiAgentResearchTask,
+    MultiAgentResearchWorkflowEvent,
 )
 from alphadesk_domain.backtest import (
     BacktestEquityPoint,
@@ -729,6 +731,16 @@ class MultiAgentResearchReportRepository(Protocol):
     async def get_by_task(self, task_id: UUID) -> MultiAgentResearchReport | None: ...
 
 
+class MultiAgentResearchWorkflowEventRepository(Protocol):
+    async def append_many(self, entities: list[MultiAgentResearchWorkflowEvent]) -> None: ...
+    async def list_by_task(self, task_id: UUID) -> list[MultiAgentResearchWorkflowEvent]: ...
+
+
+class MultiAgentResearchArtifactRepository(Protocol):
+    async def add_many(self, entities: list[MultiAgentResearchArtifact]) -> None: ...
+    async def list_by_task(self, task_id: UUID) -> list[MultiAgentResearchArtifact]: ...
+
+
 class UserStrategyRepository(Protocol):
     async def add_definition(self, entity: UserStrategyDefinition) -> None: ...
     async def add_version(self, entity: UserStrategyVersion) -> None: ...
@@ -786,6 +798,10 @@ class BacktestBatchRepository(Protocol):
         self, *, stale_before: datetime
     ) -> tuple[BacktestBatch, BacktestBatchItem] | None: ...
     async def finish_item(self, entity: BacktestBatchItem) -> BacktestBatch: ...
+    async def cancel(self, entity_id: UUID, *, occurred_at: datetime) -> BacktestBatch | None: ...
+    async def retry_failed(
+        self, entity_id: UUID, *, occurred_at: datetime
+    ) -> BacktestBatch | None: ...
     async def list_results(
         self, batch_id: UUID, *, offset: int, limit: int
     ) -> tuple[builtins.list[BacktestBatchResultRow], int]: ...

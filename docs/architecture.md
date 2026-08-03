@@ -53,6 +53,24 @@ flowchart LR
   Order -. SUPPRESSED .-> Outbox[(PostgreSQL Outbox)]
 ```
 
+> BT02-A 增量：回测先用 PostgreSQL 日线做可证明安全的候选日预筛，只对候选日及持仓后续日
+> 校验和补齐 MiniQMT 1 分钟线；分钟闭合后构造当日部分日线，默认在下一根真实分钟开盘执行。
+> 批量任务使用 PostgreSQL 状态与 Redis 队列，支持关闭页面、取消、失败项重试和 Worker 重启
+> 后重新认领。策略不具备安全预筛器时退化为完整分钟回放。详见
+> [BT02-A 分钟级触发回测](bt02_intraday_backtest.md)。
+
+```mermaid
+flowchart LR
+  Scope[单股 / 自选 / 全A股] --> Daily[(PostgreSQL RAW 日线)]
+  Daily --> Prefilter[安全候选日预筛]
+  Prefilter --> Gap[分钟缺口与质量检查]
+  Gap --> QMT[MiniQMT 按需补数]
+  QMT --> Minute[(PostgreSQL 1分钟线)]
+  Minute --> Partial[已闭合分钟构造部分日线]
+  Partial --> Pipeline[Signal → Risk → Order → Fill → Ledger]
+  Pipeline --> Audit[绩效 / 时间线 / 完整性]
+```
+
 > A01 增量：FastAPI 只把用户选定的 N01 InformationItem/MarketEvent 交给配置驱动的 `AIResearchProvider`。版本化 Prompt 将外部文本视为不可信数据，结构化输出必须引用本次输入 Evidence；PostgreSQL 保存 AIAnalysisRun、ResearchInsight 和 ResearchEvidence。默认 Provider 为 disabled，Fake 仅用于测试/本地演示，当前没有真实 Provider。A01 不调用 Scanner、Risk、Broker 或 MiniQMT，不创建 Signal、Order、Fill，也不修改资金和持仓。详见 [ai_research_assistant.md](ai_research_assistant.md)。
 
 ```mermaid
@@ -237,6 +255,6 @@ M02 新增独立的 `alphadesk_domain` 纯 Python 包，以及位于 `alphadesk_
 这一阶段没有增加公开业务 API、网页功能、Redis Streams、Outbox 发布器、订单状态机服务、风控执行或 Broker 调用。Web 与既有健康接口的 M01 行为保持不变。
 # TA01 增量架构
 
-TA01 在 FastAPI 与 PostgreSQL 之间增加持久化调研任务、角色步骤和报告，在独立 `ai_research_worker` 中执行模型调用。Redis 仅提供 Worker 心跳/运行可观测性；数据库是恢复与幂等的权威来源。Web 只创建任务、轮询状态和读取报告，不直接调用模型。
+TA01 在 FastAPI 与 PostgreSQL 之间增加持久化调研任务、角色步骤、Graph/工具事件、独立角色产物和最终报告。独立 `ai_research_worker` 运行固定 revision 的 TradingAgents LangGraph；Redis 仅提供 Worker 心跳，PostgreSQL 是审计事实来源，上游 SQLite checkpointer 提供节点级断点恢复。Web 只创建任务、轮询状态和读取报告，不直接调用模型。
 
-`D:\QTM\TradingAgents` 只用于设计审计。AlphaDesk 借鉴其多角色研究、辩论和风险复核概念，不导入该目录、不执行其 CLI，也不读取其配置或 Secret。
+`D:\QTM\TradingAgents` 只用于开发期基准验收。生产运行安装仓库中固定的 Apache-2.0 上游 revision，不导入该本地目录、不执行 CLI，也不读取上游配置或 Secret。AlphaDesk 工具路由负责 MiniQMT A 股行情与可审计外部资料，密钥只由 Worker 环境注入。

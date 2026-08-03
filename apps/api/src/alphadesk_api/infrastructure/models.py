@@ -2452,6 +2452,13 @@ class MultiAgentResearchTaskModel(MutableTimestampedModel, Base):
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    engine_key: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="tradingagents_graph"
+    )
+    engine_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    checkpoint_key: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    execution_attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_checkpoint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     progress_percent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_stage: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -2527,6 +2534,54 @@ class MultiAgentResearchReportModel(TimestampedModel, Base):
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
+class MultiAgentResearchWorkflowEventModel(TimestampedModel, Base):
+    __tablename__ = "ai_research_workflow_events"
+    __table_args__ = (
+        UniqueConstraint("task_id", "sequence", name="uq_ai_research_events_task_sequence"),
+        CheckConstraint("sequence >= 0", name="ai_research_event_sequence_non_negative"),
+        Index("ix_ai_research_events_task_sequence", "task_id", "sequence"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ai_research_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    node_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    agent_role: Mapped[str | None] = mapped_column(String(32))
+    tool_name: Mapped[str | None] = mapped_column(String(128))
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MultiAgentResearchArtifactModel(TimestampedModel, Base):
+    __tablename__ = "ai_research_artifacts"
+    __table_args__ = (
+        UniqueConstraint("task_id", "artifact_key", name="uq_ai_research_artifacts_task_key"),
+        CheckConstraint("ordinal >= 0", name="ai_research_artifact_ordinal_non_negative"),
+        Index("ix_ai_research_artifacts_task_ordinal", "task_id", "ordinal"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("ai_research_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    artifact_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    artifact_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict, server_default=JSON_DEFAULT
+    )
+    source_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+
 class BacktestRunModel(MutableTimestampedModel, Base):
     __tablename__ = "backtest_runs"
     __table_args__ = (
@@ -2572,6 +2627,16 @@ class BacktestRunModel(MutableTimestampedModel, Base):
     risk_reviewed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     orders_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     fills_generated: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidate_session_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    minute_replay_session_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed_minute_bar_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_reason: Mapped[str | None] = mapped_column(String(512))
+    data_preparation_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    performance_summary: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

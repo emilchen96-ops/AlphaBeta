@@ -125,6 +125,8 @@ class Settings(BaseSettings):
     backtest_batch_max_instruments: int = Field(default=6_000, ge=1, le=10_000)
     backtest_batch_worker_poll_ms: int = Field(default=500, ge=100, le=60_000)
     backtest_batch_item_stale_seconds: int = Field(default=1_800, ge=60, le=86_400)
+    backtest_batch_data_retry_seconds: int = Field(default=120, ge=10, le=3_600)
+    backtest_batch_data_max_attempts: int = Field(default=720, ge=1, le=10_000)
     ai_research_worker_poll_ms: int = Field(default=1_000, ge=100, le=60_000)
     ai_research_task_stale_seconds: int = Field(default=300, ge=60, le=86_400)
     replay_interval_x1_ms: int = Field(default=1000, ge=100, le=60_000)
@@ -147,14 +149,27 @@ class Settings(BaseSettings):
     ai_base_url: str | None = None
     ai_api_key: SecretStr | None = None
     ai_model: str | None = None
-    ai_request_timeout_seconds: float = Field(default=30, gt=0, le=300)
-    ai_max_retries: int = Field(default=1, ge=0, le=3)
+    # Deliberative models regularly need more than one minute for debate and
+    # risk-review turns.  Keep a bounded but realistic per-request timeout and
+    # retry transient provider failures before checkpoint-based task recovery.
+    ai_request_timeout_seconds: float = Field(default=180, gt=0, le=300)
+    ai_max_retries: int = Field(default=2, ge=0, le=3)
     ai_max_input_characters: int = Field(default=50_000, ge=1_000, le=1_000_000)
     ai_max_output_tokens: int = Field(default=2_000, ge=64, le=128_000)
     ai_temperature: Decimal = Field(default=Decimal("0.1"), ge=0, le=2)
     ai_cost_input_per_million: Decimal | None = Field(default=None, ge=0)
     ai_cost_output_per_million: Decimal | None = Field(default=None, ge=0)
     ai_structured_output_enabled: bool = True
+    ai_research_engine: Literal["legacy", "tradingagents"] = "tradingagents"
+    ai_quick_model: str | None = None
+    ai_deep_model: str | None = None
+    ai_selectable_models: str | None = None
+    ai_graph_timeout_seconds: int = Field(default=1800, ge=60, le=14_400)
+    ai_max_debate_rounds: int = Field(default=1, ge=1, le=5)
+    ai_max_risk_rounds: int = Field(default=1, ge=1, le=5)
+    ai_checkpoint_dir: str = "/app/checkpoints/ai-research"
+    ai_artifact_dir: str = "/app/artifacts/ai-research"
+    ai_external_data_enabled: bool = True
 
     @field_validator("api_prefix")
     @classmethod
@@ -215,7 +230,7 @@ class Settings(BaseSettings):
             return None
         return value.strip()
 
-    @field_validator("ai_model")
+    @field_validator("ai_model", "ai_quick_model", "ai_deep_model")
     @classmethod
     def validate_ai_model(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
@@ -224,6 +239,28 @@ class Settings(BaseSettings):
         if len(normalized) > 128 or any(char.isspace() for char in normalized):
             raise ValueError("ai_model must be a non-empty model identifier")
         return normalized
+
+    @field_validator("ai_selectable_models")
+    @classmethod
+    def validate_ai_selectable_models(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        models = [item.strip() for item in value.split(",") if item.strip()]
+        if not models:
+            return None
+        if any(len(item) > 128 or any(char.isspace() for char in item) for item in models):
+            raise ValueError("ai_selectable_models must be comma-separated model identifiers")
+        return ",".join(dict.fromkeys(models))
+
+    @property
+    def selectable_ai_models(self) -> tuple[str, ...]:
+        configured = (
+            []
+            if self.ai_selectable_models is None
+            else [item.strip() for item in self.ai_selectable_models.split(",")]
+        )
+        models = [self.ai_model, self.ai_quick_model, self.ai_deep_model, *configured]
+        return tuple(dict.fromkeys(item for item in models if item))
 
     @model_validator(mode="after")
     def validate_required_connections(self) -> Self:

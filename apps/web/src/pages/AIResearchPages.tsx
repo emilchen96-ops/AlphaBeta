@@ -189,7 +189,7 @@ function AIResearchWorkbench() {
                 size="small"
                 loading={providerTest.isPending}
                 disabled={providerTest.isPending}
-                onClick={() => providerTest.mutate()}
+                onClick={() => providerTest.mutate(undefined)}
               >
                 测试真实模型服务连通性
               </Button>

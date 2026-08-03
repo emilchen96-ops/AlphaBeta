@@ -143,6 +143,7 @@ async def ai_provider_status(request: Request) -> AIProviderStatusResponse:
         provider_key=snapshot.provider_key,
         model=snapshot.model_name,
         model_name=snapshot.model_name,
+        selectable_models=list(request.app.state.settings.selectable_ai_models),
         configured=snapshot.configured,
         available=snapshot.available,
         mode=snapshot.mode,
@@ -161,7 +162,6 @@ async def ai_provider_status(request: Request) -> AIProviderStatusResponse:
 async def test_ai_provider_connection(
     request: Request, body: AIProviderTestBody
 ) -> AIProviderTestResponse:
-    del body
     if request.app.state.settings.environment not in {"development", "test"}:
         raise to_app_error(
             ApplicationError(
@@ -169,7 +169,7 @@ async def test_ai_provider_connection(
                 "provider connectivity test is only available in development or test",
             )
         )
-    result = await test_ai_provider(provider(request))
+    result = await test_ai_provider(provider(request), model_name=body.model_name)
     return AIProviderTestResponse(
         success=result.success,
         provider_key=result.provider_key,

@@ -114,6 +114,11 @@ const task = {
   end_date: "2026-07-21",
   provider_key: "openai_compatible",
   model_name: "research-model",
+  engine_key: "tradingagents_graph",
+  engine_version: "a33fd4c0f134485a43553a2c23a63cb14adbd88f",
+  checkpoint_key: "300088.SZ:2026-07-21:STANDARD",
+  execution_attempt: 1,
+  last_checkpoint_at: "2026-07-21T01:02:00Z",
   is_real_provider: true,
   status: "COMPLETED",
   progress_percent: 100,
@@ -143,6 +148,8 @@ const task = {
       completed_at: "2026-07-21T01:01:00Z",
     },
   ],
+  events: [],
+  artifacts: [],
   report: {
     report_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
     title: "长信科技多智能体调研报告",
@@ -186,6 +193,11 @@ function installFetch(
             : providerMode === "FAKE"
               ? "alphadesk-fake-v1"
               : "none",
+          selectable_models: providerMode.startsWith("REAL")
+            ? ["research-model", "qwen-max"]
+            : providerMode === "FAKE"
+              ? ["alphadesk-fake-v1"]
+              : [],
           configured: providerMode !== "DISABLED",
           available: providerMode === "REAL_AVAILABLE",
           mode: providerMode,
@@ -290,13 +302,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test("AI调研主界面只保留股票、问题、深度与资料范围", async () => {
+test("AI调研主界面只保留股票、模型、问题、深度与资料范围", async () => {
   renderRoute("/ai-research");
   expect(
     await screen.findByText(/真实 AI Provider 尚未配置/),
   ).toBeInTheDocument();
   expect(screen.getAllByText("研究股票").length).toBeGreaterThan(0);
   expect(screen.getAllByText("研究问题").length).toBeGreaterThan(0);
+  expect(screen.getByText("本次调研模型")).toBeInTheDocument();
   expect(screen.getByText("调研深度")).toBeInTheDocument();
   expect(screen.getByText("资料时间范围")).toBeInTheDocument();
   expect(screen.queryByText("资讯原始事实")).not.toBeInTheDocument();
@@ -331,10 +344,11 @@ test("真实 Provider 可用时显示安全端点并允许连接测试", async (
   expect(
     screen.getByRole("button", { name: /开始 AI 调研/ }),
   ).toBeEnabled();
+  expect(screen.getAllByText("research-model").length).toBeGreaterThan(0);
   await userEvent.click(
-    screen.getByRole("button", { name: "测试模型连接" }),
+    screen.getByRole("button", { name: "测试所选模型连接" }),
   );
-  expect((await screen.findAllByText(/AI 模型服务可用/)).length).toBeGreaterThan(0);
+  expect((await screen.findAllByText(/research-model 可用/)).length).toBeGreaterThan(0);
   expect(screen.queryByText(/super-secret|api_key/i)).not.toBeInTheDocument();
 });
 

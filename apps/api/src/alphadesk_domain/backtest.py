@@ -23,7 +23,7 @@ from alphadesk_domain.values import as_utc, decimal_value, non_empty, utc_now
 ZERO = Decimal("0")
 ONE = Decimal("1")
 TRADING_SESSIONS_PER_YEAR = Decimal("252")
-BACKTEST_ENGINE_VERSION = "bt01-v2"
+BACKTEST_ENGINE_VERSION = "bt02a-v1"
 ASHARE_TIMEZONE = ZoneInfo("Asia/Shanghai")
 EIGHT_PLACES = Decimal("0.00000001")
 TWELVE_PLACES = Decimal("0.000000000001")
@@ -72,6 +72,8 @@ class BacktestExecutionPriceMode(StrEnum):
     SIGNAL_CLOSE_LIMIT = "SIGNAL_CLOSE_LIMIT"
     NEXT_OPEN = "NEXT_OPEN"
     SAME_DAY_NEXT_MINUTE = "SAME_DAY_NEXT_MINUTE"
+    INTRADAY_NEXT_MINUTE = "INTRADAY_NEXT_MINUTE"
+    INTRADAY_SIGNAL_CLOSE = "INTRADAY_SIGNAL_CLOSE"
 
 
 def _non_negative(value: Decimal, name: str) -> Decimal:
@@ -181,6 +183,9 @@ class BacktestConfiguration:
     benchmark_symbol: str | None = None
     data_source_code: str = "BAOSTOCK"
     strategy_price_adjustment_mode: PriceAdjustmentMode = PriceAdjustmentMode.RAW
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     environment: StrategyEnvironment = StrategyEnvironment.BACKTEST
     schema_version: int = 1
     engine_version: str = BACKTEST_ENGINE_VERSION
@@ -207,16 +212,19 @@ class BacktestConfiguration:
             in (
                 BacktestExecutionPriceMode.NEXT_OPEN,
                 BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE,
             )
             and self.order_type is not OrderType.MARKET
         ):
+            message = (
+                "NEXT_OPEN execution requires a MARKET order"
+                if execution_price_mode is BacktestExecutionPriceMode.NEXT_OPEN
+                else "intraday minute execution requires a MARKET order"
+            )
             raise BacktestError(
                 "BACKTEST_INVALID_CONFIGURATION",
-                (
-                    "NEXT_OPEN execution requires a MARKET order"
-                    if execution_price_mode is BacktestExecutionPriceMode.NEXT_OPEN
-                    else "SAME_DAY_NEXT_MINUTE execution requires a MARKET order"
-                ),
+                message,
             )
         if (
             execution_price_mode is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
@@ -227,12 +235,17 @@ class BacktestConfiguration:
                 "SIGNAL_CLOSE_LIMIT execution requires a LIMIT order",
             )
         if (
-            execution_price_mode is BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE
+            execution_price_mode
+            in (
+                BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE,
+            )
             and self.strategy_price_adjustment_mode is not PriceAdjustmentMode.RAW
         ):
             raise BacktestError(
                 "BACKTEST_INVALID_CONFIGURATION",
-                "same-day minute execution currently requires RAW prices",
+                "intraday minute execution requires RAW prices",
             )
         if self.maximum_entry_gap_ratio is not None:
             decimal_value(self.maximum_entry_gap_ratio, "maximum_entry_gap_ratio")
@@ -251,11 +264,30 @@ class BacktestConfiguration:
             if execution_price_mode not in (
                 BacktestExecutionPriceMode.NEXT_OPEN,
                 BacktestExecutionPriceMode.SAME_DAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_NEXT_MINUTE,
+                BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE,
             ):
                 raise BacktestError(
                     "BACKTEST_INVALID_CONFIGURATION",
-                    "position sizing requires NEXT_OPEN or SAME_DAY_NEXT_MINUTE execution",
+                    "position sizing requires NEXT_OPEN or intraday market-price execution",
                 )
+        if self.signal_timeframe not in (
+            MarketTimeframe.MINUTE_1,
+            MarketTimeframe.MINUTE_5,
+            MarketTimeframe.MINUTE_15,
+        ):
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION",
+                "signal_timeframe must be MINUTE_1, MINUTE_5 or MINUTE_15",
+            )
+        if (
+            execution_price_mode is BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE
+            and not self.optimistic_fill_assumption
+        ):
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION",
+                "signal-minute close execution must explicitly enable optimistic_fill_assumption",
+            )
         start_at = as_utc(self.start_at, "start_at")
         end_at = as_utc(self.end_at, "end_at")
         if start_at >= end_at:
@@ -336,6 +368,15 @@ def backtest_request_fingerprint(configuration: BacktestConfiguration) -> str:
     # persist this optional key and continue to mean "use the strategy quantity".
     if isinstance(payload, dict) and payload.get("position_size_ratio") is None:
         payload.pop("position_size_ratio", None)
+    if isinstance(payload, dict) and configuration.execution_price_mode not in (
+        BacktestExecutionPriceMode.INTRADAY_NEXT_MINUTE,
+        BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE,
+    ):
+        # BT02-A fields do not affect the legacy daily engines.  Omitting them
+        # keeps already-persisted BT01 request fingerprints readable.
+        payload.pop("signal_timeframe", None)
+        payload.pop("auto_prepare_minute_data", None)
+        payload.pop("optimistic_fill_assumption", None)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -356,6 +397,13 @@ def backtest_configuration_to_dict(configuration: BacktestConfiguration) -> dict
         raise TypeError("canonical backtest configuration must be an object")
     if value.get("position_size_ratio") is None:
         value.pop("position_size_ratio", None)
+    if configuration.execution_price_mode not in (
+        BacktestExecutionPriceMode.INTRADAY_NEXT_MINUTE,
+        BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE,
+    ):
+        value.pop("signal_timeframe", None)
+        value.pop("auto_prepare_minute_data", None)
+        value.pop("optimistic_fill_assumption", None)
     return value
 
 
@@ -473,6 +521,9 @@ def backtest_configuration_from_dict(value: Mapping[str, Any]) -> BacktestConfig
         strategy_price_adjustment_mode=PriceAdjustmentMode(
             str(value.get("strategy_price_adjustment_mode", "RAW"))
         ),
+        signal_timeframe=MarketTimeframe(str(value.get("signal_timeframe", "MINUTE_1"))),
+        auto_prepare_minute_data=bool(value.get("auto_prepare_minute_data", True)),
+        optimistic_fill_assumption=bool(value.get("optimistic_fill_assumption", False)),
         environment=StrategyEnvironment(str(value["environment"])),
         schema_version=int(value["schema_version"]),
         engine_version=str(value["engine_version"]),
@@ -497,6 +548,12 @@ class BacktestRun:
     risk_reviewed: int = 0
     orders_created: int = 0
     fills_generated: int = 0
+    candidate_session_count: int = 0
+    minute_replay_session_count: int = 0
+    processed_minute_bar_count: int = 0
+    skipped_reason: str | None = None
+    data_preparation_summary: dict[str, object] = field(default_factory=dict)
+    performance_summary: dict[str, object] = field(default_factory=dict)
     started_at: datetime | None = None
     completed_at: datetime | None = None
     failed_at: datetime | None = None
@@ -525,6 +582,9 @@ class BacktestRun:
             self.risk_reviewed,
             self.orders_created,
             self.fills_generated,
+            self.candidate_session_count,
+            self.minute_replay_session_count,
+            self.processed_minute_bar_count,
         )
         if any(value < 0 for value in counters):
             raise BacktestError(

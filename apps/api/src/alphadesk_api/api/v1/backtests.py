@@ -1,6 +1,7 @@
 """BT01 synchronous daily backtest HTTP endpoints."""
 
-from collections.abc import Sequence
+import json
+from collections.abc import Awaitable, Sequence
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -17,6 +18,7 @@ from alphadesk_api.application.backtests import (
     CreateBacktestRequest,
 )
 from alphadesk_api.application.common import ApplicationError
+from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
 from alphadesk_api.application.strategies import StrategyResearchService
 from alphadesk_api.core.config import Settings
 from alphadesk_api.schemas.backtests import (
@@ -41,6 +43,25 @@ def _registry(request: Request) -> StrategyRegistry:
 
 def _settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+
+def _backfill_enqueuer(request: Request):
+    client = getattr(request.app.state.redis, "client", None)
+    if client is None:
+        return None
+
+    async def enqueue(payload: dict[str, object]) -> int:
+        return int(
+            await cast(
+                Awaitable[int],
+                client.rpush(
+                    HISTORY_QUEUE_KEY,
+                    json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                ),
+            )
+        )
+
+    return enqueue
 
 
 def _decimal(value: str, name: str) -> Decimal:
@@ -80,7 +101,12 @@ async def create_backtest(request: Request, body: BacktestCreateBody) -> Backtes
     try:
         fee = body.fee_configuration
         slippage = body.slippage_configuration
-        service = BacktestService(uow_factory(request), registry, _settings(request))
+        service = BacktestService(
+            uow_factory(request),
+            registry,
+            _settings(request),
+            _backfill_enqueuer(request),
+        )
         result = await service.run(
             CreateBacktestRequest(
                 strategy_key=body.strategy_key,
@@ -93,6 +119,9 @@ async def create_backtest(request: Request, body: BacktestCreateBody) -> Backtes
                 order_type=OrderType(body.order_type),
                 time_in_force=TimeInForce(body.time_in_force),
                 execution_price_mode=body.execution_price_mode,
+                signal_timeframe=body.signal_timeframe,
+                auto_prepare_minute_data=body.auto_prepare_minute_data,
+                optimistic_fill_assumption=body.optimistic_fill_assumption,
                 position_size_ratio=(
                     None
                     if body.position_size_ratio is None

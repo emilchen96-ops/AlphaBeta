@@ -6,7 +6,7 @@ UX02-B 的 `/research/backtest` 是 BT01 的产品化入口，不是另一套简
 StrategySpec 编译后进入完整 Signal → 规则检查 → 模拟交易指令 → 模拟成交 → 账本链。
 规则快照不可变；模拟成交、费用和权益使用 RAW 价格，且绝不发送真实订单。
 
-D02 增加 `strategy_price_adjustment_mode=RAW|QFQ`。策略可读 QFQ，但 Session Open 成交、Session End 估值、Order、Fill、费用和账本始终使用 RAW；开放日来自交易日历，已知停牌日不会成交。分钟回测仍未实现。
+D02 增加 `strategy_price_adjustment_mode=RAW|QFQ`。策略可读 QFQ，但 Session Open 成交、Session End 估值、Order、Fill、费用和账本始终使用 RAW；开放日来自交易日历，已知停牌日不会成交。BT02-A 已在同一事实链上增加分钟级触发，见 [BT02-A 分钟级触发回测](bt02_intraday_backtest.md)。
 
 BT01 提供同步、确定性、可审计的本地日线回测。链路复用现有事实管道：
 
@@ -27,7 +27,8 @@ BT01 提供同步、确定性、可审计的本地日线回测。链路复用现
 - 权益曲线、回撤、费用、成交和闭合交易绩效。
 - 同步 API、CLI 和只读结果页面。
 
-不支持分钟线、Tick、实时成交驱动、外部网络补数、Redis 任务队列或真实券商账户。
+BT01 日线模式本身不使用分钟线、Tick 或实时成交驱动。BT02-A 可按候选日加载本地分钟线并通过
+持久化后台任务运行，但仍不支持 Tick、高频撮合或真实券商账户。
 浏览器正式回测固定使用已由 MiniQMT 同步到 PostgreSQL 的历史日线；回测过程本身不会连接
 MiniQMT 实时接口，也不会读取或写入券商账户。target_weight 信号不会被猜测换算为数量。
 

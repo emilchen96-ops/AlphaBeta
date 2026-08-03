@@ -20,6 +20,7 @@ dependencies = [
   "reportlab>=4.2,<5",
   "sqlalchemy[asyncio]>=2.0,<3",
   "tzdata>=2026.3,<2027",
+  "tradingagents @ https://github.com/TauricResearch/TradingAgents/archive/a33fd4c0f134485a43553a2c23a63cb14adbd88f.zip",
   "uvicorn[standard]>=0.34,<1",
 ]
 
@@ -53,6 +54,7 @@ markers = [
   "r01: risk decision and order safety-gate milestone tests",
   "b01: simulated Broker execution and accounting milestone tests",
   "bt01: deterministic A-share daily backtesting milestone tests",
+  "bt02: no-look-ahead intraday-trigger backtesting milestone tests",
   "rt01: controllable historical daily replay milestone tests",
   "d03: offline intraday market-data center milestone tests",
   "sc01: deterministic historical market scanner milestone tests",

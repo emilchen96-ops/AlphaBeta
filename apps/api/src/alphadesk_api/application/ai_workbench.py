@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -13,10 +14,15 @@ from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_domain.ai_research import AIResearchError
 from alphadesk_domain.ai_workbench import (
     WORKBENCH_PROMPT_VERSION,
+    GraphResearchRunError,
+    GraphResearchRunRequest,
+    MultiAgentResearchArtifact,
+    MultiAgentResearchEngine,
     MultiAgentResearchProvider,
     MultiAgentResearchReport,
     MultiAgentResearchStep,
     MultiAgentResearchTask,
+    MultiAgentResearchWorkflowEvent,
     ResearchAgentRole,
     ResearchAgentStatus,
     ResearchDepth,
@@ -27,8 +33,11 @@ from alphadesk_domain.ai_workbench import (
 from alphadesk_domain.enums import AdjustmentType, MarketTimeframe
 from alphadesk_domain.unit_of_work import UnitOfWork
 
+LOGGER = logging.getLogger(__name__)
+
 ROLE_LABELS = {
     ResearchAgentRole.MARKET_ANALYST: "市场环境分析师",
+    ResearchAgentRole.SENTIMENT_ANALYST: "市场情绪分析师",
     ResearchAgentRole.TECHNICAL_ANALYST: "技术面分析师",
     ResearchAgentRole.FUNDAMENTAL_ANALYST: "基本面分析师",
     ResearchAgentRole.NEWS_ANALYST: "资讯与事件分析师",
@@ -36,6 +45,11 @@ ROLE_LABELS = {
     ResearchAgentRole.BEAR_RESEARCHER: "看空研究员",
     ResearchAgentRole.RISK_REVIEWER: "风险复核员",
     ResearchAgentRole.RESEARCH_MANAGER: "研究经理",
+    ResearchAgentRole.TRADER: "交易方案研究员",
+    ResearchAgentRole.AGGRESSIVE_RISK_ANALYST: "积极型风险分析师",
+    ResearchAgentRole.NEUTRAL_RISK_ANALYST: "中性风险分析师",
+    ResearchAgentRole.CONSERVATIVE_RISK_ANALYST: "保守型风险分析师",
+    ResearchAgentRole.PORTFOLIO_MANAGER: "组合经理",
 }
 
 SECTION_ORDER = (
@@ -53,6 +67,7 @@ SECTION_ORDER = (
 
 ROLE_SECTION = {
     ResearchAgentRole.MARKET_ANALYST: "market_environment",
+    ResearchAgentRole.SENTIMENT_ANALYST: "market_environment",
     ResearchAgentRole.TECHNICAL_ANALYST: "technical_analysis",
     ResearchAgentRole.FUNDAMENTAL_ANALYST: "fundamental_analysis",
     ResearchAgentRole.NEWS_ANALYST: "news_events",
@@ -60,6 +75,11 @@ ROLE_SECTION = {
     ResearchAgentRole.BEAR_RESEARCHER: "bear_case",
     ResearchAgentRole.RISK_REVIEWER: "risk_review",
     ResearchAgentRole.RESEARCH_MANAGER: "conclusion",
+    ResearchAgentRole.TRADER: "conclusion",
+    ResearchAgentRole.AGGRESSIVE_RISK_ANALYST: "risk_review",
+    ResearchAgentRole.NEUTRAL_RISK_ANALYST: "risk_review",
+    ResearchAgentRole.CONSERVATIVE_RISK_ANALYST: "risk_review",
+    ResearchAgentRole.PORTFOLIO_MANAGER: "conclusion",
 }
 
 
@@ -72,6 +92,7 @@ class CreateResearchTaskRequest:
     end_date: date
     idempotency_key: str
     correlation_id: UUID
+    model_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -80,6 +101,8 @@ class ResearchTaskDetail:
     instrument: dict[str, object]
     steps: tuple[MultiAgentResearchStep, ...]
     report: MultiAgentResearchReport | None
+    events: tuple[MultiAgentResearchWorkflowEvent, ...] = ()
+    artifacts: tuple[MultiAgentResearchArtifact, ...] = ()
 
 
 class AIResearchWorkbenchService:
@@ -100,8 +123,16 @@ class AIResearchWorkbenchService:
                 "AI_PROVIDER_DISABLED",
                 "真实 AI Provider 尚未配置，请在项目根目录 .env 中配置后重启服务",
             )
+        selectable_models = self._provider.selectable_models
+        model_name = (request.model_name or self._provider.model_name).strip()
+        if model_name not in selectable_models:
+            raise ApplicationError(
+                "AI_RESEARCH_MODEL_NOT_ALLOWED",
+                "所选模型不在 AlphaDesk 已配置的兼容模型列表中",
+            )
         snapshot: dict[str, object] = {
             "instrument_id": str(request.instrument_id),
+            "model_name": model_name,
             "question": question,
             "depth": request.depth.value,
             "start_date": request.start_date.isoformat(),
@@ -127,7 +158,7 @@ class AIResearchWorkbenchService:
                 start_date=request.start_date,
                 end_date=request.end_date,
                 provider_key=self._provider.provider_key,
-                model_name=self._provider.model_name,
+                model_name=model_name,
                 idempotency_key=request.idempotency_key,
                 correlation_id=request.correlation_id,
                 request_snapshot=snapshot,
@@ -206,6 +237,8 @@ class AIResearchWorkbenchService:
             },
             steps=tuple(await uow.ai_research_steps.list_by_task(task_id)),
             report=await uow.ai_research_reports.get_by_task(task_id),
+            events=tuple(await uow.ai_research_events.list_by_task(task_id)),
+            artifacts=tuple(await uow.ai_research_artifacts.list_by_task(task_id)),
         )
 
 
@@ -217,10 +250,12 @@ class AIResearchTaskProcessor:
         uow_factory: UnitOfWorkFactory,
         provider: MultiAgentResearchProvider,
         *,
+        engine: MultiAgentResearchEngine | None = None,
         stale_seconds: int = 300,
     ) -> None:
         self._uow_factory = uow_factory
         self._provider = provider
+        self._engine = engine
         self._stale_seconds = stale_seconds
 
     async def run_once(self) -> UUID | None:
@@ -229,10 +264,21 @@ class AIResearchTaskProcessor:
             return None
         try:
             await self._prepare_data(task_id)
-            await self._run_steps(task_id)
-            await self._generate_report(task_id)
-        except (ApplicationError, AIResearchError, RuntimeError, ValueError) as exc:
-            code = getattr(exc, "code", "AI_RESEARCH_WORKER_FAILED")
+            if self._engine is None:
+                await self._run_steps(task_id)
+                await self._generate_report(task_id)
+            else:
+                await self._run_graph(task_id)
+        except Exception as exc:
+            # A durable Worker must never leave a task permanently in an active
+            # state when setup, storage, a third-party Graph, or a callback raises
+            # an exception outside the small set of expected application errors.
+            # ``asyncio.CancelledError`` inherits BaseException and is therefore
+            # intentionally not swallowed here during a graceful shutdown.
+            if isinstance(exc, GraphResearchRunError):
+                await self._persist_graph_failure(task_id, exc)
+            code = getattr(exc, "code", None) or "AI_RESEARCH_WORKER_FAILED"
+            LOGGER.exception("AI research task %s failed with %s", task_id, code)
             await self._fail(task_id, str(code), str(exc))
         return task_id
 
@@ -243,9 +289,208 @@ class AIResearchTaskProcessor:
             if task is None:
                 return None
             task.advance(ResearchTaskStatus.PREPARING_DATA, 5, "正在准备本地研究资料")
+            task.execution_attempt += 1
             await uow.ai_research_tasks.update(task)
             await uow.commit()
             return task.id
+
+    async def _run_graph(self, task_id: UUID) -> None:
+        if self._engine is None or not self._engine.configured:
+            raise ApplicationError(
+                "AI_RESEARCH_GRAPH_NOT_CONFIGURED",
+                "TradingAgents Graph 或 AI Provider 尚未配置",
+            )
+        async with self._uow_factory() as uow:
+            task = await self._require_active_task(uow, task_id)
+            instrument = await uow.instruments.get_by_id(task.instrument_id)
+            if instrument is None:
+                raise ApplicationError("AI_RESEARCH_INSTRUMENT_NOT_FOUND", "研究股票不存在")
+            task.advance(
+                ResearchTaskStatus.RUNNING_AGENTS,
+                18,
+                "TradingAgents 分析师与工具链正在运行",
+            )
+            await uow.ai_research_tasks.update(task)
+            await uow.commit()
+            request = GraphResearchRunRequest(
+                task_id=task.id,
+                model_name=task.model_name,
+                ticker=self._tradingagents_ticker(instrument.symbol, instrument.exchange),
+                company_name=instrument.name,
+                question=task.question,
+                depth=task.depth,
+                start_date=task.start_date,
+                end_date=task.end_date,
+                data_snapshot=dict(task.data_snapshot),
+            )
+
+        result = await self._engine.run(request)
+        now = datetime.now(UTC)
+        async with self._uow_factory() as uow:
+            task = await self._require_active_task(uow, task_id)
+            task.advance(ResearchTaskStatus.GENERATING_REPORT, 92, "正在持久化完整调研链路")
+            task.engine_version = result.engine_version
+            task.checkpoint_key = result.checkpoint_key
+            task.last_checkpoint_at = now
+            await uow.ai_research_events.append_many(
+                await self._rebase_events(uow, task, result.events)
+            )
+            await uow.ai_research_artifacts.add_many(list(result.artifacts))
+
+            artifacts_by_role = {
+                str(artifact.artifact_metadata.get("role")): artifact
+                for artifact in result.artifacts
+                if artifact.artifact_metadata.get("role")
+            }
+            steps = await uow.ai_research_steps.list_by_task(task_id)
+            missing_roles: list[str] = []
+            for step in steps:
+                artifact = artifacts_by_role.get(step.role.value)
+                if artifact is None:
+                    step.status = ResearchAgentStatus.FAILED
+                    step.error_code = "TRADINGAGENTS_ARTIFACT_MISSING"
+                    step.error_message = f"未生成{ROLE_LABELS[step.role]}独立报告"
+                    missing_roles.append(ROLE_LABELS[step.role])
+                else:
+                    step.status = ResearchAgentStatus.COMPLETED
+                    step.title = ROLE_LABELS[step.role]
+                    step.summary = self._markdown_summary(artifact.content_markdown)
+                    step.structured_output = {
+                        "artifact_key": artifact.artifact_key,
+                        "content_markdown": artifact.content_markdown,
+                        "source_ids": list(artifact.source_ids),
+                    }
+                    step.citations = tuple(
+                        {
+                            "source_id": source_id,
+                            "source_type": source_id.split(":", maxsplit=1)[0],
+                            "title": source_id,
+                        }
+                        for source_id in artifact.source_ids
+                    )
+                step.started_at = step.started_at or task.started_at or now
+                step.completed_at = now
+                step.updated_at = now
+                await uow.ai_research_steps.update(step)
+
+            failed_tools = [
+                event.tool_name or "未知工具"
+                for event in result.events
+                if event.event_type == "TOOL_CALL" and event.status == "FAILED"
+            ]
+            limitations = tuple(
+                [f"未生成角色报告：{', '.join(missing_roles)}"] if missing_roles else []
+            ) + tuple(f"工具调用失败：{name}" for name in dict.fromkeys(failed_tools))
+            existing = await uow.ai_research_reports.get_by_task(task_id)
+            if existing is None:
+                final_summary = self._markdown_summary(result.final_decision, limit=1600)
+                citations = tuple(
+                    {
+                        "source_id": source_id,
+                        "source_type": source_id.split(":", maxsplit=1)[0],
+                        "title": source_id,
+                    }
+                    for source_id in result.source_ids
+                )
+                report = MultiAgentResearchReport(
+                    task_id=task.id,
+                    title=f"{instrument.name}（{request.ticker}）TradingAgents 多智能体调研报告",
+                    executive_summary=final_summary or "请查看完整组合经理决策。",
+                    stance=self._decision_stance(result.final_decision),
+                    confidence="由完整分析、辩论与风险链路综合形成",
+                    sections={
+                        "engine": {
+                            "key": task.engine_key,
+                            "version": result.engine_version,
+                            "checkpoint": result.checkpoint_key,
+                        },
+                        "agent_reports": [
+                            {
+                                "key": artifact.artifact_key,
+                                "title": artifact.title,
+                                "role": artifact.artifact_metadata.get("role"),
+                                "content_markdown": artifact.content_markdown,
+                                "source_ids": list(artifact.source_ids),
+                            }
+                            for artifact in result.artifacts
+                        ],
+                        "workflow": {
+                            "event_count": len(result.events),
+                            "tool_call_count": sum(
+                                event.event_type == "TOOL_CALL" for event in result.events
+                            ),
+                        },
+                    },
+                    citations=citations,
+                    limitations=limitations,
+                    markdown=result.complete_report_markdown,
+                )
+                await uow.ai_research_reports.add(report)
+            task.finish(partial=bool(missing_roles), warnings=limitations)
+            await uow.ai_research_tasks.update(task)
+            await uow.commit()
+
+    async def _persist_graph_failure(
+        self, task_id: UUID, failure: GraphResearchRunError
+    ) -> None:
+        """Persist partial node/tool evidence before marking an attempt failed."""
+
+        async with self._uow_factory() as uow:
+            task = await uow.ai_research_tasks.get_by_id(task_id)
+            if task is None or task.terminal:
+                return
+            await uow.ai_research_events.append_many(
+                await self._rebase_events(uow, task, failure.events)
+            )
+            await uow.ai_research_artifacts.add_many(list(failure.artifacts))
+            task.checkpoint_key = failure.checkpoint_key
+            task.last_checkpoint_at = datetime.now(UTC)
+            await uow.ai_research_tasks.update(task)
+            await uow.commit()
+
+    @staticmethod
+    async def _rebase_events(
+        uow: UnitOfWork,
+        task: MultiAgentResearchTask,
+        events: tuple[MultiAgentResearchWorkflowEvent, ...],
+    ) -> list[MultiAgentResearchWorkflowEvent]:
+        if not events:
+            return []
+        existing = await uow.ai_research_events.list_by_task(task.id)
+        offset = max((event.sequence for event in existing), default=-1) + 1
+        return [
+            replace(
+                event,
+                sequence=offset + ordinal,
+                payload={**event.payload, "execution_attempt": task.execution_attempt},
+            )
+            for ordinal, event in enumerate(events)
+        ]
+
+    @staticmethod
+    def _tradingagents_ticker(symbol: str, exchange: str) -> str:
+        if "." in symbol:
+            plain, suffix = symbol.rsplit(".", maxsplit=1)
+            normalized = {"SZSE": "SZ", "SSE": "SH", "BSE": "BJ"}.get(suffix, suffix)
+            return f"{plain}.{normalized}"
+        suffix = {"SZSE": "SZ", "SSE": "SH", "BSE": "BJ"}.get(exchange, exchange)
+        return f"{symbol}.{suffix}" if suffix else symbol
+
+    @staticmethod
+    def _markdown_summary(markdown: str, *, limit: int = 500) -> str:
+        text = " ".join(
+            line.strip().lstrip("#-* ") for line in markdown.splitlines() if line.strip()
+        )
+        return text[:limit]
+
+    @staticmethod
+    def _decision_stance(decision: str) -> str:
+        normalized = decision.upper()
+        if "SELL" in normalized or "卖出" in decision:
+            return "偏空 / 卖出"
+        if "BUY" in normalized or "买入" in decision:
+            return "偏多 / 买入"
+        return "中性 / 观望"
 
     async def _prepare_data(self, task_id: UUID) -> None:
         async with self._uow_factory() as uow:
@@ -352,6 +597,7 @@ class AIResearchTaskProcessor:
                 response = await self._provider.complete_structured(
                     StructuredResearchRequest(
                         role=step.role,
+                        model_name=task.model_name,
                         system_prompt=self._system_prompt(step.role),
                         payload=request_payload,
                         schema_name=f"alphadesk_{step.role.value.lower()}_output",

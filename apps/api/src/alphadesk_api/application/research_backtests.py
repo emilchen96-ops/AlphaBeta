@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from alphadesk_api.application.backtests import (
+    BackfillEnqueuer,
     BacktestQueryService,
     BacktestService,
     CreateBacktestRequest,
@@ -49,6 +50,9 @@ class QuickBacktestRequest:
     slippage_basis_points: Decimal = Decimal("2")
     maximum_volume_participation: Decimal | None = Decimal("0.1")
     execution_price_mode: BacktestExecutionPriceMode = BacktestExecutionPriceMode.NEXT_OPEN
+    signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
+    auto_prepare_minute_data: bool = True
+    optimistic_fill_assumption: bool = False
     position_size_ratio: Decimal | None = Decimal("1")
     maximum_entry_gap_ratio: Decimal | None = Decimal("0.05")
     time_in_force: TimeInForce = TimeInForce.DAY
@@ -62,15 +66,22 @@ class QuickBacktestService:
         uow_factory: UnitOfWorkFactory,
         registry: StrategyRegistry,
         settings: Settings,
+        enqueue_backfill: BackfillEnqueuer | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._registry = registry
         self._settings = settings
+        self._enqueue_backfill = enqueue_backfill
 
     async def run(self, request: QuickBacktestRequest) -> dict[str, Any]:
         spec, user_strategy_id, version_id = await self._resolve_spec(request)
         strategy_key = StrategySpecCompiler().register(self._registry, spec)
-        service = BacktestService(self._uow_factory, self._registry, self._settings)
+        service = BacktestService(
+            self._uow_factory,
+            self._registry,
+            self._settings,
+            self._enqueue_backfill,
+        )
         result = await service.run(
             CreateBacktestRequest(
                 strategy_key=strategy_key,
@@ -88,6 +99,9 @@ class QuickBacktestService:
                 ),
                 time_in_force=request.time_in_force,
                 execution_price_mode=request.execution_price_mode,
+                signal_timeframe=request.signal_timeframe,
+                auto_prepare_minute_data=request.auto_prepare_minute_data,
+                optimistic_fill_assumption=request.optimistic_fill_assumption,
                 position_size_ratio=request.position_size_ratio,
                 maximum_entry_gap_ratio=request.maximum_entry_gap_ratio,
                 fee_configuration=AshareSimpleFeeModel(

@@ -1,0 +1,216 @@
+{
+  "task_id": "0ea29f0a-d695-455e-b9ac-c04f590e07c3",
+  "ticker": "300115",
+  "status": "COMPLETED",
+  "engine": {
+    "key": "tradingagents_graph",
+    "version": "a33fd4c0f134485a43553a2c23a63cb14adbd88f",
+    "attempt": 6,
+    "checkpoint": "300115.SZ:2026-07-28:DEEP"
+  },
+  "role_coverage": {
+    "expected": 12,
+    "upstream": 12,
+    "alphadesk": 12,
+    "alphadesk_percent": 100.0
+  },
+  "complete_report": {
+    "upstream_present": true,
+    "upstream_chars": 49977,
+    "alphadesk_present": true
+  },
+  "workflow": {
+    "event_count": 58,
+    "completed_tool_calls": 29,
+    "failed_tool_calls": 0,
+    "failed_tool_names": []
+  },
+  "sources": {
+    "unique_ids": [
+      "akshare:a-share-sentiment-news",
+      "akshare:balance",
+      "akshare:cashflow",
+      "akshare:company-announcement",
+      "akshare:financial-abstract",
+      "akshare:income",
+      "akshare:macro:cpi",
+      "akshare:macro:gdp",
+      "akshare:macro:macro_china_cpi_yearly",
+      "akshare:macro:macro_china_gdp",
+      "akshare:stock-news",
+      "market-bar:2026-06-01",
+      "market-bar:2026-06-02",
+      "market-bar:2026-06-03",
+      "market-bar:2026-06-04",
+      "market-bar:2026-06-05",
+      "market-bar:2026-06-08",
+      "market-bar:2026-06-09",
+      "market-bar:2026-06-10",
+      "market-bar:2026-06-11",
+      "market-bar:2026-06-12",
+      "market-bar:2026-06-15",
+      "market-bar:2026-06-16",
+      "market-bar:2026-06-17",
+      "market-bar:2026-06-18",
+      "market-bar:2026-06-22",
+      "market-bar:2026-06-23",
+      "market-bar:2026-06-24",
+      "market-bar:2026-06-25",
+      "market-bar:2026-06-26",
+      "market-bar:2026-06-29",
+      "market-bar:2026-06-30",
+      "market-bar:2026-07-01",
+      "market-bar:2026-07-02",
+      "market-bar:2026-07-03",
+      "market-bar:2026-07-06",
+      "market-bar:2026-07-07",
+      "market-bar:2026-07-08",
+      "market-bar:2026-07-09",
+      "market-bar:2026-07-10",
+      "market-bar:2026-07-13",
+      "market-bar:2026-07-14",
+      "market-bar:2026-07-15",
+      "market-bar:2026-07-16",
+      "market-bar:2026-07-17",
+      "market-bar:2026-07-20",
+      "market-bar:2026-07-21",
+      "market-bar:2026-07-22",
+      "market-bar:2026-07-23",
+      "market-bar:2026-07-24",
+      "market-bar:2026-07-27",
+      "market-bar:2026-07-28"
+    ],
+    "type_counts": {
+      "A股市场情绪": 1,
+      "MiniQMT行情": 254,
+      "公司公告": 1,
+      "宏观": 9,
+      "新闻": 2,
+      "财务报表": 4
+    },
+    "expected_types": [
+      "MiniQMT行情",
+      "财务报表",
+      "公司公告",
+      "新闻",
+      "宏观",
+      "A股市场情绪"
+    ],
+    "missing_types": [],
+    "coverage_percent": 100.0
+  },
+  "roles": [
+    {
+      "role": "MARKET_ANALYST",
+      "upstream_path": "1_analysts/market.md",
+      "upstream_present": true,
+      "upstream_chars": 3734,
+      "alphadesk_present": true,
+      "alphadesk_chars": 6752,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "SENTIMENT_ANALYST",
+      "upstream_path": "1_analysts/sentiment.md",
+      "upstream_present": true,
+      "upstream_chars": 1208,
+      "alphadesk_present": true,
+      "alphadesk_chars": 4706,
+      "alphadesk_source_ids": [
+        "market-bar:2026-07-01",
+        "akshare:stock-news",
+        "akshare:a-share-sentiment-news"
+      ]
+    },
+    {
+      "role": "NEWS_ANALYST",
+      "upstream_path": "1_analysts/news.md",
+      "upstream_present": true,
+      "upstream_chars": 2895,
+      "alphadesk_present": true,
+      "alphadesk_chars": 6620,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "FUNDAMENTAL_ANALYST",
+      "upstream_path": "1_analysts/fundamentals.md",
+      "upstream_present": true,
+      "upstream_chars": 6547,
+      "alphadesk_present": true,
+      "alphadesk_chars": 5560,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "BULL_RESEARCHER",
+      "upstream_path": "2_research/bull.md",
+      "upstream_present": true,
+      "upstream_chars": 7438,
+      "alphadesk_present": true,
+      "alphadesk_chars": 2487,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "BEAR_RESEARCHER",
+      "upstream_path": "2_research/bear.md",
+      "upstream_present": true,
+      "upstream_chars": 8588,
+      "alphadesk_present": true,
+      "alphadesk_chars": 2697,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "RESEARCH_MANAGER",
+      "upstream_path": "2_research/manager.md",
+      "upstream_present": true,
+      "upstream_chars": 1980,
+      "alphadesk_present": true,
+      "alphadesk_chars": 2421,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "TRADER",
+      "upstream_path": "3_trading/trader.md",
+      "upstream_present": true,
+      "upstream_chars": 1261,
+      "alphadesk_present": true,
+      "alphadesk_chars": 1560,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "AGGRESSIVE_RISK_ANALYST",
+      "upstream_path": "4_risk/aggressive.md",
+      "upstream_present": true,
+      "upstream_chars": 5208,
+      "alphadesk_present": true,
+      "alphadesk_chars": 1436,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "NEUTRAL_RISK_ANALYST",
+      "upstream_path": "4_risk/neutral.md",
+      "upstream_present": true,
+      "upstream_chars": 4457,
+      "alphadesk_present": true,
+      "alphadesk_chars": 1769,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "CONSERVATIVE_RISK_ANALYST",
+      "upstream_path": "4_risk/conservative.md",
+      "upstream_present": true,
+      "upstream_chars": 4261,
+      "alphadesk_present": true,
+      "alphadesk_chars": 1295,
+      "alphadesk_source_ids": []
+    },
+    {
+      "role": "PORTFOLIO_MANAGER",
+      "upstream_path": "5_portfolio/decision.md",
+      "upstream_present": true,
+      "upstream_chars": 1905,
+      "alphadesk_present": true,
+      "alphadesk_chars": 2655,
+      "alphadesk_source_ids": []
+    }
+  ]
+}
