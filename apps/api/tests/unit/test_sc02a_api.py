@@ -152,11 +152,21 @@ def test_condition_catalog_and_sc02_templates_are_public(
     assert "LIMIT_UP_PULLBACK" in keys
     assert "BOTTOM_VOLUME_EXPANSION" in keys
     assert "TRADING_STATUS" in keys
+    assert "LIMIT_UP_VOLUME_RATIO" in keys
     bottom = next(
         item for item in conditions.json() if item["condition_key"] == "BOTTOM_VOLUME_EXPANSION"
     )
     assert bottom["parameter_schema"][0]["display_name"] == "价格区间窗口"
     assert "当前位于" in bottom["explanation_template"]
+    event_volume = next(
+        item for item in conditions.json() if item["condition_key"] == "LIMIT_UP_VOLUME_RATIO"
+    )
+    assert event_volume["renderer_key"] == "LIMIT_UP_EVENT_RELATION"
+    assert event_volume["comparator_schema"] == ["LESS_OR_EQUAL"]
+
+    categories = client.get("/api/v1/screening-condition-categories")
+    assert categories.status_code == 200
+    assert any(item["display_name"] == "事件关系" for item in categories.json())
 
     templates = client.get("/api/v1/screening-templates")
     assert templates.status_code == 200
@@ -169,6 +179,8 @@ def test_condition_catalog_and_sc02_templates_are_public(
         "moving_average_trend",
     ]
     assert all(item["enabled"] is True for item in templates.json())
+    assert templates.json()[0]["spec"]["schema_version"] == 2
+    assert len(templates.json()[0]["spec"]["root_group"]["children"]) == 4
 
 
 def test_create_is_async_durable_idempotent_and_queryable(

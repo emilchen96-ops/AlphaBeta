@@ -55,14 +55,22 @@ def _daily_bars(instrument_id: UUID) -> list[StrategyBar]:
     days = _trading_days(date(2024, 1, 2), TRADING_SESSIONS)
     rows: list[StrategyBar] = []
     for index, day in enumerate(days):
+        open_price = Decimal("10")
         close = Decimal("10")
         high = Decimal("10")
         low = Decimal("10")
         volume = Decimal("100")
-        if index == TRADING_SESSIONS - 9:
+        if index == TRADING_SESSIONS - 30:
             close, high, volume = Decimal("11"), Decimal("11"), Decimal("130")
-        elif index > TRADING_SESSIONS - 9:
-            close, low = Decimal("9.8"), Decimal("9.8")
+        elif TRADING_SESSIONS - 30 < index < TRADING_SESSIONS - 1:
+            open_price = close = high = low = Decimal("11")
+        elif index == TRADING_SESSIONS - 1:
+            open_price, high, close, low = (
+                Decimal("11"),
+                Decimal("11"),
+                Decimal("9"),
+                Decimal("9"),
+            )
         rows.append(
             StrategyBar(
                 instrument_id=instrument_id,
@@ -70,7 +78,7 @@ def _daily_bars(instrument_id: UUID) -> list[StrategyBar]:
                 exchange="SZSE",
                 timeframe=MarketTimeframe.DAY_1,
                 timestamp=_at(day, time(15, 0)),
-                open=Decimal("10"),
+                open=open_price,
                 high=high,
                 low=low,
                 close=close,
@@ -188,7 +196,7 @@ def main() -> None:
         "sample": {
             "sessions_per_stock": TRADING_SESSIONS,
             "minutes_per_session": MINUTES_PER_SESSION,
-            "candidate_shape": "one late entry candidate plus full subsequent holding window",
+            "candidate_shape": "one entry candidate, neutral holding sessions, and one mathematically possible exit candidate",
             "data_origin": "deterministic controlled sample; no fixture is presented as live market acceptance",
         },
         "measurements": results,

@@ -37,6 +37,14 @@ def test_openapi_exposes_product_quick_backtest_endpoints(client: TestClient) ->
     assert "post" in paths["/api/v1/research/backtest-batches/{batch_id}/retry-failed"]
     assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/results"]
     assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/summary"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/preparation"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/portfolio-report"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/equity"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/snapshots"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/orders"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/fills"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/trades"]
+    assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/rejections"]
     assert "get" in paths["/api/v1/research/backtest-batches/{batch_id}/export.csv"]
 
 
@@ -208,6 +216,74 @@ def test_batch_backtest_accepts_full_a_share_scope_and_filters(
     assert request.exclude_bse is True
     assert request.exclude_star_market is True
     assert request.exclude_chinext is False
+
+
+def test_batch_backtest_accepts_shared_cash_portfolio_controls(
+    client: TestClient, monkeypatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_create(
+        self: BacktestBatchService, request: CreateBacktestBatchRequest
+    ) -> dict[str, Any]:
+        captured["request"] = request
+        return {
+            "id": "69696969-6969-4969-8969-696969696969",
+            "scope": "MANUAL",
+            "execution_mode": "SHARED_PORTFOLIO",
+            "status": "CREATED",
+            "total_count": 1,
+            "instrument_count": 2,
+        }
+
+    monkeypatch.setattr(BacktestBatchService, "create", fake_create)
+
+    def fake_dependency(request: Request) -> object:
+        del request
+        return object()
+
+    monkeypatch.setattr(api_module, "uow_factory", fake_dependency)
+    monkeypatch.setattr(api_module, "_registry", fake_dependency)
+    monkeypatch.setattr(api_module, "_settings", fake_dependency)
+    spec = client.post("/api/v1/strategy-specs/parse", json={"text": CORE_TEXT}).json()[
+        "spec"
+    ]
+
+    response = client.post(
+        "/api/v1/research/backtest-batches",
+        json={
+            "scope": "MANUAL",
+            "execution_mode": "SHARED_PORTFOLIO",
+            "instrument_ids": [
+                "11111111-1111-4111-8111-111111111111",
+                "22222222-2222-4222-8222-222222222222",
+            ],
+            "start_at": "2024-01-01T00:00:00+08:00",
+            "end_at": "2026-01-01T00:00:00+08:00",
+            "initial_cash": "100000",
+            "spec": spec,
+            "position_size_ratio": "0.2",
+            "maximum_holdings": 5,
+            "maximum_total_exposure": "1",
+            "maximum_instrument_weight": "0.2",
+            "allow_position_addition": False,
+            "entry_ranking": "SIGNAL_STRENGTH_VOLUME_SYMBOL",
+            "benchmark_symbol": "000300.SH",
+            "idempotency_key": "shared-portfolio-api-test",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.json()["execution_mode"] == "SHARED_PORTFOLIO"
+    request = captured["request"]
+    assert request.execution_mode.value == "SHARED_PORTFOLIO"
+    assert request.position_size_ratio == Decimal("0.2")
+    assert request.maximum_holdings == 5
+    assert request.maximum_total_exposure == Decimal("1")
+    assert request.maximum_instrument_weight == Decimal("0.2")
+    assert request.allow_position_addition is False
+    assert request.entry_ranking == "SIGNAL_STRENGTH_VOLUME_SYMBOL"
+    assert request.benchmark_symbol == "000300.SH"
 
 
 def test_batch_cancel_calls_durable_batch_service(

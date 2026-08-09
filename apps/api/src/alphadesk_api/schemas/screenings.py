@@ -166,17 +166,26 @@ class ConditionDefinitionResponse(BaseModel):
     description: str
     category: str
     parameter_schema: list[ConditionParameterResponse]
+    comparator_schema: list[str] = Field(default_factory=list)
     required_fields: list[str]
     required_history_bars: int
     supported_timeframes: list[str]
     price_adjustment_mode: str
     evaluator_key: str
+    renderer_key: str = "SCHEMA_DEFAULT"
+    unit: str | None = None
     explanation_template: str
     version: str
     enabled: bool
     aliases: list[str] = Field(default_factory=list)
     deprecated: bool = False
     replacement_condition_key: str | None = None
+
+
+class ConditionCategoryResponse(BaseModel):
+    category_key: str
+    display_name: str
+    condition_count: int
 
 
 class ScreeningTemplateResponse(BaseModel):

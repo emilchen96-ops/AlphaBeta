@@ -234,15 +234,24 @@ export interface ScreeningConditionDefinition {
   description: string;
   category: string;
   parameter_schema: ScreeningParameterDefinition[];
+  comparator_schema: string[];
   required_fields: string[];
   required_history_bars: number;
   supported_timeframes: string[];
   price_adjustment_mode: string;
+  renderer_key: string;
+  unit: string | null;
   version: string;
   enabled: boolean;
   aliases: string[];
   deprecated: boolean;
   replacement_condition_key: string | null;
+}
+
+export interface ScreeningConditionCategory {
+  category_key: string;
+  display_name: string;
+  condition_count: number;
 }
 
 export interface ScreeningPreview {

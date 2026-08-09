@@ -130,6 +130,12 @@ class HistoryBackfillRequest(BaseModel):
     _validate_times = field_validator("start_at", "end_at")(_aware)
 
 
+class HistoryRequestResultRequest(BaseModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    error_code: str | None = Field(default=None, max_length=64)
+    error_message: str | None = Field(default=None, max_length=512)
+
+
 class TemporarySubscriptionRequest(BaseModel):
     instrument_id: UUID
     enabled: bool

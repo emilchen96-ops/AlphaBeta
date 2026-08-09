@@ -1,4 +1,4 @@
-"""Durable orchestration model for independent per-instrument backtests."""
+"""Durable orchestration for independent samples and shared-cash portfolios."""
 
 from __future__ import annotations
 
@@ -12,8 +12,14 @@ from alphadesk_domain.values import as_utc, non_empty, utc_now
 
 
 class BacktestBatchScope(StrEnum):
+    MANUAL = "MANUAL"
     WATCHLIST = "WATCHLIST"
     ALL_A_SHARES = "ALL_A_SHARES"
+
+
+class BacktestBatchExecutionMode(StrEnum):
+    INDEPENDENT = "INDEPENDENT"
+    SHARED_PORTFOLIO = "SHARED_PORTFOLIO"
 
 
 class BacktestBatchStatus(StrEnum):
@@ -51,6 +57,7 @@ class BacktestBatch:
     name: str
     configuration: dict[str, Any]
     total_count: int
+    execution_mode: BacktestBatchExecutionMode = BacktestBatchExecutionMode.INDEPENDENT
     id: UUID = field(default_factory=uuid4)
     watchlist_id: UUID | None = None
     status: BacktestBatchStatus = BacktestBatchStatus.CREATED

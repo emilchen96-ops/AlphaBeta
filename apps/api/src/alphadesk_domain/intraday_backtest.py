@@ -42,11 +42,15 @@ class PriceVolumeSmaRule:
     volume_multiplier: Decimal
     exit_sma_window: int
     quantity: Decimal
+    breakout_inclusive: bool = False
+    volume_inclusive: bool = False
+    exit_inclusive: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class IntradayPrefilterPlan:
     candidate_entry_dates: frozenset[date]
+    candidate_exit_dates: frozenset[date]
     replay_dates: frozenset[date]
     safe: bool
     reason: str
@@ -123,8 +127,8 @@ def _indicator_operand(
 def price_volume_sma_rule_from_spec(spec: StrategySpec) -> PriceVolumeSmaRule | None:
     """Recognise the reference rule even when it came from the safe AST compiler."""
 
-    breakout: Operand | None = None
-    volume: Operand | None = None
+    breakout: Comparison | None = None
+    volume: Comparison | None = None
     for condition in _comparison_pair(spec.entry):
         if condition.operator not in (ComparisonOperator.GT, ComparisonOperator.GTE):
             continue
@@ -134,15 +138,15 @@ def price_volume_sma_rule_from_spec(spec: StrategySpec) -> PriceVolumeSmaRule | 
             MarketField.HIGH,
             exclude_current=True,
         ):
-            breakout = condition.right
+            breakout = condition
         if _field_operand(condition.left, MarketField.VOLUME) and _indicator_operand(
             condition.right,
             IndicatorKind.AVERAGE_VOLUME,
             MarketField.VOLUME,
             exclude_current=True,
         ):
-            volume = condition.right
-    exit_operand: Operand | None = None
+            volume = condition
+    exit_comparison: Comparison | None = None
     for condition in _comparison_pair(spec.exit):
         if (
             condition.operator in (ComparisonOperator.LT, ComparisonOperator.LTE)
@@ -154,17 +158,20 @@ def price_volume_sma_rule_from_spec(spec: StrategySpec) -> PriceVolumeSmaRule | 
                 exclude_current=False,
             )
         ):
-            exit_operand = condition.right
-    if breakout is None or volume is None or exit_operand is None:
+            exit_comparison = condition
+    if breakout is None or volume is None or exit_comparison is None:
         return None
-    assert breakout.window is not None and volume.window is not None
-    assert exit_operand.window is not None
+    assert breakout.right.window is not None and volume.right.window is not None
+    assert exit_comparison.right.window is not None
     return PriceVolumeSmaRule(
-        breakout_window=breakout.window,
-        volume_window=volume.window,
-        volume_multiplier=volume.multiplier,
-        exit_sma_window=exit_operand.window,
+        breakout_window=breakout.right.window,
+        volume_window=volume.right.window,
+        volume_multiplier=volume.right.multiplier,
+        exit_sma_window=exit_comparison.right.window,
         quantity=spec.quantity,
+        breakout_inclusive=breakout.operator is ComparisonOperator.GTE,
+        volume_inclusive=volume.operator is ComparisonOperator.GTE,
+        exit_inclusive=exit_comparison.operator is ComparisonOperator.LTE,
     )
 
 
@@ -440,11 +447,13 @@ def safe_prefilter_plan(
     if rule is None:
         return IntradayPrefilterPlan(
             candidate_entry_dates=all_dates,
+            candidate_exit_dates=all_dates,
             replay_dates=all_dates,
             safe=False,
             reason="策略无法证明某些交易日不可能触发, 已回放全部交易日",
         )
-    candidates: set[date] = set()
+    entry_candidates: set[date] = set()
+    exit_candidates: set[date] = set()
     warmup = max(rule.breakout_window, rule.volume_window)
     for index, bar in enumerate(ordered):
         if index < warmup:
@@ -456,20 +465,59 @@ def safe_prefilter_plan(
         ) / Decimal(rule.volume_window)
         # Full-day high and volume are an optimistic envelope.  If either cannot
         # satisfy the rule, no intraday partial bar can satisfy it either.
-        if bar.high > prior_high and bar.volume > prior_average_volume * rule.volume_multiplier:
-            candidates.add(bar.timestamp.astimezone(ASHARE_TIMEZONE).date())
-    if not candidates:
+        price_can_trigger = (
+            bar.high >= prior_high if rule.breakout_inclusive else bar.high > prior_high
+        )
+        volume_threshold = prior_average_volume * rule.volume_multiplier
+        volume_can_trigger = (
+            bar.volume >= volume_threshold
+            if rule.volume_inclusive
+            else bar.volume > volume_threshold
+        )
+        if price_can_trigger and volume_can_trigger:
+            entry_candidates.add(bar.timestamp.astimezone(ASHARE_TIMEZONE).date())
+
+    # For a current-inclusive N-day SMA, the intraday exit expression
+    #
+    #   x < (previous_close_sum + x) / N
+    #
+    # is exactly equivalent to x being below the average of the preceding
+    # N-1 closes.  The authoritative daily low is therefore a safe optimistic
+    # envelope: when it cannot cross that fixed threshold, no minute close can.
+    exit_window = rule.exit_sma_window
+    if exit_window == 1:
+        if rule.exit_inclusive:
+            exit_candidates.update(all_dates)
+    else:
+        prior_count = exit_window - 1
+        for index, bar in enumerate(ordered):
+            if index < prior_count:
+                continue
+            threshold = sum(
+                (item.close for item in ordered[index - prior_count : index]), ZERO
+            ) / Decimal(prior_count)
+            can_trigger = (
+                bar.low <= threshold if rule.exit_inclusive else bar.low < threshold
+            )
+            if can_trigger:
+                exit_candidates.add(bar.timestamp.astimezone(ASHARE_TIMEZONE).date())
+
+    if not entry_candidates:
         return IntradayPrefilterPlan(
             candidate_entry_dates=frozenset(),
+            candidate_exit_dates=frozenset(exit_candidates),
             replay_dates=frozenset(),
             safe=True,
             reason="完整日线高点或成交量证明所有交易日均不可能触发买入",
         )
-    first = min(candidates)
-    replay = frozenset(item for item in all_dates if item >= first)
+    first = min(entry_candidates)
+    replay = frozenset(
+        entry_candidates | {item for item in exit_candidates if item >= first}
+    )
     return IntradayPrefilterPlan(
-        candidate_entry_dates=frozenset(candidates),
+        candidate_entry_dates=frozenset(entry_candidates),
+        candidate_exit_dates=frozenset(exit_candidates),
         replay_dates=replay,
         safe=True,
-        reason="买入候选日使用完整日线乐观包络; 首次候选后持续回放以保证卖出不漏判",
+        reason="买入候选日使用日线高点与成交量包络; 卖出候选日使用日线低点与固定前序均线阈值",
     )

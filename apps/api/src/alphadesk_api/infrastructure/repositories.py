@@ -134,6 +134,7 @@ from alphadesk_domain.backtest import (
 )
 from alphadesk_domain.backtest_batches import (
     BacktestBatch,
+    BacktestBatchExecutionMode,
     BacktestBatchItem,
     BacktestBatchItemStatus,
     BacktestBatchResultRow,
@@ -428,6 +429,9 @@ def _backtest_batch_from_model(model: BacktestBatchModel) -> BacktestBatch:
         watchlist_id=model.watchlist_id,
         status=BacktestBatchStatus(model.status),
         total_count=model.total_count,
+        execution_mode=BacktestBatchExecutionMode(
+            str(model.configuration.get("execution_mode", "INDEPENDENT"))
+        ),
         pending_count=model.pending_count,
         running_count=model.running_count,
         completed_count=model.completed_count,

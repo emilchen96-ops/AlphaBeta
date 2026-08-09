@@ -12,6 +12,7 @@ import {
   Collapse,
   DatePicker,
   Form,
+  Input,
   InputNumber,
   List,
   Radio,
@@ -49,15 +50,24 @@ type StrategySource = "description" | "template" | "saved";
 
 interface BacktestFormValues {
   scope: BacktestScope;
+  execution_mode: "INDEPENDENT" | "SHARED_PORTFOLIO";
   instrument_id?: string;
+  instrument_ids?: string[];
   watchlist_id?: string;
   exclude_st: boolean;
   exclude_bse: boolean;
   exclude_star_market: boolean;
   exclude_chinext: boolean;
+  minimum_listing_trading_days: number | null;
   range: [Dayjs, Dayjs];
   initial_cash: number;
   position_size_percent: number;
+  maximum_holdings: number;
+  maximum_total_exposure_percent: number;
+  maximum_instrument_weight_percent: number;
+  allow_position_addition: boolean;
+  entry_ranking: string;
+  benchmark_symbol?: string;
   commission_rate: number | null;
   minimum_commission: number | null;
   stamp_duty_rate: number | null;
@@ -88,6 +98,8 @@ export function QuickBacktestPage() {
   const [form] = Form.useForm<BacktestFormValues>();
   const executionPriceMode = Form.useWatch("execution_price_mode", form);
   const backtestScope = Form.useWatch("scope", form) ?? "SINGLE";
+  const batchExecutionMode =
+    Form.useWatch("execution_mode", form) ?? "SHARED_PORTFOLIO";
   const [source, setSource] = useState<StrategySource>(
     search.has("user_strategy_id")
       ? "saved"
@@ -235,12 +247,26 @@ export function QuickBacktestPage() {
       const request: BacktestBatchRequest = {
         ...common,
         scope: values.scope,
+        execution_mode: values.execution_mode,
+        instrument_ids:
+          values.scope === "MANUAL" ? (values.instrument_ids ?? []) : [],
         watchlist_id:
           values.scope === "WATCHLIST" ? (values.watchlist_id ?? null) : null,
         exclude_st: values.exclude_st,
         exclude_bse: values.exclude_bse,
         exclude_star_market: values.exclude_star_market,
         exclude_chinext: values.exclude_chinext,
+        minimum_listing_trading_days: values.minimum_listing_trading_days,
+        maximum_holdings: values.maximum_holdings,
+        maximum_total_exposure: String(
+          values.maximum_total_exposure_percent / 100,
+        ),
+        maximum_instrument_weight: String(
+          values.maximum_instrument_weight_percent / 100,
+        ),
+        allow_position_addition: values.allow_position_addition,
+        entry_ranking: values.entry_ranking,
+        benchmark_symbol: values.benchmark_symbol?.trim() || null,
         idempotency_key: `backtest-batch:${crypto.randomUUID()}`,
       };
       return {
@@ -367,14 +393,22 @@ export function QuickBacktestPage() {
           layout="vertical"
           initialValues={{
             scope: "SINGLE",
+            execution_mode: "SHARED_PORTFOLIO",
             instrument_id: prefilledInstrumentId ?? undefined,
             exclude_st: true,
             exclude_bse: false,
             exclude_star_market: false,
             exclude_chinext: false,
+            minimum_listing_trading_days: null,
             range: [dayjs().subtract(2, "year"), dayjs()],
             initial_cash: 100000,
             position_size_percent: 100,
+            maximum_holdings: 5,
+            maximum_total_exposure_percent: 100,
+            maximum_instrument_weight_percent: 20,
+            allow_position_addition: false,
+            entry_ranking: "SIGNAL_STRENGTH_VOLUME_SYMBOL",
+            benchmark_symbol: "000300.SH",
             commission_rate: 0.03,
             minimum_commission: 5,
             stamp_duty_rate: 0.05,
@@ -395,9 +429,20 @@ export function QuickBacktestPage() {
               buttonStyle="solid"
               options={[
                 { label: "单只股票", value: "SINGLE" },
+                { label: "手选多只股票", value: "MANUAL" },
                 { label: "一个自选组合", value: "WATCHLIST" },
                 { label: "全部 A 股", value: "ALL_A_SHARES" },
               ]}
+              onChange={(event) => {
+                const scope = event.target.value as BacktestScope;
+                if (scope === "SINGLE") {
+                  form.setFieldValue("position_size_percent", 100);
+                } else if (
+                  form.getFieldValue("execution_mode") === "SHARED_PORTFOLIO"
+                ) {
+                  form.setFieldValue("position_size_percent", 20);
+                }
+              }}
             />
           </Form.Item>
           {backtestScope === "SINGLE" ? (
@@ -439,12 +484,36 @@ export function QuickBacktestPage() {
                 }
               />
             </Form.Item>
+          ) : backtestScope === "MANUAL" ? (
+            <Form.Item
+              name="instrument_ids"
+              label="回测股票组"
+              rules={[{ required: true, message: "请至少选择一只股票" }]}
+              extra="可按名称或代码搜索并选择多只股票。"
+            >
+              <Select
+                mode="multiple"
+                showSearch
+                filterOption={false}
+                placeholder="搜索并选择股票"
+                loading={instruments.isFetching}
+                options={(instruments.data?.items ?? []).map((item) => ({
+                  value: item.id,
+                  label: formatInstrument(item),
+                }))}
+                onSearch={(keyword) => setInstrumentKeyword(keyword.trim())}
+              />
+            </Form.Item>
           ) : backtestScope === "WATCHLIST" ? (
             <Form.Item
               name="watchlist_id"
               label="自选组合"
               rules={[{ required: true, message: "请选择一个自选组合" }]}
-              extra="组合内每只股票使用相同初始资金独立回测，不共享资金和持仓。"
+              extra={
+                batchExecutionMode === "SHARED_PORTFOLIO"
+                  ? "组合内股票共享一笔现金和持仓上限，生成一份真实组合报告。"
+                  : "组合内每只股票使用相同初始资金独立回测，用于横向比较。"
+              }
             >
               <Select
                 placeholder="选择自选列表"
@@ -460,29 +529,80 @@ export function QuickBacktestPage() {
               showIcon
               type="warning"
               title="全 A 股将创建长期后台任务"
-              description="每只股票都会生成独立账户、成交与绩效；耗时取决于股票数量、本地历史数据完整度和电脑性能。页面可关闭，任务会继续运行。"
+              description={
+                batchExecutionMode === "SHARED_PORTFOLIO"
+                  ? "系统会按统一时间轴竞争共享资金；日线先筛候选日，再按需加载分钟行情。页面可关闭，任务会继续运行。"
+                  : "每只股票都会生成独立账户、成交与绩效；耗时取决于股票数量、本地历史数据完整度和电脑性能。"
+              }
               style={{ marginBottom: 16 }}
             />
           )}
           {backtestScope !== "SINGLE" ? (
-            <Space wrap style={{ marginBottom: 16 }}>
-              <Form.Item name="exclude_st" valuePropName="checked" noStyle>
-                <Checkbox>排除 ST 与 *ST</Checkbox>
+            <>
+              <Form.Item name="execution_mode" label="批量回测方式">
+                <Radio.Group
+                  optionType="button"
+                  buttonStyle="solid"
+                  options={[
+                    {
+                      label: "共享资金组合回测（推荐）",
+                      value: "SHARED_PORTFOLIO",
+                    },
+                    { label: "逐股独立回测", value: "INDEPENDENT" },
+                  ]}
+                  onChange={(event) =>
+                    form.setFieldValue(
+                      "position_size_percent",
+                      event.target.value === "SHARED_PORTFOLIO" ? 20 : 100,
+                    )
+                  }
+                />
               </Form.Item>
+              <Alert
+                showIcon
+                type="info"
+                title={
+                  batchExecutionMode === "SHARED_PORTFOLIO"
+                    ? "所有股票共享同一账户、现金和持仓"
+                    : "每只股票使用独立账户，仅用于比较样本"
+                }
+                description={
+                  batchExecutionMode === "SHARED_PORTFOLIO"
+                    ? "同一时刻先处理卖出，再按排序规则处理买入；资金用完后新的买入信号会被拒绝。"
+                    : "结果不会合并成组合收益曲线，也不能代表真实组合绩效。"
+                }
+                style={{ marginBottom: 16 }}
+              />
+              <Space wrap style={{ marginBottom: 16 }}>
+                <Form.Item name="exclude_st" valuePropName="checked" noStyle>
+                  <Checkbox>排除 ST 与 *ST</Checkbox>
+                </Form.Item>
+                <Form.Item
+                  name="exclude_star_market"
+                  valuePropName="checked"
+                  noStyle
+                >
+                  <Checkbox>排除科创板</Checkbox>
+                </Form.Item>
+                <Form.Item
+                  name="exclude_chinext"
+                  valuePropName="checked"
+                  noStyle
+                >
+                  <Checkbox>排除创业板</Checkbox>
+                </Form.Item>
+                <Form.Item name="exclude_bse" valuePropName="checked" noStyle>
+                  <Checkbox>排除北交所</Checkbox>
+                </Form.Item>
+              </Space>
               <Form.Item
-                name="exclude_star_market"
-                valuePropName="checked"
-                noStyle
+                name="minimum_listing_trading_days"
+                label="排除上市时间不足（交易日，可空）"
+                tooltip="留空表示不按上市天数排除；填写后按筛选截止日之前的实际开市日计算。"
               >
-                <Checkbox>排除科创板</Checkbox>
+                <InputNumber min={1} max={5000} placeholder="例如 60" />
               </Form.Item>
-              <Form.Item name="exclude_chinext" valuePropName="checked" noStyle>
-                <Checkbox>排除创业板</Checkbox>
-              </Form.Item>
-              <Form.Item name="exclude_bse" valuePropName="checked" noStyle>
-                <Checkbox>排除北交所</Checkbox>
-              </Form.Item>
-            </Space>
+            </>
           ) : null}
           <Space wrap size={24} align="start">
             <Form.Item
@@ -515,6 +635,73 @@ export function QuickBacktestPage() {
               />
             </Form.Item>
           </Space>
+          {backtestScope !== "SINGLE" &&
+          batchExecutionMode === "SHARED_PORTFOLIO" ? (
+            <Card
+              size="small"
+              title="共享资金与持仓规则"
+              style={{ marginBottom: 16 }}
+            >
+              <Space wrap size={24} align="start">
+                <Form.Item
+                  name="maximum_holdings"
+                  label="最多同时持股（只）"
+                  rules={[{ required: true }]}
+                >
+                  <InputNumber min={1} max={5000} />
+                </Form.Item>
+                <Form.Item
+                  name="maximum_total_exposure_percent"
+                  label="组合最高仓位（%）"
+                  tooltip="所有持仓市值合计最多占组合总权益的比例。"
+                  rules={[{ required: true }]}
+                >
+                  <InputNumber min={1} max={100} addonAfter="%" />
+                </Form.Item>
+                <Form.Item
+                  name="maximum_instrument_weight_percent"
+                  label="单只股票最高仓位（%）"
+                  rules={[{ required: true }]}
+                >
+                  <InputNumber min={1} max={100} addonAfter="%" />
+                </Form.Item>
+                <Form.Item
+                  name="entry_ranking"
+                  label="同一时刻买入排序"
+                  tooltip="多个股票同时出现买入信号而资金不足时的优先顺序。"
+                >
+                  <Select
+                    style={{ width: 300 }}
+                    options={[
+                      {
+                        value: "SIGNAL_STRENGTH_VOLUME_SYMBOL",
+                        label: "信号强度 → 成交量比例 → 股票代码",
+                      },
+                      {
+                        value: "VOLUME_RATIO_SIGNAL_STRENGTH_SYMBOL",
+                        label: "成交量比例 → 信号强度 → 股票代码",
+                      },
+                      { value: "SYMBOL", label: "股票代码" },
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="benchmark_symbol"
+                  label="对照基准"
+                  tooltip="用于组合收益对照；默认沪深300。"
+                >
+                  <Input placeholder="例如 000300.SH" style={{ width: 180 }} />
+                </Form.Item>
+              </Space>
+              <Form.Item
+                name="allow_position_addition"
+                valuePropName="checked"
+                noStyle
+              >
+                <Checkbox>已有持仓再次出现买入信号时允许加仓</Checkbox>
+              </Form.Item>
+            </Card>
+          ) : null}
           <Typography.Paragraph type="secondary">
             回测固定使用不复权行情，确保信号、开盘成交、费用和账本使用同一套真实价格。
           </Typography.Paragraph>
@@ -528,8 +715,8 @@ export function QuickBacktestPage() {
                 : executionPriceMode === "INTRADAY_SIGNAL_CLOSE"
                   ? "乐观研究模式：分钟收盘确认信号后，假设可以按同一分钟收盘价成交。这无法保证真实可成交，仅用于敏感性对照，报告会明确标记乐观假设。"
                   : executionPriceMode === "SAME_DAY_NEXT_MINUTE"
-                ? "系统只使用14:55之前已经完整形成的分钟K线估算当日日线条件，并以14:55之后第一根可成交分钟K线的开盘价模拟成交。不会读取15:00收盘结果后倒推当天成交。缺少分钟行情时将直接停止并提示。"
-                : "策略在 T 日收盘后确认信号，最早于下一交易日开盘执行。默认按下一交易日开盘价并计入滑点；若买入时高开超过允许幅度，则按下方未成交处理方式处理。"
+                    ? "系统只使用14:55之前已经完整形成的分钟K线估算当日日线条件，并以14:55之后第一根可成交分钟K线的开盘价模拟成交。不会读取15:00收盘结果后倒推当天成交。缺少分钟行情时将直接停止并提示。"
+                    : "策略在 T 日收盘后确认信号，最早于下一交易日开盘执行。默认按下一交易日开盘价并计入滑点；若买入时高开超过允许幅度，则按下方未成交处理方式处理。"
             }
             style={{ marginBottom: 12 }}
           />
@@ -614,8 +801,8 @@ export function QuickBacktestPage() {
               />
             </Form.Item>
           </Space>
-          {(executionPriceMode === "INTRADAY_NEXT_MINUTE" ||
-            executionPriceMode === "INTRADAY_SIGNAL_CLOSE") ? (
+          {executionPriceMode === "INTRADAY_NEXT_MINUTE" ||
+          executionPriceMode === "INTRADAY_SIGNAL_CLOSE" ? (
             <Space orientation="vertical" style={{ marginBottom: 16 }}>
               <Form.Item
                 name="auto_prepare_minute_data"
@@ -625,7 +812,9 @@ export function QuickBacktestPage() {
                 <Checkbox>自动检查并补齐候选交易日的分钟行情</Checkbox>
               </Form.Item>
               <Typography.Text type="secondary">
-                系统先用本地日线缩小候选范围，再复用 PostgreSQL 中已有分钟数据；只向已登录的 MiniQMT 请求缺口，不会全量加载全部股票的全部分钟K线。
+                系统先用本地日线缩小候选范围，再复用 PostgreSQL
+                中已有分钟数据；只向已登录的 MiniQMT
+                请求缺口，不会全量加载全部股票的全部分钟K线。
               </Typography.Text>
               {executionPriceMode === "INTRADAY_SIGNAL_CLOSE" ? (
                 <Alert
@@ -697,9 +886,17 @@ export function QuickBacktestPage() {
                       ? effectiveSelectedInstrument
                         ? formatInstrument(effectiveSelectedInstrument)
                         : "待选择"
-                      : backtestScope === "WATCHLIST"
-                        ? "所选自选组合（逐只独立回测）"
-                        : "全部 A 股（逐只独立回测）"}
+                      : `${
+                          backtestScope === "MANUAL"
+                            ? "手选股票组"
+                            : backtestScope === "WATCHLIST"
+                              ? "所选自选组合"
+                              : "全部 A 股"
+                        }（${
+                          batchExecutionMode === "SHARED_PORTFOLIO"
+                            ? "共享资金组合回测"
+                            : "逐股独立回测"
+                        }）`}
                   </Typography.Text>
                 </Space>
               }

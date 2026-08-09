@@ -93,6 +93,8 @@ def _v2(root: ScreeningConditionGroup) -> ScreeningSpec:
         ("近5日涨停", "RECENT_LIMIT_UP_EVENT"),
         ("近期涨停", "RECENT_LIMIT_UP_EVENT"),
         ("涨停次数", "RECENT_LIMIT_UP_EVENT"),
+        ("次日断板", "FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK"),
+        ("三日不破", "FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK"),
         ("均线", "SMA_RELATION"),
         ("EMA", "EMA_RELATION"),
         ("放量", "VOLUME_RATIO"),
@@ -281,7 +283,7 @@ def test_recent_limit_up_unknown_price_is_indeterminate() -> None:
     assert outcome.outcome is ConditionOutcome.INDETERMINATE
 
 
-def test_group_depth_over_three_is_rejected() -> None:
+def test_group_depth_over_two_is_rejected() -> None:
     leaf = ScreeningConditionGroup(
         operator=ConditionGroupOperator.AND,
         children=(_condition("BULLISH_CANDLE"),),
@@ -292,7 +294,7 @@ def test_group_depth_over_three_is_rejected() -> None:
             operator=ConditionGroupOperator.AND,
             children=(nested,),
         )
-    with pytest.raises(ScreeningError, match="3层"):
+    with pytest.raises(ScreeningError, match="2层"):
         _v2(nested)
 
 

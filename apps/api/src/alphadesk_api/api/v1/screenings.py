@@ -29,6 +29,7 @@ from alphadesk_api.application.user_screenings import (
     UserScreeningService,
 )
 from alphadesk_api.schemas.screenings import (
+    ConditionCategoryResponse,
     ConditionDefinitionResponse,
     RankingRuleBody,
     ScreeningConditionBody,
@@ -229,6 +230,45 @@ async def list_screening_conditions(
 
 
 @router.get(
+    "/screening-condition-categories",
+    response_model=list[ConditionCategoryResponse],
+)
+async def list_screening_condition_categories(
+    request: Request,
+) -> list[ConditionCategoryResponse]:
+    labels = {
+        "PRICE": "价格",
+        "TREND": "趋势",
+        "VOLUME": "成交量",
+        "CANDLE": "K线",
+        "LIQUIDITY": "流动性",
+        "TRADING": "交易状态",
+        "PATTERN": "形态",
+        "RETURN": "涨跌幅",
+        "AMOUNT": "成交额",
+        "MOVING_AVERAGE": "均线",
+        "BREAKOUT": "突破",
+        "LIMIT_UP_EVENT": "涨停事件",
+        "EVENT_RELATION": "事件关系",
+        "RANGE_POSITION": "区间位置",
+        "COMPOSITE_PATTERN": "兼容旧规则",
+    }
+    counts: dict[str, int] = {}
+    for item in catalog(request).list():
+        if item.deprecated:
+            continue
+        counts[item.category.value] = counts.get(item.category.value, 0) + 1
+    return [
+        ConditionCategoryResponse(
+            category_key=key,
+            display_name=labels.get(key, key),
+            condition_count=count,
+        )
+        for key, count in sorted(counts.items(), key=lambda item: labels.get(item[0], item[0]))
+    ]
+
+
+@router.get(
     "/screening-conditions/{condition_key}",
     response_model=ConditionDefinitionResponse,
 )
@@ -261,10 +301,8 @@ def _template_enabled(
     condition_catalog: ConditionCatalog,
 ) -> bool:
     try:
-        return bool(item.enabled) and all(
-            condition_catalog.get(condition.condition_key).enabled
-            for condition in item.spec.conditions
-        )
+        item.spec.validate(condition_catalog)
+        return bool(item.enabled)
     except ScreeningError:
         return False
 

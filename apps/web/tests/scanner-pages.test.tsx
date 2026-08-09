@@ -339,8 +339,15 @@ const savedScreening = {
   updated_at: "2026-07-21T08:00:00Z",
   last_used_at: null,
 };
-function previewFor(spec = naturalSpec) {
-  const lookback = spec.conditions[0].parameters.lookback_days;
+function previewFor(
+  spec: ScreeningSpecSnapshot = naturalSpec as ScreeningSpecSnapshot,
+) {
+  const firstCondition =
+    spec.conditions[0] ??
+    (spec.root_group?.children[0]?.node_type === "CONDITION"
+      ? spec.root_group.children[0]
+      : undefined);
+  const lookback = firstCondition?.parameters.lookback_days ?? 20;
   return {
     summary: "自然语言选股：涨停回踩，共1项标准条件。",
     universe: "筛选日期当时存在的全部A股（沪、深、北）。",
@@ -479,6 +486,7 @@ const result = {
 let createPayload: Record<string, unknown> | undefined;
 let createRequests = 0;
 let lastPreviewLookback: unknown;
+let lastPreviewDate: unknown;
 let userScreeningItems: unknown[] = [];
 let savedScreeningRunRequests = 0;
 let savedScreeningRunDate: string | undefined;
@@ -605,10 +613,16 @@ function installFetch() {
           throw new Error("expected JSON request body");
         }
         const request = JSON.parse(init.body) as {
-          screening_spec: typeof naturalSpec;
+          screening_spec: ScreeningSpecSnapshot;
         };
-        lastPreviewLookback =
-          request.screening_spec.conditions[0].parameters.lookback_days;
+        const firstCondition =
+          request.screening_spec.conditions[0] ??
+          (request.screening_spec.root_group?.children[0]?.node_type ===
+          "CONDITION"
+            ? request.screening_spec.root_group.children[0]
+            : undefined);
+        lastPreviewLookback = Number(firstCondition?.parameters.lookback_days);
+        lastPreviewDate = request.screening_spec.as_of_date;
         body = {
           screening_spec: request.screening_spec,
           preview: previewFor(request.screening_spec),
@@ -622,7 +636,7 @@ function installFetch() {
           throw new Error("expected JSON request body");
         }
         const request = JSON.parse(init.body) as {
-          screening_spec: typeof naturalSpec;
+          screening_spec: ScreeningSpecSnapshot;
         };
         body = {
           valid: true,
@@ -750,6 +764,7 @@ beforeEach(() => {
   createPayload = undefined;
   createRequests = 0;
   lastPreviewLookback = undefined;
+  lastPreviewDate = undefined;
   userScreeningItems = [];
   savedScreeningRunRequests = 0;
   savedScreeningRunDate = undefined;
@@ -760,24 +775,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭环", async () => {
+test("条件库添加、可视化修改和开始选股形成完整闭环", async () => {
   renderRoute("/scanners");
-  expect((await screen.findAllByText("自然语言选股")).length).toBeGreaterThan(
-    0,
-  );
-  fireEvent.change(screen.getByLabelText("选股描述"), {
-    target: {
-      value:
-        "找过去20日涨停过，目前回踩到涨停前收盘价附近3%，并且明显缩量的股票。",
-    },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
+  expect(await screen.findByText("条件选股")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: /添加条件/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "添加涨停回踩" }));
 
-  expect(await screen.findByText("条件已识别，可以确认")).toBeInTheDocument();
-  expect(screen.getByText("中文规则预览")).toBeInTheDocument();
-  expect(
-    screen.getAllByText(/系统暂按不低于起涨价的98%理解/).length,
-  ).toBeGreaterThan(0);
+  expect(await screen.findByText("确认或修改条件")).toBeInTheDocument();
+  expect(screen.getByText("规则预览")).toBeInTheDocument();
   expect(screen.getByLabelText("回看交易日数")).toHaveValue("20");
   expect(screen.queryByText("lookback_days")).not.toBeInTheDocument();
   expect(screen.queryByText(runId)).not.toBeInTheDocument();
@@ -788,15 +793,16 @@ test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭�
   });
   fireEvent.blur(lookbackInput);
   await waitFor(() => expect(lastPreviewLookback).toBe(25));
+  expect(lastPreviewDate).toBe("2026-07-22");
   await waitFor(() =>
-    expect(document.body).toHaveTextContent("过去25个交易日内出现过涨停"),
+    expect(document.body).toHaveTextContent("回看交易日数=25交易日"),
   );
   fireEvent.change(screen.getByLabelText("回看交易日数"), {
     target: { value: "20" },
   });
   await waitFor(() => expect(lastPreviewLookback).toBe(20));
   await waitFor(() =>
-    expect(document.body).toHaveTextContent("过去20个交易日内出现过涨停"),
+    expect(document.body).toHaveTextContent("回看交易日数=20交易日"),
   );
 
   const startButton = screen.getByRole("button", { name: /开始选股/ });
@@ -805,15 +811,19 @@ test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭�
   await waitFor(() => expect(createPayload).toBeDefined());
   expect(createRequests).toBe(1);
   expect(createPayload).toMatchObject({
-    name: "自然语言选股：涨停回踩",
+    name: "自定义条件选股",
     as_of_date: "2026-07-22",
     universe_spec: { universe_key: "ALL_A_SHARES" },
-    conditions: [
-      {
-        condition_key: "LIMIT_UP_PULLBACK",
-        parameters: { lookback_days: 20 },
-      },
-    ],
+    conditions: [],
+    root_group: {
+      operator: "AND",
+      children: [
+        {
+          condition_key: "LIMIT_UP_PULLBACK",
+          parameters: { lookback_days: 20 },
+        },
+      ],
+    },
   });
   expect(createPayload?.idempotency_key).toEqual(
     expect.stringMatching(/^screening:/),
@@ -825,45 +835,36 @@ test("SC02-B自然语言解析、可视化修改和开始选股形成完整闭�
   expect(document.body).not.toHaveTextContent("ScreeningSpec");
 });
 
-test("SC03-A自然语言页始终展示完整原子条件目录并按输入实时推荐", async () => {
+test("条件组合页展示完整条件库并支持关键词搜索添加", async () => {
   renderRoute("/scanners");
 
-  expect(await screen.findByText("原子条件目录（共2项）")).toBeInTheDocument();
-  expect(screen.getByText("全部原子条件")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: /添加条件/ }));
+  expect(await screen.findByText("添加选股条件")).toBeInTheDocument();
   expect(screen.getAllByText("涨停回踩").length).toBeGreaterThan(0);
   expect(screen.getAllByText("近期涨停事件").length).toBeGreaterThan(0);
 
-  fireEvent.change(screen.getByLabelText("选股描述"), {
-    target: { value: "过去20天内有涨停" },
+  fireEvent.change(screen.getByLabelText("搜索选股条件"), {
+    target: { value: "近期" },
   });
-  expect(screen.getByText("根据当前描述推荐")).toBeInTheDocument();
-  expect(screen.getAllByText("近期涨停事件").length).toBeGreaterThan(1);
+  expect(screen.queryByText("涨停回踩")).not.toBeInTheDocument();
+  expect(screen.getByText("近期涨停事件")).toBeInTheDocument();
 
   fireEvent.click(
     screen.getAllByRole("button", { name: "添加近期涨停事件" })[0],
   );
   expect(await screen.findByText("确认或修改条件")).toBeInTheDocument();
-  expect(screen.getByLabelText("回看交易日数")).toHaveValue("20");
+  expect(screen.getByLabelText("回看交易日数")).toHaveValue("5");
 });
 
-test("SC02-B模糊描述给出中文修正提示并自动打开编辑器", async () => {
+test("条件组合页不再提供容易误解的自然语言输入", async () => {
   renderRoute("/scanners");
-  expect((await screen.findAllByText("自然语言选股")).length).toBeGreaterThan(
-    0,
-  );
-  fireEvent.change(screen.getByLabelText("选股描述"), {
-    target: { value: "找低位放量的股票" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
-
-  expect(await screen.findByText("需要确认几个参数")).toBeInTheDocument();
+  expect(await screen.findByText("条件选股")).toBeInTheDocument();
+  expect(screen.queryByLabelText("选股描述")).not.toBeInTheDocument();
   expect(
-    screen.getByText(
-      "系统无法确定“低位”的观察周期和范围，也无法确定“放量”的倍数。请确认以下参数。",
-    ),
-  ).toBeInTheDocument();
-  expect(screen.getByText("确认或修改条件")).toBeInTheDocument();
-  expect(screen.getByLabelText("回看交易日数")).toBeInTheDocument();
+    screen.queryByRole("button", { name: /解析选股条件/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: /添加条件/ }));
+  expect(await screen.findByLabelText("搜索选股条件")).toBeInTheDocument();
 });
 
 test("SC02-D补数阶段展示独立的历史行情下载进度", async () => {
@@ -911,10 +912,8 @@ test("SC02-D补数阶段展示独立的历史行情下载进度", async () => {
     backfill_estimated_remaining_seconds: 2460,
   };
   renderRoute("/scanners");
-  fireEvent.change(await screen.findByLabelText("选股描述"), {
-    target: { value: "找过去20日涨停回踩并且缩量的股票" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /解析选股条件/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /添加条件/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "添加涨停回踩" }));
   const startButton = await screen.findByRole("button", { name: /开始选股/ });
   await waitFor(() => expect(startButton).toBeEnabled());
   fireEvent.click(startButton);
@@ -931,6 +930,9 @@ test("SC02-C从已保存方案确认后按最新交易日关联版本重跑", as
   userScreeningItems = [savedScreening];
   renderRoute("/scanners?tab=mine");
 
+  expect(
+    await screen.findByRole("tab", { name: "我的规则" }),
+  ).toBeInTheDocument();
   expect(await screen.findByText("我的涨停回踩")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "再次运行" }));
 
@@ -946,13 +948,13 @@ test("SC02-C从已保存方案确认后按最新交易日关联版本重跑", as
 test("旧扫描运行列表入口重定向到统一历史结果", async () => {
   renderRoute("/scan-runs");
   expect(await screen.findByText("历史结果")).toBeInTheDocument();
-  expect(screen.getByPlaceholderText("按方案名称筛选")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("按选股名称筛选")).toBeInTheDocument();
 });
 
 test("旧扫描详情入口重定向到统一历史结果", async () => {
   renderRoute(`/scan-runs/${runId}`);
   expect(await screen.findByText("历史结果")).toBeInTheDocument();
-  expect(screen.getByPlaceholderText("按方案名称筛选")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("按选股名称筛选")).toBeInTheDocument();
 });
 
 test.each(["/scanners", "/scan-runs", `/scan-runs/${runId}`])(

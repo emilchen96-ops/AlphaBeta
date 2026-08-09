@@ -34,7 +34,9 @@
 
 > 第一次使用请先阅读 [AlphaDesk 使用指南](user_guide.md)：包含开机启动、首次数据准备、菜单与按钮说明、推荐业务流程、真实页面截图和常见故障排查。
 
-> 当前回测里程碑为 **BT02-A 完成开发、等待在线环境验收**：日线基线见
+> 当前回测里程碑为 **BT03-A 共享资金组合回测完成开发、等待在线环境验收**：
+> 组合资金竞争、统一时间轴、持仓约束、组合报告与可视化见
+> [BT03-A 共享资金组合回测](bt03_shared_portfolio_backtest.md)；日线基线见
 > [daily_backtest.md](daily_backtest.md)，分钟触发、候选日预筛、按需加载和批量恢复见
 > [BT02-A 分钟级触发回测](bt02_intraday_backtest.md)，严格时间边界见
 > [backtest_time_model.md](backtest_time_model.md)，页面见 [backtest_ui.md](backtest_ui.md)。
@@ -49,8 +51,8 @@
 
 > 当前资讯里程碑为 **N01 完成**：手工/RSS 来源、RawDocument、规范化与去重、MarketEvent、Instrument/主题关联、API、CLI 和页面见 [information_center.md](information_center.md)。当前尚未经过 AI 分析，不构成投资建议，不创建订单。
 
-> 当前研究工具里程碑为 **SC03-A 完成开发**：标准条件目录、安全 ScreeningSpec、历史点时
-> 全 A 股股票池、批量规则引擎和两个标准形态见
+> 当前研究工具里程碑为 **SC02-E 积木式选股器完成开发**：标准条件目录、安全 ScreeningSpec、历史点时
+> 全 A 股股票池、批量规则引擎和标准形态见
 > [SC02-A 选股引擎](sc02_screening_engine.md)；确定性中文解析、可选 AI 辅助、中文预览
 > 和 Schema 驱动编辑器见
 > [SC02-B 自然语言选股](sc02_natural_language_screening.md)。
@@ -62,6 +64,9 @@
 > 预热所需特征，再调用原 SC02 引擎；普通用户不再需要先去数据中心手工补数。
 > SC03-A 增加 [可搜索原子条件与组合编辑器](sc03_atomic_condition_builder.md)：
 > 中文别名搜索、参数化条件积木、AND/OR 条件树、v1 兼容和逐原子结果审计。
+> SC02-E 将上述能力收口为 [积木式选股器与产品化条件目录](sc02e_block_screening_builder.md)：
+> 主入口不再依赖自由文本解析；“底部放倍量”和“涨停回踩”均由普通原子条件组合而成，
+> 旧复合条件只用于历史规格兼容。
 > SC01-R 后台补数与旧接口继续兼容，见 [扫描器说明](scanners.md)。结果不会创建 Signal
 > 或订单。
 
@@ -127,10 +132,11 @@ M03 实现入口：Migration `0003_m03_market_data_watchlists.py`；后端 `alph
 | UX02-B 研究工作台               | `research_product_mode.md`、`strategy_spec.md`、`natural_language_strategy.md`、`visual_strategy_editor.md`、`quick_backtest_workflow.md` |
 | BT01 A 股日线回测               | `daily_backtest.md`、`backtest_time_model.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0017 |
 | BT02-A 分钟级触发回测           | `bt02_intraday_backtest.md`、`backtest_time_model.md`、`backtest_ui.md`、`verification/bt02a_benchmark.md` |
+| BT03-A 共享资金组合回测         | `bt03_shared_portfolio_backtest.md`、`backtest_rules.md`、`backtest_metrics.md`、`backtest_ui.md`、ADR 0019 |
 | RT01 日线历史回放               | `historical_replay.md`、`replay_control_model.md`、`replay_worker.md`、`replay_ui.md` |
 | D01 A 股历史日线                | `historical_market_data.md`、`daily_market_data_update.md`、`market_data_quality.md`、`market_data_center_ui.md`、`data_readiness.md` |
 | D03 A 股历史分钟数据            | `intraday_market_data.md`、`intraday_time_model.md`、`intraday_aggregation.md`、`intraday_data_quality.md`、`intraday_data_ui.md` |
-| L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md` |
+| L2.5-A MiniQMT 只读行情         | `miniqmt_readonly_market_data.md`、`market_subscription_model.md`、`miniqmt_market_data_agent.md`、`market_data_websocket.md`、ADR 0020 |
 | SC02/SC03 标准条件选股闭环      | `sc02_screening_engine.md`、`sc02_natural_language_screening.md`、`sc02_screening_data_preparation.md`、`sc03_atomic_condition_builder.md`、`screening_templates.md`、`user_screening_definitions.md`、`screening_history.md`、`screening_to_watchlist.md`、`screening_to_backtest.md` |
 | N01 资讯与市场事件              | `information_center.md`、`database_schema.md`、`security.md`、ADR 0007                  |
 | A01/TA01 AI 调研               | `ai_research_workbench.md`、`ai_multi_agent_workflow.md`、`ai_provider_configuration.md`、`ai_report_schema.md`、`ai_research_assistant.md`、`real_ai_provider.md`、`database_schema.md`、`security.md` |

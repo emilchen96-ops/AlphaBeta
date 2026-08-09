@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import builtins
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
@@ -109,6 +109,7 @@ from alphadesk_domain.miniqmt_market import miniqmt_provider_symbol
 from alphadesk_domain.order_workflow import OrderStateMachine
 from alphadesk_domain.risk import RiskLimits
 from alphadesk_domain.strategy import (
+    SignalDraft,
     StrategyBar,
     StrategyContext,
     StrategyEnvironment,
@@ -124,6 +125,63 @@ ZERO = Decimal("0")
 EIGHT_PLACES = Decimal("0.00000001")
 TWELVE_PLACES = Decimal("0.000000000001")
 BackfillEnqueuer = Callable[[dict[str, object]], Awaitable[int | None]]
+
+
+def _backtest_instrument_limit(settings: Settings, *, shared_portfolio: bool) -> int:
+    """Keep ordinary runs small while allowing a validated batch portfolio."""
+
+    return (
+        settings.backtest_batch_max_instruments
+        if shared_portfolio
+        else settings.backtest_max_instruments
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SharedIntradayWork:
+    instrument_id: UUID
+    draft: SignalDraft
+    partial_bar: StrategyBar
+    source_minute: StrategyBar
+    execution_minute: StrategyBar | None
+    confirmed_at: datetime
+    price_source: str
+    completed_session_count: int
+    previous_close: Decimal | None
+
+
+def _shared_intraday_work_key(
+    item: _SharedIntradayWork,
+    *,
+    completed_daily_bars: Mapping[UUID, list[StrategyBar]],
+    instruments: Mapping[UUID, Instrument],
+) -> tuple[object, ...]:
+    """Return the deterministic shared-account ordering for one timestamp.
+
+    Exits must release T+1-available stock, cash and holding capacity before
+    entries compete.  Entry ties use signal confidence, then the observable
+    volume ratio, then the exchange symbol.  UUID is only the final stable tie
+    breaker and therefore cannot make normal market inputs non-deterministic.
+    """
+
+    volumes = [
+        bar.volume for bar in completed_daily_bars[item.instrument_id][-20:] if bar.volume > ZERO
+    ]
+    volume_ratio = (
+        ZERO
+        if not volumes
+        else item.partial_bar.volume / (sum(volumes, ZERO) / Decimal(len(volumes)))
+    )
+    strength = item.draft.confidence or ZERO
+    instrument = instruments.get(item.instrument_id)
+    symbol = str(item.instrument_id) if instrument is None else instrument.symbol
+    return (
+        0 if item.draft.side is OrderSide.SELL else 1,
+        -strength,
+        -volume_ratio,
+        symbol,
+        str(item.instrument_id),
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -152,6 +210,12 @@ class CreateBacktestRequest:
     signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
     auto_prepare_minute_data: bool = True
     optimistic_fill_assumption: bool = False
+    shared_portfolio: bool = False
+    maximum_holdings: int | None = None
+    maximum_total_exposure: Decimal | None = None
+    maximum_instrument_weight: Decimal | None = None
+    allow_position_addition: bool = True
+    entry_ranking: str = "SIGNAL_STRENGTH_VOLUME_SYMBOL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +253,92 @@ def _safe_failure(exc: Exception) -> tuple[str, str]:
 
 def _bar_date(bar: StrategyBar) -> date:
     return bar.timestamp.astimezone(ASHARE_TIMEZONE).date()
+
+
+def _minute_date_segments(
+    *,
+    requested: Mapping[UUID, Collection[date]],
+    strategy_bars_by_instrument: Mapping[UUID, builtins.list[StrategyBar]],
+    maximum_instruments: int,
+) -> builtins.list[tuple[date, date, tuple[UUID, ...]]]:
+    """Group sparse candidate dates into compact instrument/date segments.
+
+    A segment spans only consecutive strategy trading sessions that are both
+    requested. Candidate dates separated by a mathematically impossible session
+    remain separate ranges. The same segmentation is used for PostgreSQL reads
+    and MiniQMT backfills so neither path silently widens a sparse prefilter.
+    """
+
+    grouped: dict[tuple[date, date], builtins.list[UUID]] = defaultdict(list)
+    for instrument_id, requested_dates in requested.items():
+        requested_set = set(requested_dates)
+        ordered_dates = [
+            _bar_date(item)
+            for item in sorted(
+                strategy_bars_by_instrument.get(instrument_id, []),
+                key=lambda item: item.timestamp,
+            )
+        ]
+        segment: builtins.list[date] = []
+        for trading_date in ordered_dates:
+            if trading_date in requested_set:
+                segment.append(trading_date)
+                continue
+            if segment:
+                grouped[(segment[0], segment[-1] + timedelta(days=1))].append(instrument_id)
+                segment = []
+        if segment:
+            grouped[(segment[0], segment[-1] + timedelta(days=1))].append(instrument_id)
+
+    result: builtins.list[tuple[date, date, tuple[UUID, ...]]] = []
+    chunk_size = max(1, maximum_instruments)
+    for (start_date, end_date), instrument_ids in sorted(grouped.items()):
+        for offset in range(0, len(instrument_ids), chunk_size):
+            result.append(
+                (
+                    start_date,
+                    end_date,
+                    tuple(instrument_ids[offset : offset + chunk_size]),
+                )
+            )
+    return result
+
+
+def _minute_backfill_segments(
+    *,
+    missing: Mapping[UUID, builtins.list[date]],
+    strategy_bars_by_instrument: Mapping[UUID, builtins.list[StrategyBar]],
+    provider_symbols: Mapping[UUID, str],
+    maximum_instruments: int,
+) -> builtins.list[dict[str, object]]:
+    """Build compact MiniQMT requests without widening sparse candidate dates."""
+
+    result: builtins.list[dict[str, object]] = []
+    for start_date, end_date, instrument_ids in _minute_date_segments(
+        requested=missing,
+        strategy_bars_by_instrument=strategy_bars_by_instrument,
+        maximum_instruments=maximum_instruments,
+    ):
+        result.append(
+            {
+                "start_at": datetime.combine(start_date, time.min, tzinfo=ASHARE_TIMEZONE)
+                .astimezone(UTC)
+                .isoformat(),
+                "end_at": datetime.combine(end_date, time.min, tzinfo=ASHARE_TIMEZONE)
+                .astimezone(UTC)
+                .isoformat(),
+                "instrument_ids": [str(item) for item in instrument_ids],
+                "instruments": [
+                    {
+                        "instrument_id": str(item),
+                        "provider_symbol": provider_symbols[item],
+                    }
+                    for item in instrument_ids
+                    if item in provider_symbols
+                ],
+            }
+        )
+    return result
 
 
 def _is_intraday_trigger_mode(mode: BacktestExecutionPriceMode | None) -> bool:
@@ -236,11 +386,7 @@ def _next_valid_minute_after(
     """
 
     return next(
-        (
-            item
-            for item in ordered_minutes[source_index + 1 :]
-            if item.timestamp >= confirmed_at
-        ),
+        (item for item in ordered_minutes[source_index + 1 :] if item.timestamp >= confirmed_at),
         None,
     )
 
@@ -437,6 +583,57 @@ def _metric_signature(metric: BacktestMetricSet) -> dict[str, object]:
     return values
 
 
+def _signal_ranking_value(signal: Signal, key: str) -> Decimal:
+    if key == "SIGNAL_STRENGTH":
+        return signal.confidence or signal.target_weight or ZERO
+    if key == "VOLUME_RATIO":
+        raw = signal.payload.get("volume_ratio", signal.metadata.get("volume_ratio", "0"))
+        try:
+            return Decimal(str(raw))
+        except (ArithmeticError, ValueError):
+            return ZERO
+    return ZERO
+
+
+def _execution_instrument_order(
+    *,
+    instrument_ids: Mapping[UUID, StrategyBar],
+    pending_orders: Mapping[UUID, list[Order]],
+    pending_signals: Mapping[UUID, list[Signal]],
+    instruments: Mapping[UUID, Instrument],
+    entry_ranking: str,
+) -> list[UUID]:
+    """Order one shared-account execution instant deterministically.
+
+    Exits always release cash and capacity before entries.  Entry ties are
+    resolved by the captured ranking fields and finally the market symbol, so
+    the same input facts cannot produce a different portfolio by UUID order.
+    """
+
+    normalized_ranking = entry_ranking.strip().upper()
+    ranking = (
+        ("SIGNAL_STRENGTH", "VOLUME_RATIO", "SYMBOL")
+        if normalized_ranking == "SIGNAL_STRENGTH_VOLUME_SYMBOL"
+        else tuple(item.strip().upper() for item in normalized_ranking.split(",") if item.strip())
+    )
+
+    def key(instrument_id: UUID) -> tuple[object, ...]:
+        orders = pending_orders.get(instrument_id, [])
+        signals = pending_signals.get(instrument_id, [])
+        has_exit = any(item.side is OrderSide.SELL for item in (*orders, *signals))
+        buy_signals = [item for item in signals if item.side is OrderSide.BUY]
+        ranking_values = tuple(
+            -max((_signal_ranking_value(item, field) for item in buy_signals), default=ZERO)
+            for field in ranking
+            if field != "SYMBOL"
+        )
+        instrument = instruments.get(instrument_id)
+        symbol = instrument.symbol if instrument is not None else str(instrument_id)
+        return (0 if has_exit else 1, *ranking_values, symbol, str(instrument_id))
+
+    return sorted(instrument_ids, key=key)
+
+
 class BacktestService:
     """Run one deterministic backtest without network, Redis or a real broker."""
 
@@ -461,8 +658,16 @@ class BacktestService:
             reference=request.risk_configuration_reference,
             limits_version_marker=self._limits.version_marker,
             max_order_notional=configured_limits.max_order_notional,
-            max_instrument_weight=configured_limits.max_instrument_weight,
-            max_total_exposure=configured_limits.max_total_exposure,
+            max_instrument_weight=(
+                request.maximum_instrument_weight
+                if request.shared_portfolio and request.maximum_instrument_weight is not None
+                else configured_limits.max_instrument_weight
+            ),
+            max_total_exposure=(
+                request.maximum_total_exposure
+                if request.shared_portfolio and request.maximum_total_exposure is not None
+                else configured_limits.max_total_exposure
+            ),
             max_orders_per_window=configured_limits.max_orders_per_window,
             order_frequency_window_seconds=configured_limits.order_frequency_window_seconds,
             # Historical BACKTEST orders never leave AlphaDesk.  NEXT_OPEN
@@ -527,8 +732,18 @@ class BacktestService:
             signal_timeframe=request.signal_timeframe,
             auto_prepare_minute_data=request.auto_prepare_minute_data,
             optimistic_fill_assumption=request.optimistic_fill_assumption,
+            shared_portfolio=request.shared_portfolio,
+            maximum_holdings=request.maximum_holdings,
+            maximum_total_exposure=request.maximum_total_exposure,
+            maximum_instrument_weight=request.maximum_instrument_weight,
+            allow_position_addition=request.allow_position_addition,
+            entry_ranking=request.entry_ranking,
         )
-        if len(configuration.instrument_ids) > self._settings.backtest_max_instruments:
+        instrument_limit = _backtest_instrument_limit(
+            self._settings,
+            shared_portfolio=request.shared_portfolio,
+        )
+        if len(configuration.instrument_ids) > instrument_limit:
             raise ApplicationError(
                 "BACKTEST_TOO_MANY_INSTRUMENTS", "instrument count exceeds the configured limit"
             )
@@ -753,6 +968,7 @@ class BacktestService:
                     ],
                     "origin": "BT02_A_DAILY_BACKTEST",
                     "backtest_run_id": str(run.id),
+                    "_queue_owner": f"backtest:{run.correlation_id}",
                 }
                 try:
                     queue_depth = await self._enqueue_backfill(payload)
@@ -830,6 +1046,12 @@ class BacktestService:
             run.candidate_session_count = sum(
                 len(plan.candidate_entry_dates) for plan in intraday_plans.values()
             )
+            candidate_exit_session_count = sum(
+                len(plan.candidate_exit_dates) for plan in intraday_plans.values()
+            )
+            planned_replay_session_count = sum(
+                len(plan.replay_dates) for plan in intraday_plans.values()
+            )
             replay_instruments = tuple(
                 instrument_id for instrument_id, plan in intraday_plans.items() if plan.replay_dates
             )
@@ -839,17 +1061,36 @@ class BacktestService:
                 for trading_date in plan.replay_dates
             }
             if replay_instruments and replay_dates:
-                minute_start = datetime.combine(min(replay_dates), time.min, tzinfo=ASHARE_TIMEZONE)
+                replay_segments = _minute_date_segments(
+                    requested={
+                        instrument_id: plan.replay_dates
+                        for instrument_id, plan in intraday_plans.items()
+                        if plan.replay_dates
+                    },
+                    strategy_bars_by_instrument=strategy_bars_by_instrument,
+                    maximum_instruments=self._settings.miniqmt_history_max_instruments,
+                )
                 async with self._uow_factory() as uow:
-                    minute_bars = await uow.historical_bars.list_authoritative_bars(
-                        instrument_ids=replay_instruments,
-                        timeframe=MarketTimeframe.MINUTE_1,
-                        start_at=minute_start,
-                        end_at=config.end_at,
-                        source_code=config.data_source_code,
-                        adjustment_type=AdjustmentType.NONE,
-                        accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
-                    )
+                    for segment_start, segment_end, segment_instruments in replay_segments:
+                        minute_bars.extend(
+                            await uow.historical_bars.list_authoritative_bars(
+                                instrument_ids=segment_instruments,
+                                timeframe=MarketTimeframe.MINUTE_1,
+                                start_at=datetime.combine(
+                                    segment_start,
+                                    time.min,
+                                    tzinfo=ASHARE_TIMEZONE,
+                                ).astimezone(UTC),
+                                end_at=datetime.combine(
+                                    segment_end,
+                                    time.min,
+                                    tzinfo=ASHARE_TIMEZONE,
+                                ).astimezone(UTC),
+                                source_code=config.data_source_code,
+                                adjustment_type=AdjustmentType.NONE,
+                                accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                            )
+                        )
                 available_dates: dict[UUID, set[date]] = defaultdict(set)
                 minute_sessions: dict[tuple[UUID, date], list[StrategyBar]] = defaultdict(list)
                 for minute_bar in minute_bars:
@@ -877,12 +1118,23 @@ class BacktestService:
                 }
                 if missing:
                     missing_count = sum(len(items) for items in missing.values())
+                    ready_session_count = max(0, planned_replay_session_count - missing_count)
+                    preparation_progress = (
+                        100
+                        if planned_replay_session_count == 0
+                        else int(ready_session_count * 100 / planned_replay_session_count)
+                    )
                     run.data_preparation_summary = {
                         "provider": config.data_source_code,
                         "status": "MINUTE_DATA_MISSING",
                         "auto_prepare_requested": config.auto_prepare_minute_data,
                         "missing_instrument_count": len(missing),
                         "missing_session_count": missing_count,
+                        "ready_session_count": ready_session_count,
+                        "required_session_count": planned_replay_session_count,
+                        "preparation_progress_percent": preparation_progress,
+                        "candidate_entry_session_count": run.candidate_session_count,
+                        "candidate_exit_session_count": candidate_exit_session_count,
                         "minute_quality_issue_count": minute_quality_issue_count,
                         "minute_quality_warning_count": minute_quality_warning_count,
                         "requested_timeframe": MarketTimeframe.MINUTE_1.value,
@@ -901,6 +1153,20 @@ class BacktestService:
                         missing_dates = [
                             trading_date for values in missing.values() for trading_date in values
                         ]
+                        provider_symbols = {
+                            instrument_id: miniqmt_provider_symbol(
+                                by_id[instrument_id].symbol,
+                                by_id[instrument_id].exchange,
+                            )
+                            for instrument_id in missing
+                            if instrument_id in by_id
+                        }
+                        segments = _minute_backfill_segments(
+                            missing=missing,
+                            strategy_bars_by_instrument=strategy_bars_by_instrument,
+                            provider_symbols=provider_symbols,
+                            maximum_instruments=self._settings.miniqmt_history_max_instruments,
+                        )
                         backfill_request_id = uuid4()
                         payload: dict[str, object] = {
                             "request_id": str(backfill_request_id),
@@ -921,16 +1187,15 @@ class BacktestService:
                             "instruments": [
                                 {
                                     "instrument_id": str(instrument_id),
-                                    "provider_symbol": miniqmt_provider_symbol(
-                                        by_id[instrument_id].symbol,
-                                        by_id[instrument_id].exchange,
-                                    ),
+                                    "provider_symbol": provider_symbols[instrument_id],
                                 }
                                 for instrument_id in missing
-                                if instrument_id in by_id
+                                if instrument_id in provider_symbols
                             ],
+                            "segments": segments,
                             "origin": "BT02_A_INTRADAY_BACKTEST",
                             "backtest_run_id": str(run.id),
+                            "_queue_owner": f"backtest:{run.correlation_id}",
                         }
                         try:
                             queue_depth = await self._enqueue_backfill(payload)
@@ -951,6 +1216,7 @@ class BacktestService:
                                 "status": "QUEUED",
                                 "request_id": str(backfill_request_id),
                                 "queue_depth": queue_depth,
+                                "request_segment_count": len(segments),
                             }
                         )
                         await self._persist_progress(run)
@@ -969,9 +1235,13 @@ class BacktestService:
                 "provider": config.data_source_code,
                 "status": "READY",
                 "candidate_session_count": run.candidate_session_count,
-                "minute_replay_session_count": sum(
-                    len(plan.replay_dates) for plan in intraday_plans.values()
-                ),
+                "candidate_entry_session_count": run.candidate_session_count,
+                "candidate_exit_session_count": candidate_exit_session_count,
+                "minute_replay_session_count": planned_replay_session_count,
+                "required_session_count": planned_replay_session_count,
+                "ready_session_count": planned_replay_session_count,
+                "missing_session_count": 0,
+                "preparation_progress_percent": 100,
                 "loaded_minute_bar_count": len(minute_bars),
                 "minute_quality_issue_count": minute_quality_issue_count,
                 "minute_quality_warning_count": minute_quality_warning_count,
@@ -979,7 +1249,7 @@ class BacktestService:
                 "prefilter_safe": all(plan.safe for plan in intraday_plans.values()),
                 "daily_session_count": len(strategy_bars),
                 "prefilter_excluded_session_count": max(
-                    0, len(strategy_bars) - run.candidate_session_count
+                    0, len(strategy_bars) - planned_replay_session_count
                 ),
             }
         data_preparation_completed = perf_counter()
@@ -1106,6 +1376,9 @@ class BacktestService:
             if _is_intraday_trigger_mode(config.execution_price_mode)
             else None
         )
+        async with self._uow_factory() as uow:
+            run_instruments = await uow.instruments.get_many(list(config.instrument_ids))
+        instrument_by_id = {item.id: item for item in run_instruments}
 
         while not clock.is_complete:
             session = clock.current_session
@@ -1135,12 +1408,21 @@ class BacktestService:
                     current_time,
                     f"Session {session.trading_date} open",
                 )
-                for instrument_id in sorted(day_bars, key=str):
+                execution_order = _execution_instrument_order(
+                    instrument_ids=day_bars,
+                    pending_orders=pending,
+                    pending_signals=pending_weight_signals,
+                    instruments=instrument_by_id,
+                    entry_ranking=config.entry_ranking,
+                )
+                for instrument_id in execution_order:
                     bar = day_bars[instrument_id]
                     executable = list(pending[instrument_id])
                     pending[instrument_id].clear()
                     weighted_signals = list(pending_weight_signals[instrument_id])
                     pending_weight_signals[instrument_id].clear()
+                    weighted_signals.sort(key=lambda item: 0 if item.side is OrderSide.SELL else 1)
+                    executable.sort(key=lambda item: 0 if item.side is OrderSide.SELL else 1)
                     async with self._uow_factory() as uow:
                         instrument = await uow.instruments.get_by_id(instrument_id)
                         statuses = await uow.instrument_trading_statuses.list(
@@ -1431,17 +1713,21 @@ class BacktestService:
                     run.correlation_id,
                 )
                 if intraday_evaluator is not None:
-                    for instrument_id in sorted(day_bars, key=str):
-                        sequence, event_sequence = await self._process_intraday_session(
+                    async with self._uow_factory() as uow:
+                        open_positions = await uow.positions.list_for_account(account.id)
+                    held_instruments = {
+                        item.instrument_id for item in open_positions if item.total_quantity > ZERO
+                    }
+                    if run.configuration.shared_portfolio:
+                        sequence, event_sequence = await self._process_shared_intraday_sessions(
                             run=run,
                             strategy_run=strategy_run,
                             evaluator=intraday_evaluator,
-                            plan=intraday_plans[instrument_id],
-                            completed_daily_bars=completed_daily_bars[instrument_id],
-                            daily_bar=strategy_day_bars[instrument_id],
-                            minute_bars=minute_bars_by_date[session.trading_date].get(
-                                instrument_id, []
-                            ),
+                            plans=intraday_plans,
+                            completed_daily_bars=completed_daily_bars,
+                            daily_bars=strategy_day_bars,
+                            minute_bars=minute_bars_by_date[session.trading_date],
+                            instruments=instrument_by_id,
                             context=_intraday_replay_context(context, session),
                             account_id=account.id,
                             execution=execution,
@@ -1458,7 +1744,50 @@ class BacktestService:
                             sequence=sequence,
                             event_sequence=event_sequence,
                         )
-                        completed_daily_bars[instrument_id].append(strategy_day_bars[instrument_id])
+                        for instrument_id in sorted(strategy_day_bars, key=str):
+                            completed_daily_bars[instrument_id].append(
+                                strategy_day_bars[instrument_id]
+                            )
+                    else:
+                        intraday_order = sorted(
+                            day_bars,
+                            key=lambda instrument_id: (
+                                0 if instrument_id in held_instruments else 1,
+                                instrument_by_id[instrument_id].symbol
+                                if instrument_id in instrument_by_id
+                                else str(instrument_id),
+                            ),
+                        )
+                        for instrument_id in intraday_order:
+                            sequence, event_sequence = await self._process_intraday_session(
+                                run=run,
+                                strategy_run=strategy_run,
+                                evaluator=intraday_evaluator,
+                                plan=intraday_plans[instrument_id],
+                                completed_daily_bars=completed_daily_bars[instrument_id],
+                                daily_bar=strategy_day_bars[instrument_id],
+                                minute_bars=minute_bars_by_date[session.trading_date].get(
+                                    instrument_id, []
+                                ),
+                                context=_intraday_replay_context(context, session),
+                                account_id=account.id,
+                                execution=execution,
+                                risk_orders=risk_orders,
+                                signal_risk=signal_risk,
+                                confirmation=confirmation,
+                                pending=pending,
+                                pending_weight_signals=pending_weight_signals,
+                                day_orders_to_end=day_orders_to_end,
+                                order_reference_prices=order_reference_prices,
+                                metric_fills=metric_fills,
+                                trades=trades,
+                                position_opened_at=position_opened_at,
+                                sequence=sequence,
+                                event_sequence=event_sequence,
+                            )
+                            completed_daily_bars[instrument_id].append(
+                                strategy_day_bars[instrument_id]
+                            )
                 for instrument_id in sorted(day_bars, key=str):
                     bar = day_bars[instrument_id]
                     strategy_bar = strategy_day_bars[instrument_id]
@@ -1740,12 +2069,8 @@ class BacktestService:
             "maximum_drawdown": str(metrics.maximum_drawdown),
             "fill_count": len(metric_fills),
             "trade_count": len(trades),
-            "data_preparation_seconds": round(
-                data_preparation_completed - execution_started, 6
-            ),
-            "strategy_replay_seconds": round(
-                perf_counter() - data_preparation_completed, 6
-            ),
+            "data_preparation_seconds": round(data_preparation_completed - execution_started, 6),
+            "strategy_replay_seconds": round(perf_counter() - data_preparation_completed, 6),
             "total_execution_seconds": round(perf_counter() - execution_started, 6),
         }
         strategy_run.mark_completed(config.end_at, run.bars_processed, run.signals_generated)
@@ -1766,6 +2091,453 @@ class BacktestService:
             )
             await uow.commit()
         return BacktestRunResult(run, metrics)
+
+    async def _process_shared_intraday_sessions(
+        self,
+        *,
+        run: BacktestRun,
+        strategy_run: StrategyRun,
+        evaluator: IntradayDailyStrategyEvaluator,
+        plans: Mapping[UUID, IntradayPrefilterPlan],
+        completed_daily_bars: Mapping[UUID, list[StrategyBar]],
+        daily_bars: Mapping[UUID, StrategyBar],
+        minute_bars: Mapping[UUID, list[StrategyBar]],
+        instruments: Mapping[UUID, Instrument],
+        context: StrategyContext,
+        account_id: UUID,
+        execution: SimulatedBrokerExecutionService,
+        risk_orders: RiskGatedOrderService,
+        signal_risk: SignalRiskAssessmentService,
+        confirmation: OrderConfirmationService,
+        pending: dict[UUID, list[Order]],
+        pending_weight_signals: dict[UUID, list[Signal]],
+        day_orders_to_end: list[UUID],
+        order_reference_prices: dict[UUID, Decimal],
+        metric_fills: list[BacktestFillMetricInput],
+        trades: list[BacktestTradeSummary],
+        position_opened_at: dict[UUID, datetime],
+        sequence: int,
+        event_sequence: int,
+    ) -> tuple[int, int]:
+        """Replay all instruments on one chronological portfolio event stream.
+
+        Minute data remains sparse: only BT02 candidate sessions enter this
+        method.  Within a session, however, every confirmation timestamp is
+        merged across instruments.  Signals sharing a timestamp release exits
+        before competing entries consume cash and holding slots.
+        """
+
+        points: list[tuple[datetime, UUID, int, list[StrategyBar]]] = []
+        for instrument_id, daily_bar in daily_bars.items():
+            trading_date = _bar_date(daily_bar)
+            plan = plans[instrument_id]
+            if trading_date not in plan.replay_dates:
+                continue
+            ordered = sorted(minute_bars.get(instrument_id, []), key=lambda item: item.timestamp)
+            if not ordered:
+                run.skipped_reason = "CANDIDATE_SESSION_MINUTE_DATA_MISSING"
+                event_sequence += 1
+                await self._event(
+                    run.id,
+                    event_sequence,
+                    BacktestEventType.WARNING,
+                    datetime.combine(trading_date, time(15, 0), tzinfo=ASHARE_TIMEZONE),
+                    "Candidate session skipped because local minute bars were unavailable",
+                    details={
+                        "code": "BACKTEST_MINUTE_SESSION_MISSING",
+                        "instrument_id": str(instrument_id),
+                        "trading_date": trading_date.isoformat(),
+                    },
+                )
+                continue
+            run.minute_replay_session_count += 1
+            run.processed_minute_bar_count += len(ordered)
+            for raw_index in signal_confirmation_points(
+                ordered, run.configuration.signal_timeframe
+            ):
+                points.append(
+                    (
+                        ordered[raw_index].timestamp + timedelta(minutes=1),
+                        instrument_id,
+                        raw_index,
+                        ordered,
+                    )
+                )
+
+        points.sort(key=lambda item: (item[0], instruments[item[1]].symbol, str(item[1])))
+        cursor = 0
+        while cursor < len(points):
+            confirmed_at = points[cursor][0]
+            same_time: list[tuple[datetime, UUID, int, list[StrategyBar]]] = []
+            while cursor < len(points) and points[cursor][0] == confirmed_at:
+                same_time.append(points[cursor])
+                cursor += 1
+            context.advance_time(confirmed_at)
+            work_items: list[_SharedIntradayWork] = []
+            for _, instrument_id, raw_index, ordered in same_time:
+                daily_bar = daily_bars[instrument_id]
+                source_minute = ordered[raw_index]
+                partial_bar = build_partial_daily_bar(daily_bar, ordered[: raw_index + 1])
+                drafts = evaluator.evaluate(
+                    completed_daily_bars=completed_daily_bars[instrument_id],
+                    partial_daily_bar=partial_bar,
+                    generated_at=confirmed_at,
+                )
+                for draft in drafts:
+                    if (
+                        run.configuration.execution_price_mode
+                        is BacktestExecutionPriceMode.INTRADAY_SIGNAL_CLOSE
+                    ):
+                        execution_minute = replace(
+                            source_minute,
+                            timestamp=confirmed_at,
+                            open=partial_bar.close,
+                            high=partial_bar.close,
+                            low=partial_bar.close,
+                            close=partial_bar.close,
+                            raw_reference_price=partial_bar.close,
+                        )
+                        price_source = "signal minute close (optimistic explicit assumption)"
+                    else:
+                        execution_minute = _next_valid_minute_after(
+                            ordered, raw_index, confirmed_at
+                        )
+                        price_source = "next valid local minute bar open"
+                    history = completed_daily_bars[instrument_id]
+                    work_items.append(
+                        _SharedIntradayWork(
+                            instrument_id=instrument_id,
+                            draft=draft,
+                            partial_bar=partial_bar,
+                            source_minute=source_minute,
+                            execution_minute=execution_minute,
+                            confirmed_at=confirmed_at,
+                            price_source=price_source,
+                            completed_session_count=len(history),
+                            previous_close=None if not history else history[-1].close,
+                        )
+                    )
+
+            for work in sorted(
+                work_items,
+                key=lambda item: _shared_intraday_work_key(
+                    item,
+                    completed_daily_bars=completed_daily_bars,
+                    instruments=instruments,
+                ),
+            ):
+                sequence, event_sequence = await self._execute_shared_intraday_work(
+                    run=run,
+                    strategy_run=strategy_run,
+                    evaluator=evaluator,
+                    work=work,
+                    instrument=instruments[work.instrument_id],
+                    account_id=account_id,
+                    execution=execution,
+                    risk_orders=risk_orders,
+                    signal_risk=signal_risk,
+                    confirmation=confirmation,
+                    pending=pending,
+                    pending_weight_signals=pending_weight_signals,
+                    day_orders_to_end=day_orders_to_end,
+                    order_reference_prices=order_reference_prices,
+                    metric_fills=metric_fills,
+                    trades=trades,
+                    position_opened_at=position_opened_at,
+                    sequence=sequence,
+                    event_sequence=event_sequence,
+                )
+        return sequence, event_sequence
+
+    async def _execute_shared_intraday_work(
+        self,
+        *,
+        run: BacktestRun,
+        strategy_run: StrategyRun,
+        evaluator: IntradayDailyStrategyEvaluator,
+        work: _SharedIntradayWork,
+        instrument: Instrument,
+        account_id: UUID,
+        execution: SimulatedBrokerExecutionService,
+        risk_orders: RiskGatedOrderService,
+        signal_risk: SignalRiskAssessmentService,
+        confirmation: OrderConfirmationService,
+        pending: dict[UUID, list[Order]],
+        pending_weight_signals: dict[UUID, list[Signal]],
+        day_orders_to_end: list[UUID],
+        order_reference_prices: dict[UUID, Decimal],
+        metric_fills: list[BacktestFillMetricInput],
+        trades: list[BacktestTradeSummary],
+        position_opened_at: dict[UUID, datetime],
+        sequence: int,
+        event_sequence: int,
+    ) -> tuple[int, int]:
+        trading_date = _bar_date(work.partial_bar)
+        validate_signal_draft(
+            work.draft,
+            run=strategy_run,
+            current_bar_instrument_id=work.partial_bar.instrument_id,
+            current_bar_timestamp=work.partial_bar.timestamp,
+            expected_generated_at=work.confirmed_at,
+        )
+        sequence += 1
+        signal = persisted_signal_from_draft(
+            strategy_run,
+            work.draft,
+            sequence,
+            account_id=account_id,
+        )
+        if run.configuration.position_size_ratio is not None:
+            signal.target_quantity = None
+            signal.target_weight = (
+                run.configuration.position_size_ratio if signal.side is OrderSide.BUY else ZERO
+            )
+        signal.valid_until = run.configuration.end_at
+        signal.metadata.update(
+            {
+                "execution_mode": run.configuration.execution_price_mode.value,
+                "signal_timeframe": run.configuration.signal_timeframe.value,
+                "signal_confirmed_at": work.confirmed_at.isoformat(),
+                "signal_price": format(work.partial_bar.close, "f"),
+                "candidate_session": True,
+                "optimistic_fill_assumption": (run.configuration.optimistic_fill_assumption),
+                "shared_portfolio": True,
+                "portfolio_event_order": "EXIT_BEFORE_ENTRY_THEN_STRENGTH_VOLUME_SYMBOL",
+            }
+        )
+        async with self._uow_factory() as uow:
+            await uow.signals.add(signal)
+            await uow.commit()
+        run.signals_generated += 1
+        event_sequence += 1
+        await self._event(
+            run.id,
+            event_sequence,
+            BacktestEventType.SIGNAL_GENERATED,
+            work.confirmed_at,
+            f"Shared-portfolio intraday signal {signal.id} confirmed",
+            details={
+                "signal_id": str(signal.id),
+                "instrument_id": str(signal.instrument_id),
+                "side": signal.side.value,
+                "signal_confirmed_at": work.confirmed_at.isoformat(),
+                "source_minute_started_at": work.source_minute.timestamp.isoformat(),
+                "signal_price": str(work.partial_bar.close),
+                "shared_portfolio": True,
+            },
+        )
+        if work.execution_minute is None:
+            if run.configuration.time_in_force is TimeInForce.GTC:
+                pending_weight_signals[work.instrument_id].append(signal)
+            else:
+                event_sequence += 1
+                await self._event(
+                    run.id,
+                    event_sequence,
+                    BacktestEventType.WARNING,
+                    work.confirmed_at,
+                    "DAY signal expired because no later valid minute existed",
+                    details={
+                        "code": "BACKTEST_NO_NEXT_VALID_MINUTE",
+                        "signal_id": str(signal.id),
+                        "instrument_id": str(work.instrument_id),
+                    },
+                )
+            await self._persist_progress(run)
+            return sequence, event_sequence
+
+        quantity_override = await self._position_sized_quantity(
+            run,
+            signal,
+            opening_price=work.execution_minute.open,
+            lot_size=instrument.lot_size,
+        )
+        if signal.side is OrderSide.BUY and quantity_override <= ZERO:
+            event_sequence += 1
+            await self._event(
+                run.id,
+                event_sequence,
+                BacktestEventType.WARNING,
+                work.confirmed_at,
+                "Shared-portfolio entry skipped because no capacity was available",
+                details={
+                    "code": "BACKTEST_PORTFOLIO_CAPACITY_REJECTED",
+                    "signal_id": str(signal.id),
+                    "instrument_id": str(work.instrument_id),
+                    "reason": ("可用资金、最大持股数、组合总仓位、单股上限或整手规则限制"),
+                },
+            )
+            await self._persist_progress(run)
+            return sequence, event_sequence
+        if signal.side is OrderSide.SELL and quantity_override <= ZERO:
+            event_sequence += 1
+            await self._event(
+                run.id,
+                event_sequence,
+                BacktestEventType.WARNING,
+                work.confirmed_at,
+                "Shared-portfolio exit skipped because no T+1-available position existed",
+                details={
+                    "code": "BACKTEST_T1_SELL_NOT_AVAILABLE",
+                    "signal_id": str(signal.id),
+                    "instrument_id": str(work.instrument_id),
+                    "reason": "当前没有可卖持仓，或当日买入股份仍受A股T+1限制",
+                },
+            )
+            await self._persist_progress(run)
+            return sequence, event_sequence
+
+        outcome, returned_order, decision_id = await self._signal_to_order(
+            run,
+            signal,
+            work.partial_bar,
+            work.confirmed_at,
+            trading_date,
+            risk_orders,
+            signal_risk,
+            confirmation,
+            quantity_override=quantity_override,
+            reference_price_override=work.execution_minute.open,
+        )
+        if outcome is RiskDecisionType.ALLOW:
+            run.risk_passed += 1
+        elif outcome is RiskDecisionType.REJECT:
+            run.risk_rejected += 1
+        else:
+            run.risk_reviewed += 1
+        event_sequence += 1
+        await self._event(
+            run.id,
+            event_sequence,
+            BacktestEventType.RISK_DECIDED,
+            work.confirmed_at,
+            f"Signal {signal.id} risk decision: {outcome.value}",
+            details={
+                "risk_decision_id": str(decision_id),
+                "signal_id": str(signal.id),
+                "decision": outcome.value,
+            },
+        )
+        if returned_order is None:
+            await self._persist_progress(run)
+            return sequence, event_sequence
+        run.orders_created += 1
+        order_reference_prices[returned_order.id] = work.partial_bar.close
+        event_sequence += 1
+        await self._event(
+            run.id,
+            event_sequence,
+            BacktestEventType.ORDER_CREATED,
+            returned_order.created_at,
+            f"Order {returned_order.id} created from shared intraday signal",
+            details={
+                "order_id": str(returned_order.id),
+                "signal_id": str(signal.id),
+                "signal_confirmed_at": work.confirmed_at.isoformat(),
+            },
+        )
+        gap_exceeded = (
+            returned_order.side is OrderSide.BUY
+            and run.configuration.maximum_entry_gap_ratio is not None
+            and work.execution_minute.open
+            > work.partial_bar.close * (Decimal("1") + run.configuration.maximum_entry_gap_ratio)
+        )
+        if gap_exceeded:
+            event_sequence += 1
+            await self._event(
+                run.id,
+                event_sequence,
+                BacktestEventType.WARNING,
+                work.execution_minute.timestamp,
+                "Shared-portfolio buy skipped because the next-minute gap exceeded the limit",
+                details={
+                    "code": "BACKTEST_ENTRY_GAP_EXCEEDED",
+                    "order_id": str(returned_order.id),
+                    "instrument_id": str(work.instrument_id),
+                    "signal_price": str(work.partial_bar.close),
+                    "next_minute_open": str(work.execution_minute.open),
+                },
+            )
+            if run.configuration.time_in_force is TimeInForce.DAY:
+                day_orders_to_end.append(returned_order.id)
+            else:
+                pending[work.instrument_id].append(returned_order)
+            await self._persist_progress(run)
+            return sequence, event_sequence
+
+        result, fill_inputs, new_trades = await self._execute_same_day_order(
+            run=run,
+            execution=execution,
+            order=returned_order,
+            minute_bar=work.execution_minute,
+            instrument=instrument,
+            previous_close=work.previous_close,
+            completed_session_count=work.completed_session_count,
+            lot_size=instrument.lot_size,
+            position_opened_at=position_opened_at,
+            source=(
+                "BACKTEST_INTRADAY_SIGNAL_CLOSE"
+                if run.configuration.optimistic_fill_assumption
+                else "BACKTEST_INTRADAY_NEXT_MINUTE_OPEN"
+            ),
+        )
+        metric_fills.extend(fill_inputs)
+        trades.extend(new_trades)
+        run.fills_generated += len(result.fills)
+        if result.fills:
+            evaluator.record_fill(result.order.instrument_id, result.order.side)
+        event_sequence += 1
+        await self._event(
+            run.id,
+            event_sequence,
+            BacktestEventType.EXECUTION_ATTEMPTED,
+            result.attempt.started_at,
+            f"Order {result.order.id} shared intraday execution attempted",
+            details={
+                "attempt_id": str(result.attempt.id),
+                "order_id": str(result.order.id),
+                "fill_count": len(result.fills),
+                "signal_confirmed_at": work.confirmed_at.isoformat(),
+                "execution_time": work.execution_minute.timestamp.isoformat(),
+                "signal_price": str(work.partial_bar.close),
+                "fill_price": None if not result.fills else str(result.fills[-1].price),
+                "price_source": work.price_source,
+                "execution_status": result.attempt.result_status.value,
+                "rejection_code": result.attempt.rejection_code,
+                "execution_message": result.attempt.message,
+                "shared_portfolio": True,
+            },
+        )
+        for fill in result.fills:
+            event_sequence += 1
+            await self._event(
+                run.id,
+                event_sequence,
+                BacktestEventType.FILL_GENERATED,
+                fill.executed_at,
+                f"Fill {fill.id} generated",
+                details={
+                    "fill_id": str(fill.id),
+                    "order_id": str(result.order.id),
+                    "instrument_id": str(work.instrument_id),
+                    "filled_at": fill.executed_at.isoformat(),
+                    "price": str(fill.price),
+                    "quantity": str(fill.quantity),
+                    "price_source": work.price_source,
+                },
+            )
+        if (
+            run.configuration.time_in_force is TimeInForce.DAY
+            and result.order.status not in OrderStateMachine.terminal_states
+        ):
+            day_orders_to_end.append(result.order.id)
+        elif (
+            run.configuration.time_in_force is not TimeInForce.DAY
+            and result.order.status is not OrderStatus.FILLED
+        ):
+            pending[work.instrument_id].append(result.order)
+        await self._persist_progress(run)
+        return sequence, event_sequence
 
     async def _process_intraday_session(
         self,
@@ -2226,17 +2998,62 @@ class BacktestService:
                 if account is None
                 else await uow.cash_balances.get(run.account_id, account.base_currency)
             )
+            positions = await uow.positions.list_for_account(run.account_id)
+            latest_snapshot = await uow.account_snapshots.latest(run.account_id)
         if signal.side is OrderSide.SELL:
             return ZERO if position is None else position.available_quantity
         if balance is None or balance.available_cash <= ZERO:
             return ZERO
+        active_positions = [item for item in positions if item.total_quantity > ZERO]
+        if run.configuration.shared_portfolio:
+            if (
+                not run.configuration.allow_position_addition
+                and position is not None
+                and position.total_quantity > ZERO
+            ):
+                return ZERO
+            if (
+                (position is None or position.total_quantity <= ZERO)
+                and run.configuration.maximum_holdings is not None
+                and len(active_positions) >= run.configuration.maximum_holdings
+            ):
+                return ZERO
         execution_price = run.configuration.slippage_configuration.apply(
             side=OrderSide.BUY,
             reference_price=opening_price,
             price_limit_up=None,
             price_limit_down=None,
         )
-        budget = balance.available_cash * run.configuration.position_size_ratio
+        total_equity = (
+            latest_snapshot.total_equity
+            if latest_snapshot is not None and latest_snapshot.total_equity > ZERO
+            else balance.available_cash
+        )
+        budget = (
+            total_equity * run.configuration.position_size_ratio
+            if run.configuration.shared_portfolio
+            else balance.available_cash * run.configuration.position_size_ratio
+        )
+        if run.configuration.maximum_instrument_weight is not None:
+            budget = min(
+                budget,
+                total_equity * run.configuration.maximum_instrument_weight,
+            )
+        if run.configuration.maximum_total_exposure is not None:
+            gross_market_value = sum(
+                (
+                    item.market_value
+                    if item.market_value is not None
+                    else item.average_cost * item.total_quantity
+                )
+                for item in active_positions
+            )
+            remaining_exposure = max(
+                ZERO,
+                total_equity * run.configuration.maximum_total_exposure - gross_market_value,
+            )
+            budget = min(budget, remaining_exposure)
+        budget = min(budget, balance.available_cash)
         lots = (budget / execution_price / lot_size).to_integral_value(rounding=ROUND_FLOOR)
         quantity = lots * lot_size
         while quantity > ZERO:

@@ -1,7 +1,6 @@
 """BT01 synchronous daily backtest HTTP endpoints."""
 
-import json
-from collections.abc import Awaitable, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -18,7 +17,7 @@ from alphadesk_api.application.backtests import (
     CreateBacktestRequest,
 )
 from alphadesk_api.application.common import ApplicationError
-from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
+from alphadesk_api.application.miniqmt_market_data import enqueue_history_request
 from alphadesk_api.application.strategies import StrategyResearchService
 from alphadesk_api.core.config import Settings
 from alphadesk_api.schemas.backtests import (
@@ -51,15 +50,7 @@ def _backfill_enqueuer(request: Request):
         return None
 
     async def enqueue(payload: dict[str, object]) -> int:
-        return int(
-            await cast(
-                Awaitable[int],
-                client.rpush(
-                    HISTORY_QUEUE_KEY,
-                    json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                ),
-            )
-        )
+        return await enqueue_history_request(client, payload)
 
     return enqueue
 

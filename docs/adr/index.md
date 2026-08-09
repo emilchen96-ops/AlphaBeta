@@ -22,5 +22,7 @@
 | [0014](0014-ephemeral-quote-push.md) | 最新报价和网页推送使用可重建 Redis 临时链路 |
 | [0017](0017-deterministic-daily-backtest-pipeline.md) | 日线回测复用事实管道并采用确定性 T+1 时间模型 |
 | [0018](0018-tradingagents-worker-adapter.md) | 固定上游 TradingAgents Graph 并由独立 Worker 适配运行 |
+| [0019](0019-shared-capital-portfolio-backtest.md) | 多标的组合回测采用共享资金、单账户和统一时间轴 |
+| [0020](0020-miniqmt-history-recoverable-queue.md) | MiniQMT 历史补数采用可恢复确认、持久去重与死信隔离 |
 
 除非有新的 ADR 替代，以下决策均为 `Accepted` 并对后续实现有效。

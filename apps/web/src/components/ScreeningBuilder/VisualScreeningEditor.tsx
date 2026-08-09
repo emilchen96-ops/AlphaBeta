@@ -1,11 +1,12 @@
 import {
-  AutoComplete,
+  Alert,
   Button,
   Card,
   Col,
   Divider,
   Input,
   InputNumber,
+  Modal,
   Row,
   Segmented,
   Select,
@@ -18,6 +19,7 @@ import {
 import {
   DeleteOutlined,
   FolderAddOutlined,
+  PlusOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import { useMemo, useState } from "react";
@@ -62,6 +64,7 @@ const categoryLabels: Record<string, string> = {
   MOVING_AVERAGE: "均线",
   BREAKOUT: "突破",
   LIMIT_UP_EVENT: "涨停事件",
+  EVENT_RELATION: "事件关系",
   RANGE_POSITION: "区间位置",
   COMPOSITE_PATTERN: "复合形态",
 };
@@ -237,9 +240,6 @@ function ConditionCard({
           <Tag>
             {categoryLabels[definition.category] ?? definition.category}
           </Tag>
-          <Typography.Text type="secondary">
-            {definition.condition_key}
-          </Typography.Text>
         </Space>
       }
       extra={
@@ -423,42 +423,52 @@ function GroupEditor({
             />
           ) : null,
         )}
-        <Select
-          showSearch
-          optionFilterProp="label"
-          placeholder="向这个条件组添加原子条件"
-          options={[...definitions.values()].map((definition) => ({
-            value: definition.condition_key,
-            label: `${definition.display_name} · ${
-              categoryLabels[definition.category] ?? definition.category
-            }`,
-          }))}
-          onChange={(conditionKey: string) => {
-            const definition = definitions.get(conditionKey);
-            if (!definition || countAtoms(group) >= 20) return;
-            onGroupChange(path, (current) => ({
-              ...current,
-              children: [
-                ...current.children,
-                {
-                  node_type: "CONDITION",
-                  condition_key: conditionKey,
-                  condition_version: definition.version,
-                  parameters: initialScreeningParameters(definition),
-                },
-              ],
-            }));
-          }}
-        />
-        {depth < 3 ? (
+        {depth > 1 ? (
+          <Select
+            showSearch
+            optionFilterProp="label"
+            placeholder="向这个条件组添加选股条件"
+            options={[...definitions.values()]
+              .filter(
+                (definition) => definition.enabled && !definition.deprecated,
+              )
+              .map((definition) => ({
+                value: definition.condition_key,
+                label: `${definition.display_name} · ${
+                  categoryLabels[definition.category] ?? definition.category
+                }`,
+              }))}
+            onChange={(conditionKey: string) => {
+              const definition = definitions.get(conditionKey);
+              if (!definition || countAtoms(group) >= 20) return;
+              onGroupChange(path, (current) => ({
+                ...current,
+                children: [
+                  ...current.children,
+                  {
+                    node_type: "CONDITION",
+                    condition_key: conditionKey,
+                    condition_version: definition.version,
+                    parameters: initialScreeningParameters(definition),
+                  },
+                ],
+              }));
+            }}
+          />
+        ) : null}
+        {depth < 2 ? (
           <Select
             suffixIcon={<FolderAddOutlined />}
             placeholder="新建子条件组，并选择第一个条件"
             disabled={countAtoms(group) >= 20}
-            options={[...definitions.values()].map((definition) => ({
-              value: definition.condition_key,
-              label: definition.display_name,
-            }))}
+            options={[...definitions.values()]
+              .filter(
+                (definition) => definition.enabled && !definition.deprecated,
+              )
+              .map((definition) => ({
+                value: definition.condition_key,
+                label: definition.display_name,
+              }))}
             onChange={(conditionKey: string) => {
               const definition = definitions.get(conditionKey);
               if (!definition) return;
@@ -494,6 +504,8 @@ export function VisualScreeningEditor({
   onChange,
 }: VisualScreeningEditorProps) {
   const [searchText, setSearchText] = useState("");
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState("ALL");
   const root = asRoot(value);
   const byKey = useMemo(
     () =>
@@ -534,27 +546,35 @@ export function VisualScreeningEditor({
       ],
     });
     setSearchText("");
+    setCatalogOpen(false);
   };
-  const searchOptions = definitions
-    .filter((definition) => {
-      const query = searchText.trim().toLowerCase();
-      if (!query) return true;
-      return [
-        definition.display_name,
-        definition.condition_key,
-        definition.description,
-        ...(definition.aliases ?? []),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(query.replace(/\d+(?:\.\d+)?/g, "").trim());
-    })
-    .map((definition) => ({
-      value: definition.condition_key,
-      label: `${definition.display_name} · ${
-        categoryLabels[definition.category] ?? definition.category
-      }`,
-    }));
+  const visibleDefinitions = definitions.filter((definition) => {
+    if (!definition.enabled || definition.deprecated) return false;
+    if (activeCategory !== "ALL" && definition.category !== activeCategory)
+      return false;
+    const query = searchText.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      definition.display_name,
+      definition.description,
+      ...(definition.aliases ?? []),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query.replace(/\d+(?:\.\d+)?/g, "").trim());
+  });
+  const categories = Array.from(
+    new Set(
+      definitions
+        .filter((definition) => definition.enabled && !definition.deprecated)
+        .map((definition) => definition.category),
+    ),
+  ).sort((left, right) =>
+    (categoryLabels[left] ?? left).localeCompare(
+      categoryLabels[right] ?? right,
+      "zh-CN",
+    ),
+  );
   const previewNode = (
     node: ScreeningConditionSpec | ScreeningConditionGroupSpec,
   ): string => {
@@ -589,43 +609,75 @@ export function VisualScreeningEditor({
   return (
     <Space orientation="vertical" size={16} style={{ width: "100%" }}>
       <Card size="small" title="股票范围">
-        <Space wrap>
-          {(
-            [
-              ["exclude_st", "排除ST及*ST"],
-              ["exclude_bse", "排除北交所"],
-              ["exclude_star_market", "排除科创板"],
-              ["exclude_chinext", "排除创业板"],
-            ] as const
-          ).map(([key, label]) => (
-            <Space key={key}>
-              <Switch
-                checked={value.universe_spec[key]}
-                onChange={(checked) => updateUniverse(key, checked)}
-              />
-              <span>{label}</span>
-            </Space>
-          ))}
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <Select
+            aria-label="股票范围"
+            value="ALL_A_SHARES"
+            style={{ width: "100%", maxWidth: 420 }}
+            options={[
+              { value: "ALL_A_SHARES", label: "全部A股" },
+              {
+                value: "WATCHLIST",
+                label: "自选股（后续开放）",
+                disabled: true,
+              },
+              {
+                value: "WATCHLIST_GROUP",
+                label: "自选分组（后续开放）",
+                disabled: true,
+              },
+              {
+                value: "EXPLICIT",
+                label: "指定股票（后续开放）",
+                disabled: true,
+              },
+            ]}
+          />
+          <Space wrap>
+            {(
+              [
+                ["exclude_st", "排除ST及*ST"],
+                ["exclude_bse", "排除北交所"],
+                ["exclude_star_market", "排除科创板"],
+                ["exclude_chinext", "排除创业板"],
+              ] as const
+            ).map(([key, label]) => (
+              <Space key={key}>
+                <Switch
+                  checked={value.universe_spec[key]}
+                  onChange={(checked) => updateUniverse(key, checked)}
+                />
+                <span>{label}</span>
+              </Space>
+            ))}
+          </Space>
         </Space>
       </Card>
 
-      <Card size="small" title="搜索并添加条件">
-        <AutoComplete
-          style={{ width: "100%" }}
-          value={searchText}
-          options={searchOptions}
-          onSearch={setSearchText}
-          onChange={setSearchText}
-          onSelect={addCondition}
-        >
-          <Input
-            prefix={<SearchOutlined />}
-            placeholder="输入条件关键词，例如：成交额50亿、近5日涨停、均线、放量"
+      <Card size="small" title="满足以下条件">
+        <Space wrap>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={countAtoms(root) >= 20}
+            onClick={() => setCatalogOpen(true)}
+          >
+            添加条件
+          </Button>
+          <Typography.Text type="secondary">
+            已添加 {countAtoms(root)} / 20
+            项；支持“全部满足”与“任一满足”，最多两层。
+          </Typography.Text>
+        </Space>
+        {!root.children.length ? (
+          <Alert
+            style={{ marginTop: 12 }}
+            type="info"
+            showIcon
+            title="先添加一个选股条件"
+            description="例如添加“区间位置”，再设置过去60日、底部20%。"
           />
-        </AutoComplete>
-        <Typography.Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
-          输入数字会自动带入对应参数；条件来自可审计的原子条件目录，不执行任意代码。
-        </Typography.Paragraph>
+        ) : null}
       </Card>
 
       <GroupEditor
@@ -641,15 +693,15 @@ export function VisualScreeningEditor({
         }
       />
 
-      <Card size="small" title="实时中文规则预览">
+      <Card size="small" title="规则预览">
         <Typography.Paragraph style={{ marginBottom: 0 }}>
           {root.children.length
             ? previewNode(root)
-            : "请至少添加一个原子条件。"}
+            : "请至少添加一个选股条件。"}
         </Typography.Paragraph>
       </Card>
 
-      <Card size="small" title="结果排序">
+      <Card size="small" title="排序与返回数量">
         <Row gutter={[16, 12]}>
           <Col xs={24} md={10}>
             <Select
@@ -694,19 +746,88 @@ export function VisualScreeningEditor({
             />
           </Col>
           <Col xs={24} md={6}>
-            <InputNumber
-              style={{ width: "100%" }}
-              min={1}
-              max={10_000}
-              precision={0}
-              value={value.top_n}
-              placeholder="最多保留（可选）"
-              onChange={(top_n) => onChange({ ...value, top_n })}
-            />
+            <Space.Compact style={{ width: "100%" }}>
+              <Button disabled>前</Button>
+              <InputNumber
+                style={{ width: "100%" }}
+                min={1}
+                max={10_000}
+                precision={0}
+                value={value.top_n ?? 50}
+                aria-label="返回股票数量"
+                onChange={(top_n) => onChange({ ...value, top_n })}
+              />
+              <Button disabled>只</Button>
+            </Space.Compact>
           </Col>
         </Row>
         <Divider style={{ margin: "16px 0 0" }} />
       </Card>
+      <Modal
+        title="添加选股条件"
+        open={catalogOpen}
+        width={900}
+        footer={null}
+        destroyOnHidden
+        onCancel={() => setCatalogOpen(false)}
+      >
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          aria-label="搜索选股条件"
+          value={searchText}
+          onChange={(event) => setSearchText(event.target.value)}
+          placeholder="搜索：成交量、涨停、均线、区间位置……"
+          style={{ marginBottom: 12 }}
+        />
+        <Segmented
+          block
+          value={activeCategory}
+          onChange={(next) => setActiveCategory(String(next))}
+          options={[
+            { value: "ALL", label: "全部" },
+            ...categories.map((category) => ({
+              value: category,
+              label: categoryLabels[category] ?? category,
+            })),
+          ]}
+          style={{ marginBottom: 16 }}
+        />
+        <Row gutter={[12, 12]} style={{ maxHeight: 520, overflowY: "auto" }}>
+          {visibleDefinitions.map((definition) => (
+            <Col xs={24} md={12} key={definition.condition_key}>
+              <Card
+                size="small"
+                title={definition.display_name}
+                extra={
+                  <Button
+                    size="small"
+                    type="primary"
+                    aria-label={`添加${definition.display_name}`}
+                    onClick={() => addCondition(definition.condition_key)}
+                  >
+                    添加
+                  </Button>
+                }
+              >
+                <Typography.Paragraph style={{ marginBottom: 6 }}>
+                  {definition.description}
+                </Typography.Paragraph>
+                <Typography.Text type="secondary">
+                  {definition.parameter_schema.length
+                    ? `可设置：${definition.parameter_schema
+                        .map((item) => item.display_name)
+                        .join("、")}`
+                    : "无需设置参数"}
+                </Typography.Text>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+        {!visibleDefinitions.length ? (
+          <Alert type="info" showIcon title="没有匹配的选股条件" />
+        ) : null}
+      </Modal>
     </Space>
   );
 }

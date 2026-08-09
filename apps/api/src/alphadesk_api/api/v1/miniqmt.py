@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import secrets
-from collections.abc import Awaitable
 from datetime import UTC, datetime, time, timedelta
-from typing import Any, cast
+from typing import cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -19,11 +18,15 @@ from alphadesk_api.api.v1.market_common import request_correlation_id, uow_facto
 from alphadesk_api.application.intraday import IntradayAggregationService
 from alphadesk_api.application.miniqmt_market_data import (
     AGENT_STATUS_KEY,
-    HISTORY_QUEUE_KEY,
     MiniQMTInstrumentCatalogService,
     MiniQMTMinuteBarService,
     MiniQMTQuoteIngestionService,
     MiniQMTSubscriptionService,
+    compact_history_queue,
+    complete_history_request,
+    enqueue_history_request,
+    fail_history_request,
+    peek_history_request,
     update_agent_status,
 )
 from alphadesk_api.infrastructure.database import DatabaseService
@@ -39,6 +42,7 @@ from alphadesk_api.schemas.miniqmt import (
     AgentStatusRequest,
     GenericResponse,
     HistoryBackfillRequest,
+    HistoryRequestResultRequest,
     InstrumentCatalogIngestRequest,
     MinuteBarIngestRequest,
     QuoteSnapshotIngestRequest,
@@ -303,18 +307,14 @@ async def request_history_backfill(
         for instrument in instruments
     ]
     request_id = request_correlation_id(request)
-    await cast(
-        Awaitable[Any],
-        _redis(request).rpush(
-            HISTORY_QUEUE_KEY,
-            json.dumps(
-                {
-                    "request_id": str(request_id),
-                    **payload.model_dump(mode="json"),
-                    "instruments": history_instruments,
-                }
-            ),
-        ),
+    await enqueue_history_request(
+        _redis(request),
+        {
+            "request_id": str(request_id),
+            **payload.model_dump(mode="json"),
+            "instruments": history_instruments,
+            "origin": "MANUAL_API",
+        },
     )
     return GenericResponse(
         data={"request_id": str(request_id), "status": "QUEUED", "provider": "MINIQMT"}
@@ -353,8 +353,48 @@ async def next_history_request(
     x_alphadesk_agent_token: str | None = Header(default=None),
 ) -> GenericResponse:
     _agent_authorized(request, x_alphadesk_agent_token)
-    raw = await cast(Awaitable[Any], _redis(request).lpop(HISTORY_QUEUE_KEY))
-    return GenericResponse(data={"request": json.loads(str(raw)) if raw is not None else None})
+    payload = await peek_history_request(_redis(request))
+    return GenericResponse(data={"request": payload})
+
+
+@router.post("/miniqmt/agent/history/complete", response_model=GenericResponse)
+async def complete_agent_history_request(
+    request: Request,
+    payload: HistoryRequestResultRequest,
+    x_alphadesk_agent_token: str | None = Header(default=None),
+) -> GenericResponse:
+    _agent_authorized(request, x_alphadesk_agent_token)
+    completed = await complete_history_request(_redis(request), payload.request_id)
+    if not completed:
+        raise HTTPException(status_code=409, detail="历史任务队首已变化; 请重新领取")
+    return GenericResponse(data={"accepted": True, "status": "COMPLETED"})
+
+
+@router.post("/miniqmt/agent/history/fail", response_model=GenericResponse)
+async def fail_agent_history_request(
+    request: Request,
+    payload: HistoryRequestResultRequest,
+    x_alphadesk_agent_token: str | None = Header(default=None),
+) -> GenericResponse:
+    _agent_authorized(request, x_alphadesk_agent_token)
+    result = await fail_history_request(
+        _redis(request),
+        payload.request_id,
+        error_code=payload.error_code or "MINIQMT_HISTORY_FAILED",
+        error_message=payload.error_message or "MiniQMT历史行情任务失败",
+    )
+    if not bool(result.get("accepted")):
+        raise HTTPException(status_code=409, detail="历史任务队首已变化; 请重新领取")
+    return GenericResponse(data=result)
+
+
+@router.post("/miniqmt/agent/history/compact", response_model=GenericResponse)
+async def compact_agent_history_queue(
+    request: Request,
+    x_alphadesk_agent_token: str | None = Header(default=None),
+) -> GenericResponse:
+    _agent_authorized(request, x_alphadesk_agent_token)
+    return GenericResponse(data=await compact_history_queue(_redis(request)))
 
 
 @router.post("/miniqmt/agent/quotes", response_model=GenericResponse)

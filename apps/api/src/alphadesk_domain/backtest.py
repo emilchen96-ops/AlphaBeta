@@ -23,7 +23,7 @@ from alphadesk_domain.values import as_utc, decimal_value, non_empty, utc_now
 ZERO = Decimal("0")
 ONE = Decimal("1")
 TRADING_SESSIONS_PER_YEAR = Decimal("252")
-BACKTEST_ENGINE_VERSION = "bt02a-v1"
+BACKTEST_ENGINE_VERSION = "bt03a-v1"
 ASHARE_TIMEZONE = ZoneInfo("Asia/Shanghai")
 EIGHT_PLACES = Decimal("0.00000001")
 TWELVE_PLACES = Decimal("0.000000000001")
@@ -186,6 +186,12 @@ class BacktestConfiguration:
     signal_timeframe: MarketTimeframe = MarketTimeframe.MINUTE_1
     auto_prepare_minute_data: bool = True
     optimistic_fill_assumption: bool = False
+    shared_portfolio: bool = False
+    maximum_holdings: int | None = None
+    maximum_total_exposure: Decimal | None = None
+    maximum_instrument_weight: Decimal | None = None
+    allow_position_addition: bool = True
+    entry_ranking: str = "SIGNAL_STRENGTH_VOLUME_SYMBOL"
     environment: StrategyEnvironment = StrategyEnvironment.BACKTEST
     schema_version: int = 1
     engine_version: str = BACKTEST_ENGINE_VERSION
@@ -307,6 +313,33 @@ class BacktestConfiguration:
                     "BACKTEST_INVALID_CONFIGURATION",
                     "maximum_volume_participation must be in (0, 1]",
                 )
+        if self.maximum_holdings is not None and self.maximum_holdings < 1:
+            raise BacktestError(
+                "BACKTEST_INVALID_CONFIGURATION", "maximum_holdings must be positive"
+            )
+        for name, value in (
+            ("maximum_total_exposure", self.maximum_total_exposure),
+            ("maximum_instrument_weight", self.maximum_instrument_weight),
+        ):
+            if value is not None:
+                decimal_value(value, name)
+                if not ZERO < value <= ONE:
+                    raise BacktestError(
+                        "BACKTEST_INVALID_CONFIGURATION", f"{name} must be in (0, 1]"
+                    )
+        if self.shared_portfolio:
+            if self.position_size_ratio is None:
+                raise BacktestError(
+                    "BACKTEST_INVALID_CONFIGURATION",
+                    "shared portfolio requires position_size_ratio",
+                )
+            if self.maximum_instrument_weight is not None and (
+                self.position_size_ratio > self.maximum_instrument_weight
+            ):
+                raise BacktestError(
+                    "BACKTEST_INVALID_CONFIGURATION",
+                    "position_size_ratio exceeds maximum_instrument_weight",
+                )
         if self.schema_version != 1:
             raise BacktestError(
                 "BACKTEST_INVALID_CONFIGURATION", "unsupported configuration schema_version"
@@ -335,6 +368,9 @@ class BacktestConfiguration:
             self,
             "data_source_code",
             non_empty(self.data_source_code, "data_source_code").upper(),
+        )
+        object.__setattr__(
+            self, "entry_ranking", non_empty(self.entry_ranking, "entry_ranking").upper()
         )
         if self.benchmark_symbol is not None:
             object.__setattr__(
@@ -524,6 +560,22 @@ def backtest_configuration_from_dict(value: Mapping[str, Any]) -> BacktestConfig
         signal_timeframe=MarketTimeframe(str(value.get("signal_timeframe", "MINUTE_1"))),
         auto_prepare_minute_data=bool(value.get("auto_prepare_minute_data", True)),
         optimistic_fill_assumption=bool(value.get("optimistic_fill_assumption", False)),
+        shared_portfolio=bool(value.get("shared_portfolio", False)),
+        maximum_holdings=(
+            None if value.get("maximum_holdings") is None else int(value["maximum_holdings"])
+        ),
+        maximum_total_exposure=(
+            None
+            if value.get("maximum_total_exposure") is None
+            else Decimal(str(value["maximum_total_exposure"]))
+        ),
+        maximum_instrument_weight=(
+            None
+            if value.get("maximum_instrument_weight") is None
+            else Decimal(str(value["maximum_instrument_weight"]))
+        ),
+        allow_position_addition=bool(value.get("allow_position_addition", True)),
+        entry_ranking=str(value.get("entry_ranking", "SIGNAL_STRENGTH_VOLUME_SYMBOL")),
         environment=StrategyEnvironment(str(value["environment"])),
         schema_version=int(value["schema_version"]),
         engine_version=str(value["engine_version"]),

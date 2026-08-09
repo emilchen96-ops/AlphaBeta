@@ -107,24 +107,37 @@ export interface QuickBacktestRequest {
   idempotency_key: string;
 }
 
-export type BacktestScope = "SINGLE" | "WATCHLIST" | "ALL_A_SHARES";
+export type BacktestScope = "SINGLE" | "MANUAL" | "WATCHLIST" | "ALL_A_SHARES";
+
+export type BacktestBatchExecutionMode = "INDEPENDENT" | "SHARED_PORTFOLIO";
 
 export interface BacktestBatchRequest extends Omit<
   QuickBacktestRequest,
   "instrument_id" | "price_adjustment_mode"
 > {
   scope: Exclude<BacktestScope, "SINGLE">;
+  execution_mode: BacktestBatchExecutionMode;
+  instrument_ids: string[];
   watchlist_id: string | null;
   exclude_st: boolean;
   exclude_bse: boolean;
   exclude_star_market: boolean;
   exclude_chinext: boolean;
+  minimum_listing_trading_days: number | null;
+  maximum_holdings: number;
+  maximum_total_exposure: string;
+  maximum_instrument_weight: string;
+  allow_position_addition: boolean;
+  entry_ranking: string;
+  benchmark_symbol: string | null;
 }
 
 export interface BacktestBatch {
   id: string;
   name: string;
   scope: Exclude<BacktestScope, "SINGLE">;
+  execution_mode: BacktestBatchExecutionMode;
+  instrument_count: number;
   watchlist_id: string | null;
   status:
     | "CREATED"
@@ -217,10 +230,85 @@ export interface BacktestBatchSummary {
     instrument_display: string;
     total_return: string;
     maximum_drawdown: string;
+    fill_count: number;
+    backtest_run_id: string | null;
   }>;
   top: Array<BacktestBatchResult & { instrument_display: string }>;
   bottom: Array<BacktestBatchResult & { instrument_display: string }>;
   failure_reasons: Array<{ code: string; count: number }>;
+  portfolio?: null | {
+    run: Record<string, unknown>;
+    configuration: Record<string, unknown>;
+    metrics: Record<string, string | number | null> | null;
+    equity_curve: Array<{
+      timestamp: string;
+      cash: string;
+      market_value: string;
+      total_equity: string;
+      gross_exposure: string;
+      net_exposure: string;
+      cumulative_return: string;
+      drawdown: string;
+      positions_count: number;
+    }>;
+    drawdown_landmarks: null | {
+      peak_at: string;
+      peak_equity: string;
+      trough_at: string;
+      trough_equity: string;
+      maximum_drawdown: string;
+      recovered_at: string | null;
+      recovered: boolean;
+      current_drawdown: string;
+      longest_drawdown_sessions: number;
+    };
+    benchmark: {
+      symbol: string | null;
+      name?: string;
+      curve: Array<{ timestamp: string; cumulative_return: string }>;
+      warning: string | null;
+    };
+    summary: {
+      benchmark_total_return: string | null;
+      excess_return: string | null;
+      maximum_positions: number;
+      average_positions: string;
+      average_exposure: string;
+      average_idle_cash_ratio: string;
+      average_holding_days: string | null;
+      current_drawdown: string;
+      longest_drawdown_sessions: number;
+    };
+    signals: Array<Record<string, unknown>>;
+    orders: Array<Record<string, unknown>>;
+    fills: Array<Record<string, unknown>>;
+    trades: Array<Record<string, unknown>>;
+    rejections: Array<Record<string, unknown>>;
+    positions: Array<Record<string, unknown>>;
+    contributions: Array<{
+      instrument_id: string;
+      instrument_display: string;
+      symbol: string | null;
+      exchange: string | null;
+      realized_pnl: string;
+      unrealized_pnl: string;
+      total_contribution: string;
+      current_market_value: string;
+      fees: string;
+      trade_count: number;
+      buy_fill_count: number;
+      sell_fill_count: number;
+    }>;
+    timeline: Array<Record<string, unknown>>;
+  };
+  data_preparation: {
+    required_sessions: number;
+    ready_sessions: number;
+    missing_sessions: number;
+    progress_percent: number;
+    preparing_stocks: number;
+    queued_segments: number;
+  };
   intraday_execution: {
     daily_bars_checked: number;
     daily_prefilter_candidates: number;

@@ -198,6 +198,13 @@ Command 消费和 Outbox 抑制；任一步失败则整体回滚。回滚后的�
 
 M02 只建立模型、持久化和事务能力。Outbox 发布、Redis Streams、订单状态机服务、风控执行、Broker/执行器通信以及业务 API 均属于后续里程碑。
 
+## BT03-A 共享组合增量
+
+BT03-A 不新建第二套组合成交表。批量任务的 `configuration` 保存 `execution_mode`、统一资金、
+持仓上限、排序、基准和股票池过滤快照；共享组合只创建一个 BacktestRun/模拟账户，并继续写入
+既有 Signal、RiskDecision、Order、Fill、账本、Position、EquityPoint 和 Timeline 事实。
+Migration `0033_bt03_shared_portfolio.py` 仅把批量范围约束扩展为允许 `MANUAL`。
+
 ## D03 分钟存储增量
 
 D03 复用 `market_bars`、`market_sync_runs`、`market_data_quality_runs/issues`，不创建第二套

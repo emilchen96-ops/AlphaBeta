@@ -13,6 +13,7 @@ from alphadesk_api.application.common import UnitOfWorkFactory
 from alphadesk_api.application.miniqmt_market_data import (
     AGENT_STATUS_KEY,
     HISTORY_QUEUE_KEY,
+    enqueue_history_request,
 )
 from alphadesk_api.application.scanners import FullMarketScannerProcessor
 from alphadesk_api.application.screenings import (
@@ -108,15 +109,7 @@ class ScannerWorker:
                 agent_status = {}
             if agent_status.get("state") != "CONNECTED":
                 raise RuntimeError("MINIQMT_AGENT_NOT_CONNECTED")
-            return int(
-                await cast(
-                    Awaitable[int],
-                    self._redis.client.rpush(
-                        HISTORY_QUEUE_KEY,
-                        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                    ),
-                )
-            )
+            return await enqueue_history_request(self._redis.client, payload)
 
         async def pending_backfill_batches(scan_run_id: UUID) -> int | None:
             try:

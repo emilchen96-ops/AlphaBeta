@@ -50,6 +50,7 @@ class ConditionCategory(StrEnum):
     MOVING_AVERAGE = "MOVING_AVERAGE"
     BREAKOUT = "BREAKOUT"
     LIMIT_UP_EVENT = "LIMIT_UP_EVENT"
+    EVENT_RELATION = "EVENT_RELATION"
     RANGE_POSITION = "RANGE_POSITION"
     COMPOSITE_PATTERN = "COMPOSITE_PATTERN"
 
@@ -225,6 +226,9 @@ class ConditionDefinition:
     aliases: tuple[str, ...] = ()
     deprecated: bool = False
     replacement_condition_key: str | None = None
+    comparator_schema: tuple[str, ...] = ()
+    unit: str | None = None
+    renderer_key: str = "SCHEMA_DEFAULT"
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -286,7 +290,15 @@ class ConditionDefinition:
             "RANGE_POSITION": int(parameters.get("window") or 60) + 1,
             "AMOUNT_THRESHOLD": int(parameters.get("window") or 1),
             "LIMIT_UP_PULLBACK": int(parameters.get("lookback_days") or 20) + 2,
+            "FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK": int(
+                parameters.get("first_board_lookback_days") or 1
+            )
+            + int(parameters.get("consolidation_days") or 3)
+            + 2,
             "RECENT_LIMIT_UP_EVENT": int(parameters.get("lookback_days") or 5) + 2,
+            "LIMIT_UP_ANCHOR_DISTANCE": 22,
+            "LIMIT_UP_ANCHOR_FLOOR": 22,
+            "LIMIT_UP_VOLUME_RATIO": 22,
             "BOTTOM_VOLUME_EXPANSION": max(
                 int(parameters.get("range_window") or 60),
                 int(parameters.get("volume_window") or 20),
@@ -302,11 +314,14 @@ class ConditionDefinition:
             "description": self.description,
             "category": self.category.value,
             "parameter_schema": [item.response_dict() for item in self.parameter_schema],
+            "comparator_schema": list(self.comparator_schema),
             "required_fields": list(self.required_fields),
             "required_history_bars": self.required_history_bars,
             "supported_timeframes": [item.value for item in self.supported_timeframes],
             "price_adjustment_mode": self.price_adjustment_mode.value,
             "evaluator_key": self.evaluator_key,
+            "renderer_key": self.renderer_key,
+            "unit": self.unit,
             "explanation_template": self.explanation_template,
             "version": self.version,
             "enabled": self.enabled,
@@ -575,8 +590,8 @@ class ValidatedScreeningSpec:
 
 
 def _validate_group_shape(group: ScreeningConditionGroup, *, depth: int = 1) -> int:
-    if depth > 3:
-        raise ScreeningError("SCREENING_GROUP_TOO_DEEP", "条件组最多嵌套3层")
+    if depth > 2:
+        raise ScreeningError("SCREENING_GROUP_TOO_DEEP", "条件组最多嵌套2层")
     atoms = 0
     for child in group.children:
         atoms += (
@@ -852,6 +867,14 @@ class RuleBasedScreeningEngine:
         validated = spec.validate(self._catalog)
         snapshot = self._features.get(instrument, bars, spec.as_of_date)
         evaluations: list[tuple[ValidatedCondition, ConditionEvaluation]] = []
+        event_lookback_days = next(
+            (
+                int(item.parameters.get("lookback_days") or 20)
+                for item in validated.conditions
+                if item.definition.condition_key == "RECENT_LIMIT_UP_EVENT"
+            ),
+            20,
+        )
 
         def evaluate_node(
             node: ValidatedCondition | ValidatedConditionGroup,
@@ -874,6 +897,7 @@ class RuleBasedScreeningEngine:
                             instrument,
                             snapshot,
                             trading_status=trading_status,
+                            event_lookback_days=event_lookback_days,
                         )
                     except (ArithmeticError, InvalidOperation, ValueError) as exc:
                         evaluation = ConditionEvaluation(
@@ -968,7 +992,10 @@ class RuleBasedScreeningEngine:
                 instrument_name=instrument.name,
                 score=score,
                 reference_price=current.close,
-                reason_code="+".join(item.reason_code for item in matched_evaluations),
+                # Per-condition codes remain available in condition_evaluations.
+                # The persisted candidate code is intentionally bounded because
+                # an arbitrarily long AND/OR rule may contain up to 20 atoms.
+                reason_code="SCREENING_SPEC_MATCHED",
                 reason=reason,
                 metrics=metrics,
             ),
@@ -1008,15 +1035,45 @@ class RuleBasedScreeningEngine:
         snapshot: FeatureSnapshot,
         *,
         trading_status: str | None,
+        event_lookback_days: int,
     ) -> ConditionEvaluation:
         key = condition.definition.evaluator_key
         if key == "limit_up_pullback_v1":
             return _evaluate_limit_up_pullback(instrument, snapshot, condition.parameters)
+        if key == "first_board_failed_next_day_pullback_v1":
+            return _evaluate_first_board_failed_next_day_pullback(
+                instrument, snapshot, condition.parameters
+            )
         if key == "recent_limit_up_event_v1":
             return _evaluate_recent_limit_up_event(instrument, snapshot, condition.parameters)
+        if key in {
+            "limit_up_anchor_distance_v1",
+            "limit_up_anchor_floor_v1",
+            "limit_up_volume_ratio_v1",
+        }:
+            return _evaluate_limit_up_event_relation(
+                key,
+                instrument,
+                snapshot,
+                condition.parameters,
+                lookback_days=event_lookback_days,
+            )
         if key == "bottom_volume_expansion_v1":
             return _evaluate_bottom_volume_expansion(snapshot, condition.parameters)
-        return _evaluate_ordinary(key, snapshot, condition.parameters, trading_status)
+        evaluation = _evaluate_ordinary(key, snapshot, condition.parameters, trading_status)
+        if evaluation.outcome is not ConditionOutcome.MATCHED:
+            return evaluation
+        return ConditionEvaluation(
+            outcome=evaluation.outcome,
+            score=evaluation.score,
+            reason_code=evaluation.reason_code,
+            reason=_render_condition_explanation(
+                condition.definition,
+                condition.parameters,
+                evaluation.metrics,
+            ),
+            metrics=evaluation.metrics,
+        )
 
 
 def _not_matched(code: str, reason: str) -> ConditionEvaluation:
@@ -1180,6 +1237,163 @@ def _upper_limit_price(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LimitUpEventFacts:
+    event_date: date
+    event_bar: StrategyBar
+    previous_close: Decimal
+    upper_limit_price: Decimal
+    trading_days_ago: int
+
+
+def _resolve_latest_limit_up_event(
+    instrument: Instrument,
+    snapshot: FeatureSnapshot,
+    lookback_days: int,
+) -> LimitUpEventFacts | ConditionEvaluation:
+    """Resolve one catalog-backed event shared by all limit-up relation blocks."""
+
+    bars = snapshot.bars
+    event_dates = {item for item in snapshot.market_sessions if item < snapshot.as_of_date}
+    if event_dates:
+        event_dates = set(sorted(event_dates)[-lookback_days:])
+    start = max(1, len(bars) - 1 - lookback_days) if not event_dates else 1
+    unknown_limit_days = 0
+    for index in range(len(bars) - 2, start - 1, -1):
+        previous = bars[index - 1]
+        candidate = bars[index]
+        if event_dates and candidate.timestamp.date() not in event_dates:
+            continue
+        resolved = _upper_limit_price(
+            instrument,
+            candidate.timestamp.date(),
+            previous.close,
+            index,
+            bars,
+        )
+        if resolved is None:
+            unknown_limit_days += 1
+            continue
+        if candidate.close < resolved:
+            continue
+        trading_days_ago = (
+            len(
+                [
+                    item
+                    for item in snapshot.market_sessions
+                    if candidate.timestamp.date() < item <= snapshot.as_of_date
+                ]
+            )
+            if snapshot.market_sessions
+            else len(bars) - 1 - index
+        )
+        return LimitUpEventFacts(
+            event_date=candidate.timestamp.date(),
+            event_bar=candidate,
+            previous_close=previous.close,
+            upper_limit_price=resolved,
+            trading_days_ago=trading_days_ago,
+        )
+    if unknown_limit_days:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="LIMIT_PRICE_NOT_AVAILABLE",
+            reason="历史区间存在无法取得可靠涨停价的交易日，不能伪造涨停事件",
+        )
+    return _not_matched(
+        "LIMIT_UP_EVENT_NOT_FOUND",
+        f"此前{lookback_days}个交易日未发现可靠涨停事件",
+    )
+
+
+def _evaluate_limit_up_event_relation(
+    evaluator_key: str,
+    instrument: Instrument,
+    snapshot: FeatureSnapshot,
+    parameters: Mapping[str, ConditionValue],
+    *,
+    lookback_days: int,
+) -> ConditionEvaluation:
+    facts = _resolve_latest_limit_up_event(instrument, snapshot, lookback_days)
+    if isinstance(facts, ConditionEvaluation):
+        return facts
+    current = snapshot.bars[-1]
+    anchor_ratio = current.close / facts.previous_close
+    distance = anchor_ratio - Decimal("1")
+    common_metrics: dict[str, Decimal | int | bool | str | None] = {
+        "limit_up_date": facts.event_date.isoformat(),
+        "upper_limit_price": facts.upper_limit_price,
+        "previous_close_before_limit_up": facts.previous_close,
+        "current_close": current.close,
+        "distance_to_anchor": distance,
+        "trading_days_since_limit_up": facts.trading_days_ago,
+        "event_lookback_days": lookback_days,
+    }
+    if evaluator_key == "limit_up_anchor_distance_v1":
+        maximum = _decimal(parameters["maximum_distance_pct"], "maximum_distance_pct")
+        if abs(distance) > maximum:
+            return _not_matched("ANCHOR_DISTANCE_EXCEEDED", "当前价格距离涨停起涨价超过上限")
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.MATCHED,
+            score=Decimal("1") - abs(distance),
+            reason_code="LIMIT_UP_ANCHOR_DISTANCE_MATCHED",
+            reason=(
+                f"当前价格距离{facts.event_date.isoformat()}涨停前收盘价"
+                f"{(distance * Decimal('100')).quantize(Decimal('0.01'))}%"
+                f"，满足不超过{(maximum * Decimal('100')).quantize(Decimal('0.01'))}%"
+            ),
+            metrics=common_metrics,
+        )
+    if evaluator_key == "limit_up_anchor_floor_v1":
+        minimum = _decimal(
+            parameters["minimum_price_ratio_to_anchor"],
+            "minimum_price_ratio_to_anchor",
+        )
+        protection_price = facts.previous_close * minimum
+        if anchor_ratio < minimum:
+            return _not_matched("PROTECTION_PRICE_BROKEN", "当前价格跌破涨停起涨保护价")
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.MATCHED,
+            score=anchor_ratio,
+            reason_code="LIMIT_UP_ANCHOR_FLOOR_MATCHED",
+            reason=(
+                f"当前价格不低于涨停前收盘价的"
+                f"{(minimum * Decimal('100')).quantize(Decimal('0.01'))}%"
+            ),
+            metrics={
+                **common_metrics,
+                "price_ratio_to_anchor": anchor_ratio,
+                "protection_price": protection_price,
+            },
+        )
+    if facts.event_bar.volume <= 0:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="LIMIT_UP_VOLUME_NOT_AVAILABLE",
+            reason="涨停日成交量无效，无法计算相对成交量",
+        )
+    maximum = _decimal(parameters["maximum_volume_ratio"], "maximum_volume_ratio")
+    volume_ratio = current.volume / facts.event_bar.volume
+    if volume_ratio > maximum:
+        return _not_matched("PULLBACK_VOLUME_TOO_HIGH", "当前成交量未缩至涨停日成交量上限")
+    return ConditionEvaluation(
+        outcome=ConditionOutcome.MATCHED,
+        score=Decimal("1") - volume_ratio,
+        reason_code="LIMIT_UP_VOLUME_RATIO_MATCHED",
+        reason=(
+            f"当前成交量为{facts.event_date.isoformat()}涨停日的"
+            f"{(volume_ratio * Decimal('100')).quantize(Decimal('0.01'))}%"
+            f"，满足不超过{(maximum * Decimal('100')).quantize(Decimal('0.01'))}%"
+        ),
+        metrics={
+            **common_metrics,
+            "limit_up_day_volume": facts.event_bar.volume,
+            "current_volume": current.volume,
+            "volume_ratio": volume_ratio,
+        },
+    )
+
+
 def _evaluate_limit_up_pullback(
     instrument: Instrument,
     snapshot: FeatureSnapshot,
@@ -1285,6 +1499,184 @@ def _evaluate_limit_up_pullback(
     )
 
 
+def _evaluate_first_board_failed_next_day_pullback(
+    instrument: Instrument,
+    snapshot: FeatureSnapshot,
+    parameters: Mapping[str, ConditionValue],
+) -> ConditionEvaluation:
+    """Match a first limit-up, next-session failed board and configurable pullback.
+
+    Pattern dates always come from the common market calendar. Missing stock bars
+    therefore do not shift the pattern onto a different personal timeline, which
+    would make cross-stock screening incomparable.
+    """
+
+    bars = snapshot.bars
+    first_board_lookback = int(parameters["first_board_lookback_days"] or 1)
+    consolidation_days = int(parameters["consolidation_days"] or 3)
+    maximum_volume_ratio = _decimal(parameters["maximum_volume_ratio"], "maximum_volume_ratio")
+    sessions = tuple(item for item in snapshot.market_sessions if item <= snapshot.as_of_date)
+    pattern_length = consolidation_days + 2
+    required_sessions = first_board_lookback + pattern_length
+    if len(sessions) < required_sessions:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INSUFFICIENT_DATA,
+            reason_code="FIRST_BOARD_PATTERN_CALENDAR_INSUFFICIENT",
+            reason=(
+                "共同市场交易日历不足："
+                f"首板判定与{consolidation_days}日回调共需要{required_sessions}个交易日"
+            ),
+        )
+
+    pattern_dates = sessions[-pattern_length:]
+    first_board_date, failed_board_date, *pullback_dates = pattern_dates
+    bar_by_date = {item.timestamp.date(): (index, item) for index, item in enumerate(bars)}
+    missing_pattern_dates = [item for item in pattern_dates if item not in bar_by_date]
+    if missing_pattern_dates:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="FIRST_BOARD_PATTERN_BAR_MISSING",
+            reason=(
+                "形态窗口缺少共同交易日行情，不能把停牌或缺数日期静默前移："
+                + "、".join(item.isoformat() for item in missing_pattern_dates)
+            ),
+            metrics={
+                "missing_pattern_dates": ",".join(
+                    item.isoformat() for item in missing_pattern_dates
+                )
+            },
+        )
+
+    first_index, first_board = bar_by_date[first_board_date]
+    failed_index, failed_board = bar_by_date[failed_board_date]
+    if first_index < 1 or failed_index <= first_index:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="FIRST_BOARD_PREVIOUS_CLOSE_MISSING",
+            reason="缺少首板日前收盘价，无法取得可靠涨停价",
+        )
+
+    first_upper_limit = _upper_limit_price(
+        instrument,
+        first_board_date,
+        bars[first_index - 1].close,
+        first_index,
+        bars,
+    )
+    failed_upper_limit = _upper_limit_price(
+        instrument,
+        failed_board_date,
+        first_board.close,
+        failed_index,
+        bars,
+    )
+    if first_upper_limit is None or failed_upper_limit is None:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="LIMIT_PRICE_NOT_AVAILABLE",
+            reason="首板日或次日无法取得可靠涨停价，不能猜测涨停与断板事实",
+        )
+    if first_board.close < first_upper_limit:
+        return _not_matched("FIRST_BOARD_NOT_LIMIT_UP", "形态首日不是可靠的收盘涨停")
+
+    prior_dates = sessions[-required_sessions:-pattern_length]
+    unknown_prior_dates: list[str] = []
+    for prior_date in prior_dates:
+        prior_entry = bar_by_date.get(prior_date)
+        if prior_entry is None:
+            # A suspension is not a limit-up and must not shift the common window.
+            continue
+        prior_index, prior_bar = prior_entry
+        if prior_index < 1:
+            unknown_prior_dates.append(prior_date.isoformat())
+            continue
+        prior_upper_limit = _upper_limit_price(
+            instrument,
+            prior_date,
+            bars[prior_index - 1].close,
+            prior_index,
+            bars,
+        )
+        if prior_upper_limit is None:
+            unknown_prior_dates.append(prior_date.isoformat())
+            continue
+        if prior_bar.close >= prior_upper_limit:
+            return _not_matched(
+                "NOT_FIRST_LIMIT_UP_BOARD",
+                f"首板日前{first_board_lookback}个交易日内已在{prior_date.isoformat()}收盘涨停",
+            )
+    if unknown_prior_dates:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="PRIOR_LIMIT_PRICE_NOT_AVAILABLE",
+            reason="首板回看窗口存在无法取得可靠涨停价的交易日，不能确认首板",
+            metrics={"unknown_limit_price_dates": ",".join(unknown_prior_dates)},
+        )
+
+    if failed_board.close >= failed_upper_limit:
+        return _not_matched("NEXT_DAY_NOT_FAILED_BOARD", "首板次日仍然收盘涨停，并非断板")
+
+    pullback_bars = [bar_by_date[item][1] for item in pullback_dates]
+    reference_high = max(first_board.high, failed_board.high)
+    minimum_pullback_low = min(item.low for item in pullback_bars)
+    maximum_pullback_high = max(item.high for item in pullback_bars)
+    if minimum_pullback_low < first_board.low:
+        return _not_matched(
+            "FIRST_BOARD_LOW_BROKEN",
+            f"断板后{consolidation_days}个交易日内最低价跌破首板日最低价",
+        )
+    if maximum_pullback_high > reference_high:
+        return _not_matched(
+            "REFERENCE_HIGH_EXCEEDED",
+            f"断板后{consolidation_days}个交易日内最高价超过首板日与断板日的较高点",
+        )
+
+    reference_volume = max(first_board.volume, failed_board.volume)
+    current = pullback_bars[-1]
+    if reference_volume <= 0:
+        return ConditionEvaluation(
+            outcome=ConditionOutcome.INDETERMINATE,
+            reason_code="REFERENCE_VOLUME_NOT_AVAILABLE",
+            reason="首板日与断板日成交量无效，无法计算缩量比例",
+        )
+    volume_ratio = current.volume / reference_volume
+    if volume_ratio > maximum_volume_ratio:
+        return _not_matched(
+            "PULLBACK_VOLUME_TOO_HIGH",
+            f"第{consolidation_days}个回调交易日成交量未缩至允许比例以内",
+        )
+
+    return ConditionEvaluation(
+        outcome=ConditionOutcome.MATCHED,
+        score=(Decimal("1") - volume_ratio),
+        reason_code="FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK_MATCHED",
+        reason=(
+            f"{first_board_date.isoformat()}首板，{failed_board_date.isoformat()}次日断板；"
+            f"随后{consolidation_days}个共同交易日均未跌破首板日最低价，且未突破"
+            "首板日与断板日的"
+            f"较高点；第{consolidation_days}日成交量为参照量的"
+            f"{(volume_ratio * Decimal('100')).quantize(Decimal('0.01'))}%"
+        ),
+        metrics={
+            "first_board_date": first_board_date.isoformat(),
+            "failed_board_date": failed_board_date.isoformat(),
+            "pullback_start_date": pullback_dates[0].isoformat(),
+            "pullback_end_date": pullback_dates[-1].isoformat(),
+            "first_board_low": first_board.low,
+            "reference_high": reference_high,
+            "minimum_pullback_low": minimum_pullback_low,
+            "maximum_pullback_high": maximum_pullback_high,
+            "first_board_volume": first_board.volume,
+            "failed_board_volume": failed_board.volume,
+            "reference_volume": reference_volume,
+            "current_volume": current.volume,
+            "volume_ratio": volume_ratio,
+            "first_board_lookback_days": first_board_lookback,
+            "consolidation_days": consolidation_days,
+        },
+    )
+
+
 def _evaluate_recent_limit_up_event(
     instrument: Instrument,
     snapshot: FeatureSnapshot,
@@ -1294,7 +1686,12 @@ def _evaluate_recent_limit_up_event(
     minimum_occurrences = int(parameters["minimum_occurrences"] or 1)
     event_selection = str(parameters["event_selection"] or "LATEST_VALID")
     require_reliable = bool(parameters["require_reliable_limit_price"])
-    sessions = tuple(item for item in snapshot.market_sessions if item <= snapshot.as_of_date)
+    include_as_of_date = bool(parameters.get("include_as_of_date", True))
+    sessions = tuple(
+        item
+        for item in snapshot.market_sessions
+        if item <= snapshot.as_of_date and (include_as_of_date or item < snapshot.as_of_date)
+    )
     target_dates = set(sessions[-lookback:]) if sessions else set()
     bars = snapshot.bars
     events: list[tuple[date, Decimal]] = []
@@ -1303,6 +1700,8 @@ def _evaluate_recent_limit_up_event(
         current = bars[index]
         event_date = current.timestamp.date()
         if target_dates and event_date not in target_dates:
+            continue
+        if not include_as_of_date and event_date >= snapshot.as_of_date:
             continue
         if not target_dates and index < len(bars) - lookback:
             continue
@@ -1345,6 +1744,7 @@ def _evaluate_recent_limit_up_event(
             "latest_upper_limit_price": selected[1],
             "event_selection": event_selection,
             "require_reliable_limit_price": require_reliable,
+            "include_as_of_date": include_as_of_date,
         },
     )
 
@@ -1378,6 +1778,29 @@ def _relation_matches(left: Decimal, right: Decimal, relation: str) -> bool:
         "GREATER_OR_EQUAL": left >= right,
         "LESS_OR_EQUAL": left <= right,
     }[relation]
+
+
+def _render_condition_explanation(
+    definition: ConditionDefinition,
+    parameters: Mapping[str, ConditionValue],
+    metrics: Mapping[str, Decimal | int | bool | str | None],
+) -> str:
+    values: dict[str, object] = {**parameters, **metrics}
+    for key in ("range_position", "n_day_return", "distance_to_anchor"):
+        value = values.get(key)
+        if isinstance(value, Decimal):
+            values[key] = f"{(value * Decimal('100')).quantize(Decimal('0.01'))}%"
+    for key, value in tuple(values.items()):
+        if isinstance(value, Decimal) and key not in {
+            "range_position",
+            "n_day_return",
+            "distance_to_anchor",
+        }:
+            values[key] = format(value.normalize(), "f")
+    rendered = definition.explanation_template
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", str(value))
+    return rendered
 
 
 def _evaluate_ordinary(
@@ -1737,11 +2160,13 @@ def register_builtin_conditions(catalog: ConditionCatalog) -> None:
                 _param(
                     "maximum_position",
                     "最高区间位置",
-                    ConditionParameterType.DECIMAL,
+                    ConditionParameterType.PERCENTAGE,
                     "允许的最高区间位置",
                     "0.20",
                     minimum=Decimal("0"),
                     maximum=Decimal("1"),
+                    display_unit="%",
+                    precision=2,
                 ),
             ),
             ("high", "low", "close"),
@@ -1851,6 +2276,13 @@ def register_builtin_conditions(catalog: ConditionCatalog) -> None:
                     "无法取得可靠涨停价时返回无法判断，不使用固定比例猜测",
                     True,
                 ),
+                _param(
+                    "include_as_of_date",
+                    "包含筛选当日",
+                    ConditionParameterType.BOOLEAN,
+                    "是否允许把筛选当日自身识别为涨停事件",
+                    True,
+                ),
             ),
             required_fields=("close", "price_limit", "trading_calendar"),
             required_history_bars=7,
@@ -1860,6 +2292,96 @@ def register_builtin_conditions(catalog: ConditionCatalog) -> None:
             explanation_template="近{lookback_days}个交易日出现{limit_up_occurrences}次涨停",
             version="1.0.0",
             aliases=("近5日涨停", "近期涨停", "涨停次数", "涨停事件", "最近涨停"),
+        ),
+        ConditionDefinition(
+            condition_key="LIMIT_UP_ANCHOR_DISTANCE",
+            display_name="当前价距离涨停起涨价",
+            description="当前收盘价与最近涨停前一交易日收盘价的绝对距离不超过设定比例",
+            category=ConditionCategory.EVENT_RELATION,
+            parameter_schema=(
+                _param(
+                    "maximum_distance_pct",
+                    "最大距离",
+                    ConditionParameterType.PERCENTAGE,
+                    "当前价格距离涨停前收盘价的最大绝对比例",
+                    "0.03",
+                    minimum=Decimal("0"),
+                    maximum=Decimal("1"),
+                    display_unit="%",
+                    precision=2,
+                ),
+            ),
+            required_fields=("close", "price_limit", "trading_calendar"),
+            required_history_bars=22,
+            supported_timeframes=(MarketTimeframe.DAY_1,),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+            evaluator_key="limit_up_anchor_distance_v1",
+            renderer_key="LIMIT_UP_EVENT_RELATION",
+            comparator_schema=("LESS_OR_EQUAL",),
+            unit="%",
+            explanation_template="当前价格距离最近涨停起涨价不超过{maximum_distance_pct}",
+            version="1.0.0",
+            aliases=("距离涨停价格", "距离起涨价", "涨停锚点距离", "涨停前收盘价"),
+        ),
+        ConditionDefinition(
+            condition_key="LIMIT_UP_ANCHOR_FLOOR",
+            display_name="涨停起涨价保护",
+            description="当前收盘价不得低于最近涨停前一交易日收盘价的设定比例",
+            category=ConditionCategory.EVENT_RELATION,
+            parameter_schema=(
+                _param(
+                    "minimum_price_ratio_to_anchor",
+                    "最低保护比例",
+                    ConditionParameterType.PERCENTAGE,
+                    "当前价格相对涨停前收盘价的最低比例",
+                    "0.98",
+                    minimum=Decimal("0"),
+                    maximum=Decimal("2"),
+                    display_unit="%",
+                    precision=2,
+                ),
+            ),
+            required_fields=("close", "price_limit", "trading_calendar"),
+            required_history_bars=22,
+            supported_timeframes=(MarketTimeframe.DAY_1,),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+            evaluator_key="limit_up_anchor_floor_v1",
+            renderer_key="LIMIT_UP_EVENT_RELATION",
+            comparator_schema=("GREATER_OR_EQUAL",),
+            unit="%",
+            explanation_template="当前价格不低于最近涨停起涨价的{minimum_price_ratio_to_anchor}",
+            version="1.0.0",
+            aliases=("涨停保护价", "不跌破起涨价", "价格保护", "锚点保护"),
+        ),
+        ConditionDefinition(
+            condition_key="LIMIT_UP_VOLUME_RATIO",
+            display_name="当前量相对涨停日成交量",
+            description="当前成交量不超过最近涨停日成交量的设定比例",
+            category=ConditionCategory.EVENT_RELATION,
+            parameter_schema=(
+                _param(
+                    "maximum_volume_ratio",
+                    "最大成交量比例",
+                    ConditionParameterType.PERCENTAGE,
+                    "当前成交量相对最近涨停日成交量的上限",
+                    "0.50",
+                    minimum=Decimal("0"),
+                    maximum=Decimal("10"),
+                    display_unit="%",
+                    precision=2,
+                ),
+            ),
+            required_fields=("close", "volume", "price_limit", "trading_calendar"),
+            required_history_bars=22,
+            supported_timeframes=(MarketTimeframe.DAY_1,),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+            evaluator_key="limit_up_volume_ratio_v1",
+            renderer_key="LIMIT_UP_EVENT_RELATION",
+            comparator_schema=("LESS_OR_EQUAL",),
+            unit="%",
+            explanation_template="当前成交量不超过最近涨停日成交量的{maximum_volume_ratio}",
+            version="1.0.0",
+            aliases=("相对涨停日成交量", "涨停缩量", "事件成交量比例", "涨停日量比"),
         ),
         ConditionDefinition(
             condition_key="LIMIT_UP_PULLBACK",
@@ -1938,6 +2460,79 @@ def register_builtin_conditions(catalog: ConditionCatalog) -> None:
                 "{distance_to_anchor}，成交量为涨停日的{volume_ratio}"
             ),
             version="1.0.0",
+            deprecated=True,
+        ),
+        ConditionDefinition(
+            condition_key="FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK",
+            display_name="首板断板缩量回调",
+            description="首板次日断板，随后指定交易日内不破首板低点、不越两日高点并缩量",
+            category=ConditionCategory.COMPOSITE_PATTERN,
+            parameter_schema=(
+                _param(
+                    "first_board_lookback_days",
+                    "首板回看交易日数",
+                    ConditionParameterType.TRADING_DAY_WINDOW,
+                    "首板日前不得出现收盘涨停的共同市场交易日数量",
+                    1,
+                    minimum=1,
+                    maximum=250,
+                    unit="交易日",
+                ),
+                _param(
+                    "consolidation_days",
+                    "断板后观察交易日数",
+                    ConditionParameterType.INTEGER,
+                    "检查断板后的共同市场交易日数量；所有股票使用同一日历窗口",
+                    3,
+                    minimum=3,
+                    maximum=20,
+                    unit="交易日",
+                ),
+                _param(
+                    "volume_reference",
+                    "缩量参照",
+                    ConditionParameterType.ENUM,
+                    "取首板日与断板日中较大的成交量作为参照",
+                    "MAX_OF_LIMIT_AND_FAILED_DAY",
+                    enum_values=("MAX_OF_LIMIT_AND_FAILED_DAY",),
+                ),
+                _param(
+                    "maximum_volume_ratio",
+                    "最大成交量比例",
+                    ConditionParameterType.PERCENTAGE,
+                    "观察期最后一个交易日成交量不得超过参照成交量的该比例",
+                    "0.50",
+                    minimum=Decimal("0"),
+                    maximum=Decimal("1"),
+                ),
+            ),
+            required_fields=(
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "price_limit",
+                "trading_calendar",
+            ),
+            required_history_bars=6,
+            supported_timeframes=(MarketTimeframe.DAY_1,),
+            price_adjustment_mode=PriceAdjustmentMode.RAW,
+            evaluator_key="first_board_failed_next_day_pullback_v1",
+            explanation_template=(
+                "{first_board_date}首板，次日断板，随后观察期不破首板低点、不越参照高点，"
+                "期末成交量比例为{volume_ratio}"
+            ),
+            version="1.0.0",
+            aliases=(
+                "首板",
+                "次日断板",
+                "断板回调",
+                "首板断板缩量",
+                "三日不破",
+                "四日不破",
+                "缩量回调",
+            ),
         ),
         ConditionDefinition(
             condition_key="BOTTOM_VOLUME_EXPANSION",
@@ -2013,6 +2608,7 @@ def register_builtin_conditions(catalog: ConditionCatalog) -> None:
                 "成交量为此前20日均量的{volume_multiple}倍且当日收阳"
             ),
             version="1.0.0",
+            deprecated=True,
         ),
     )
     for definition in definitions:
@@ -2029,25 +2625,66 @@ def screening_templates() -> tuple[ScreeningSpec, ...]:
     today = date.today()
     return (
         ScreeningSpec(
-            schema_version=1,
+            schema_version=2,
             name="涨停回踩",
             origin="BUILTIN_TEMPLATE",
             universe_spec=UniverseSpec(),
             as_of_date=today,
             timeframe=MarketTimeframe.DAY_1,
-            conditions=(ScreeningCondition(condition_key="LIMIT_UP_PULLBACK"),),
+            root_group=ScreeningConditionGroup(
+                operator=ConditionGroupOperator.AND,
+                children=(
+                    ScreeningCondition(
+                        condition_key="RECENT_LIMIT_UP_EVENT",
+                        parameters={
+                            "lookback_days": 20,
+                            "minimum_occurrences": 1,
+                            "event_selection": "LATEST_VALID",
+                            "require_reliable_limit_price": True,
+                            "include_as_of_date": False,
+                        },
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_ANCHOR_DISTANCE",
+                        parameters={"maximum_distance_pct": "0.03"},
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_ANCHOR_FLOOR",
+                        parameters={"minimum_price_ratio_to_anchor": "0.98"},
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_VOLUME_RATIO",
+                        parameters={"maximum_volume_ratio": "0.50"},
+                    ),
+                ),
+            ),
             ranking_rules=(RankingRule(field="score", direction=RankingDirection.DESC),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
         ScreeningSpec(
-            schema_version=1,
+            schema_version=2,
             name="底部放倍量",
             origin="BUILTIN_TEMPLATE",
             universe_spec=UniverseSpec(),
             as_of_date=today,
             timeframe=MarketTimeframe.DAY_1,
-            conditions=(ScreeningCondition(condition_key="BOTTOM_VOLUME_EXPANSION"),),
+            root_group=ScreeningConditionGroup(
+                operator=ConditionGroupOperator.AND,
+                children=(
+                    ScreeningCondition(
+                        condition_key="RANGE_POSITION",
+                        parameters={"window": 60, "maximum_position": "0.20"},
+                    ),
+                    ScreeningCondition(
+                        condition_key="VOLUME_RATIO",
+                        parameters={"window": 20, "minimum_ratio": "2"},
+                    ),
+                    ScreeningCondition(condition_key="BULLISH_CANDLE"),
+                ),
+            ),
             ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
         ScreeningSpec(
@@ -2064,30 +2701,45 @@ def screening_templates() -> tuple[ScreeningSpec, ...]:
                 ),
             ),
             ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
         ScreeningSpec(
-            schema_version=1,
+            schema_version=2,
             name="涨停后回落",
             origin="BUILTIN_TEMPLATE",
             universe_spec=UniverseSpec(),
             as_of_date=today,
             timeframe=MarketTimeframe.DAY_1,
-            conditions=(
-                ScreeningCondition(
-                    condition_key="LIMIT_UP_PULLBACK",
-                    parameters={
-                        "lookback_days": 20,
-                        "event_selection": "LATEST_VALID",
-                        "anchor_price": "PRE_LIMIT_PREVIOUS_CLOSE",
-                        "maximum_distance_pct": "0.08",
-                        "minimum_price_ratio_to_anchor": "0.95",
-                        "volume_reference": "LIMIT_UP_DAY_VOLUME",
-                        "maximum_volume_ratio": "0.80",
-                    },
+            root_group=ScreeningConditionGroup(
+                operator=ConditionGroupOperator.AND,
+                children=(
+                    ScreeningCondition(
+                        condition_key="RECENT_LIMIT_UP_EVENT",
+                        parameters={
+                            "lookback_days": 20,
+                            "minimum_occurrences": 1,
+                            "event_selection": "LATEST_VALID",
+                            "require_reliable_limit_price": True,
+                            "include_as_of_date": False,
+                        },
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_ANCHOR_DISTANCE",
+                        parameters={"maximum_distance_pct": "0.08"},
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_ANCHOR_FLOOR",
+                        parameters={"minimum_price_ratio_to_anchor": "0.95"},
+                    ),
+                    ScreeningCondition(
+                        condition_key="LIMIT_UP_VOLUME_RATIO",
+                        parameters={"maximum_volume_ratio": "0.80"},
+                    ),
                 ),
             ),
             ranking_rules=(RankingRule(field="distance_to_anchor"),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
         ScreeningSpec(
@@ -2105,6 +2757,7 @@ def screening_templates() -> tuple[ScreeningSpec, ...]:
                 ),
             ),
             ranking_rules=(RankingRule(field="volume_multiple", direction=RankingDirection.DESC),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
         ScreeningSpec(
@@ -2121,6 +2774,7 @@ def screening_templates() -> tuple[ScreeningSpec, ...]:
                 ),
             ),
             ranking_rules=(RankingRule(field="score", direction=RankingDirection.DESC),),
+            top_n=50,
             price_adjustment_mode=PriceAdjustmentMode.RAW,
         ),
     )

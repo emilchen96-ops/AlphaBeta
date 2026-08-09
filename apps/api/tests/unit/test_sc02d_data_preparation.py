@@ -156,6 +156,23 @@ def test_02_bottom_volume_plan_contains_only_needed_features() -> None:
     assert "涨停事件" not in plan.required_features
 
 
+def test_first_board_failed_next_day_plan_contains_exact_pattern_requirements() -> None:
+    catalog = builtin_condition_catalog()
+    plan = ScreeningDataRequirementPlanner(warmup_buffer=10).plan(
+        spec("FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK").validate(catalog),
+        universe_count=5_538,
+        open_sessions=sessions(),
+    )
+    assert plan.required_open_sessions == 16
+    assert "涨跌停价格语义" in plan.required_reference_data
+    assert {
+        "首板事件",
+        "次日断板事件",
+        "三日共同交易日窗口",
+        "第三日缩量比例",
+    }.issubset(plan.required_features)
+
+
 def test_03_plan_uses_open_sessions_plus_configured_warmup() -> None:
     catalog = builtin_condition_catalog()
     validated = spec("BOTTOM_VOLUME_EXPANSION").validate(catalog)

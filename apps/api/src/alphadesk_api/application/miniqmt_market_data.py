@@ -49,12 +49,297 @@ from alphadesk_domain.realtime_market import MarketQuote
 AGENT_STATUS_KEY = "alphadesk:miniqmt:v1:agent:status"
 TEMPORARY_SUBSCRIPTIONS_KEY = "alphadesk:miniqmt:v1:temporary"
 HISTORY_QUEUE_KEY = "alphadesk:miniqmt:v1:history:requests"
+HISTORY_DEAD_LETTER_KEY = "alphadesk:miniqmt:v1:history:dead-letter"
+HISTORY_DEDUPE_PREFIX = "alphadesk:miniqmt:v1:history:dedupe"
 EVENT_CHANNEL = "alphadesk:market:v1:events"
 
 
 def _version(values: list[dict[str, object]]) -> str:
     canonical = json.dumps(values, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _history_request_fingerprint(payload: dict[str, object]) -> str:
+    segments = payload.get("segments")
+    if isinstance(segments, list) and segments:
+        scope: object = segments
+    else:
+        instrument_ids = payload.get("instrument_ids")
+        if not isinstance(instrument_ids, (list, tuple)):
+            instrument_ids = []
+        scope = {
+            "instrument_ids": sorted(str(item) for item in instrument_ids),
+            "start_at": payload.get("start_at"),
+            "end_at": payload.get("end_at"),
+        }
+    canonical = json.dumps(
+        {"timeframe": payload.get("timeframe"), "scope": scope},
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+async def enqueue_history_request(
+    client: Redis,
+    payload: dict[str, object],
+    *,
+    dedupe_ttl_seconds: int | None = None,
+) -> int:
+    """Queue one history request while suppressing identical active retries.
+
+    The dedupe marker normally lives until the request is acknowledged.  A short
+    time-based marker allowed a slow queue to accept the same request again every
+    five minutes, which was the main source of the historical backlog.
+    """
+
+    fingerprint = _history_request_fingerprint(payload)
+    key = f"{HISTORY_DEDUPE_PREFIX}:{fingerprint}"
+    marker = str(payload.get("request_id", fingerprint))
+    if dedupe_ttl_seconds is None:
+        inserted = await cast(Awaitable[Any], client.set(key, marker, nx=True))
+    else:
+        inserted = await cast(
+            Awaitable[Any], client.set(key, marker, ex=dedupe_ttl_seconds, nx=True)
+        )
+    if not inserted:
+        queued = await cast(Awaitable[Any], client.llen(HISTORY_QUEUE_KEY))
+        return int(queued)
+    queued_payload = {
+        **payload,
+        "_queue_fingerprint": fingerprint,
+        "_queue_attempts": int(str(payload.get("_queue_attempts", 0) or 0)),
+        "_queue_enqueued_at": str(
+            payload.get("_queue_enqueued_at") or datetime.now(UTC).isoformat()
+        ),
+    }
+    try:
+        return int(
+            await cast(
+                Awaitable[Any],
+                client.rpush(
+                    HISTORY_QUEUE_KEY,
+                    json.dumps(queued_payload, ensure_ascii=True, separators=(",", ":")),
+                ),
+            )
+        )
+    except Exception:
+        await cast(Awaitable[Any], client.delete(key))
+        raise
+
+
+def _decode_history_request(raw: object) -> dict[str, object] | None:
+    try:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        payload = json.loads(text)
+    except (UnicodeDecodeError, TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _history_request_owner(payload: dict[str, object]) -> str:
+    """Return the user-visible workflow that owns one queued request.
+
+    A single full-market scan or batch backtest can enqueue hundreds of history
+    requests.  Scheduling by workflow prevents one large FIFO producer from
+    keeping every newer workflow at zero progress until its entire backlog has
+    drained.
+    """
+
+    explicit_owner = payload.get("_queue_owner")
+    if explicit_owner:
+        return str(explicit_owner)
+    for key in ("scan_run_id", "batch_id", "run_id"):
+        value = payload.get(key)
+        if value:
+            return f"{key}:{value}"
+    # Requests written before workflow ownership was persisted only contain the
+    # child BacktestRun id.  A batch creates one child run per stock, so treating
+    # that id as the owner defeats fair scheduling.  Group legacy backtest work
+    # by origin; newly queued work carries the batch correlation id above.
+    origin = str(payload.get("origin", "UNKNOWN"))
+    if origin.startswith("BT02_A_"):
+        return f"legacy-backtest:{origin}"
+    backtest_run_id = payload.get("backtest_run_id")
+    if backtest_run_id:
+        return f"backtest_run_id:{backtest_run_id}"
+    return f"origin:{origin}"
+
+
+async def _rotate_history_queue_to_next_owner(
+    client: Redis,
+    previous_owner: str,
+) -> None:
+    """Give a different waiting workflow the next turn when one exists."""
+
+    queue_length = int(await cast(Awaitable[Any], client.llen(HISTORY_QUEUE_KEY)))
+    for _ in range(queue_length):
+        raw = await cast(Awaitable[Any], client.lindex(HISTORY_QUEUE_KEY, 0))
+        if raw is None:
+            return
+        payload = _decode_history_request(raw)
+        if payload is None or _history_request_owner(payload) != previous_owner:
+            return
+        moved = await cast(
+            Awaitable[Any],
+            client.lmove(
+                HISTORY_QUEUE_KEY,
+                HISTORY_QUEUE_KEY,
+                "LEFT",
+                "RIGHT",
+            ),
+        )
+        if moved is None:
+            return
+
+
+async def peek_history_request(client: Redis) -> dict[str, object] | None:
+    """Return the queue head without removing it.
+
+    Keeping the request in Redis until an explicit acknowledgement gives the
+    single Windows agent at-least-once processing after a crash or restart.
+    """
+
+    raw = await cast(Awaitable[Any], client.lindex(HISTORY_QUEUE_KEY, 0))
+    return None if raw is None else _decode_history_request(raw)
+
+
+async def complete_history_request(client: Redis, request_id: str) -> bool:
+    """Acknowledge the queue head and release its active dedupe marker."""
+
+    raw = await cast(Awaitable[Any], client.lindex(HISTORY_QUEUE_KEY, 0))
+    payload = None if raw is None else _decode_history_request(raw)
+    if payload is None or str(payload.get("request_id")) != request_id:
+        return False
+    removed = await cast(Awaitable[Any], client.lpop(HISTORY_QUEUE_KEY))
+    if removed is None:
+        return False
+    fingerprint = str(payload.get("_queue_fingerprint") or _history_request_fingerprint(payload))
+    await cast(Awaitable[Any], client.delete(f"{HISTORY_DEDUPE_PREFIX}:{fingerprint}"))
+    await _rotate_history_queue_to_next_owner(client, _history_request_owner(payload))
+    return True
+
+
+async def fail_history_request(
+    client: Redis,
+    request_id: str,
+    *,
+    error_code: str,
+    error_message: str,
+    maximum_attempts: int = 3,
+) -> dict[str, object]:
+    """Rotate a failed head request or quarantine a repeatedly failing request."""
+
+    raw = await cast(Awaitable[Any], client.lindex(HISTORY_QUEUE_KEY, 0))
+    payload = None if raw is None else _decode_history_request(raw)
+    if payload is None or str(payload.get("request_id")) != request_id:
+        return {"accepted": False, "status": "NOT_FOUND"}
+    removed = await cast(Awaitable[Any], client.lpop(HISTORY_QUEUE_KEY))
+    if removed is None:
+        return {"accepted": False, "status": "NOT_FOUND"}
+    disconnected = error_message.startswith("MINIQMT_NOT_CONNECTED")
+    attempts = int(str(payload.get("_queue_attempts", 0) or 0))
+    if not disconnected:
+        attempts += 1
+    failed_payload = {
+        **payload,
+        "_queue_attempts": attempts,
+        "_queue_last_error_code": error_code[:64],
+        "_queue_last_error_message": error_message[:512],
+        "_queue_last_failed_at": datetime.now(UTC).isoformat(),
+    }
+    serialized = json.dumps(failed_payload, ensure_ascii=True, separators=(",", ":"))
+    if disconnected or attempts < maximum_attempts:
+        await cast(Awaitable[Any], client.rpush(HISTORY_QUEUE_KEY, serialized))
+        await _rotate_history_queue_to_next_owner(client, _history_request_owner(payload))
+        return {
+            "accepted": True,
+            "status": "REQUEUED_AFTER_RECONNECT" if disconnected else "REQUEUED",
+            "attempts": attempts,
+        }
+    await cast(Awaitable[Any], client.rpush(HISTORY_DEAD_LETTER_KEY, serialized))
+    fingerprint = str(payload.get("_queue_fingerprint") or _history_request_fingerprint(payload))
+    await cast(Awaitable[Any], client.delete(f"{HISTORY_DEDUPE_PREFIX}:{fingerprint}"))
+    return {"accepted": True, "status": "QUARANTINED", "attempts": attempts}
+
+
+async def compact_history_queue(client: Redis) -> dict[str, int]:
+    """Remove malformed and duplicate backlog entries, preferring newest work.
+
+    This maintenance operation is deliberately idempotent and is run when the
+    only supported Windows agent connects.  The newest duplicate is retained so
+    the currently visible scan/backtest owns progress reporting while all equal
+    requests still share the same idempotent market-data result.
+    """
+
+    recovered = 0
+    dead_items = list(
+        await cast(Awaitable[Any], client.lrange(HISTORY_DEAD_LETTER_KEY, 0, -1))
+    )
+    for raw in dead_items:
+        payload = _decode_history_request(raw)
+        if payload is None or not str(payload.get("_queue_last_error_message", "")).startswith(
+            "MINIQMT_NOT_CONNECTED"
+        ):
+            continue
+        restored_payload = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "_queue_last_error_code",
+                "_queue_last_error_message",
+                "_queue_last_failed_at",
+            }
+        }
+        restored_payload["_queue_attempts"] = 0
+        await cast(
+            Awaitable[Any],
+            client.rpush(
+                HISTORY_QUEUE_KEY,
+                json.dumps(restored_payload, ensure_ascii=True, separators=(",", ":")),
+            ),
+        )
+        await cast(Awaitable[Any], client.lrem(HISTORY_DEAD_LETTER_KEY, 1, raw))
+        recovered += 1
+
+    raw_items = list(await cast(Awaitable[Any], client.lrange(HISTORY_QUEUE_KEY, 0, -1)))
+    retained_reversed: list[tuple[str, dict[str, object]]] = []
+    seen: set[str] = set()
+    malformed = 0
+    for raw in reversed(raw_items):
+        payload = _decode_history_request(raw)
+        if payload is None:
+            malformed += 1
+            await cast(Awaitable[Any], client.rpush(HISTORY_DEAD_LETTER_KEY, raw))
+            await cast(Awaitable[Any], client.lrem(HISTORY_QUEUE_KEY, 1, raw))
+            continue
+        fingerprint = str(
+            payload.get("_queue_fingerprint") or _history_request_fingerprint(payload)
+        )
+        if fingerprint in seen:
+            await cast(Awaitable[Any], client.lrem(HISTORY_QUEUE_KEY, 1, raw))
+            continue
+        seen.add(fingerprint)
+        retained_reversed.append((fingerprint, payload))
+    retained = list(reversed(retained_reversed))
+    for fingerprint, payload in retained:
+        await cast(
+            Awaitable[Any],
+            client.set(
+                f"{HISTORY_DEDUPE_PREFIX}:{fingerprint}",
+                str(payload.get("request_id", fingerprint)),
+            ),
+        )
+    remaining = await cast(Awaitable[Any], client.llen(HISTORY_QUEUE_KEY))
+    return {
+        "before": len(raw_items),
+        "remaining": int(remaining),
+        "duplicates_removed": len(raw_items) - malformed - len(retained),
+        "malformed_removed": malformed,
+        "transient_recovered": recovered,
+    }
 
 
 class MiniQMTInstrumentCatalogService:

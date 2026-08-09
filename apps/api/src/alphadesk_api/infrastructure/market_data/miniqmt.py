@@ -6,8 +6,10 @@ This module deliberately imports only ``xtquant.xtdata``.  It never imports
 
 from __future__ import annotations
 
+import queue
 import re
 import sys
+import threading
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -31,6 +33,11 @@ def _decimal(value: object) -> Decimal | None:
         return None
     parsed = Decimal(str(value))
     return parsed if parsed.is_finite() else None
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    parsed = _decimal(value)
+    return parsed if parsed is not None and parsed > 0 else None
 
 
 def _market_time(value: object) -> datetime:
@@ -87,8 +94,15 @@ class MiniQMTMarketDataProvider:
     market_data_capability = "ENABLED"
     trading_capability = "DISABLED"
 
-    def __init__(self, *, data_path: str, xtquant_path: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        data_path: str,
+        xtquant_path: str | None = None,
+        history_download_timeout_seconds: float = 30.0,
+    ) -> None:
         self.data_path = str(Path(data_path))
+        self.history_download_timeout_seconds = history_download_timeout_seconds
         if xtquant_path:
             normalized = str(Path(xtquant_path))
             if normalized not in sys.path:
@@ -290,21 +304,28 @@ class MiniQMTMarketDataProvider:
         ask_price = raw.get("askPrice") or []
         bid_volume = raw.get("bidVol") or []
         ask_volume = raw.get("askVol") or []
+        last_price = _positive_decimal(raw.get("lastPrice"))
+        if last_price is None:
+            raise ValueError("MINIQMT_QUOTE_LAST_PRICE_NOT_POSITIVE")
         return {
             "market_time": _market_time(raw["time"]),
-            "last_price": _decimal(raw.get("lastPrice")),
-            "open_price": _decimal(raw.get("open")),
-            "high_price": _decimal(raw.get("high")),
-            "low_price": _decimal(raw.get("low")),
-            "previous_close": _decimal(raw.get("lastClose")),
+            "last_price": last_price,
+            "open_price": _positive_decimal(raw.get("open")),
+            "high_price": _positive_decimal(raw.get("high")),
+            "low_price": _positive_decimal(raw.get("low")),
+            "previous_close": _positive_decimal(raw.get("lastClose")),
             "volume": _decimal(raw.get("volume")),
             "amount": _decimal(raw.get("amount")),
-            "bid_price_1": _decimal(bid_price[0]) if bid_price else None,
-            "ask_price_1": _decimal(ask_price[0]) if ask_price else None,
+            "bid_price_1": _positive_decimal(bid_price[0]) if bid_price else None,
+            "ask_price_1": _positive_decimal(ask_price[0]) if ask_price else None,
             "bid_volume_1": _decimal(bid_volume[0]) if bid_volume else None,
             "ask_volume_1": _decimal(ask_volume[0]) if ask_volume else None,
-            "upper_limit_price": _decimal(raw.get("upperLimit") or raw.get("upStopPrice")),
-            "lower_limit_price": _decimal(raw.get("lowerLimit") or raw.get("downStopPrice")),
+            "upper_limit_price": _positive_decimal(
+                raw.get("upperLimit") or raw.get("upStopPrice")
+            ),
+            "lower_limit_price": _positive_decimal(
+                raw.get("lowerLimit") or raw.get("downStopPrice")
+            ),
             "stock_status": raw.get("stockStatus"),
             "source_sequence": str(raw["transactionNum"])
             if raw.get("transactionNum") is not None
@@ -338,8 +359,8 @@ class MiniQMTMarketDataProvider:
         self._require_connection()
         if period not in {"1d", "1m"}:
             raise ValueError("MINIQMT_HISTORY_PERIOD_NOT_ALLOWED")
-        self._xtdata.download_history_data2(
-            list(provider_symbols),
+        self._download_history_with_timeout(
+            provider_symbols,
             period=period,
             start_time=start_time,
             end_time=end_time,
@@ -378,6 +399,56 @@ class MiniQMTMarketDataProvider:
                     }
                 )
         return output
+
+    def _download_history_with_timeout(
+        self,
+        provider_symbols: tuple[str, ...],
+        *,
+        period: str,
+        start_time: str,
+        end_time: str,
+    ) -> None:
+        """Keep one stalled XtQuant download from blocking every workflow."""
+
+        outcome: queue.Queue[BaseException | None] = queue.Queue(maxsize=1)
+
+        def download() -> None:
+            try:
+                self._xtdata.download_history_data2(
+                    list(provider_symbols),
+                    period=period,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            except BaseException as exc:  # propagated in the caller thread
+                outcome.put(exc)
+            else:
+                outcome.put(None)
+
+        worker = threading.Thread(
+            target=download,
+            name=f"miniqmt-history-{period}",
+            daemon=True,
+        )
+        worker.start()
+        try:
+            error = outcome.get(timeout=self.history_download_timeout_seconds)
+        except queue.Empty as exc:
+            try:
+                client = self._xtdata.get_client()
+                if client is not None:
+                    client.stop_supply_history_data2()
+            except Exception:
+                pass
+            worker.join(timeout=5)
+            self._connected = False
+            raise MiniQMTNotAvailableError(
+                "MINIQMT_HISTORY_DOWNLOAD_TIMEOUT: "
+                f"{period} {len(provider_symbols)}只股票超过"
+                f"{self.history_download_timeout_seconds:g}秒"
+            ) from exc
+        if error is not None:
+            raise error
 
     def reject_trading_command(self, _message: object) -> None:
         raise MiniQMTTradingDisabledError()

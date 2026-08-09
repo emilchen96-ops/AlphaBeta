@@ -99,6 +99,14 @@ class ScreeningDataRequirementPlanner:
             "距离锚点",
             "成交量比例",
         ),
+        "FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK": (
+            "首板事件",
+            "次日断板事件",
+            "三日共同交易日窗口",
+            "首板最低价保护",
+            "两日最高价上限",
+            "第三日缩量比例",
+        ),
         "BOTTOM_VOLUME_EXPANSION": (
             "滚动最高价",
             "滚动最低价",
@@ -152,7 +160,11 @@ class ScreeningDataRequirementPlanner:
             | {"previous_close"}
         )
         references = {"交易日历", "上市退市生命周期", "停复牌状态"}
-        if {"LIMIT_UP_PULLBACK", "RECENT_LIMIT_UP_EVENT"} & set(condition_keys):
+        if {
+            "LIMIT_UP_PULLBACK",
+            "RECENT_LIMIT_UP_EVENT",
+            "FIRST_BOARD_FAILED_NEXT_DAY_PULLBACK",
+        } & set(condition_keys):
             references.add("涨跌停价格语义")
         if validated.spec.price_adjustment_mode is PriceAdjustmentMode.QFQ:
             references.add("复权因子")

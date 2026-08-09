@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from collections.abc import Awaitable
 from typing import cast
 
 from alphadesk_api.application.backtest_batches import BacktestBatchProcessor
 from alphadesk_api.application.common import UnitOfWorkFactory
-from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
+from alphadesk_api.application.miniqmt_market_data import enqueue_history_request
 from alphadesk_api.core.config import Settings, get_settings
 from alphadesk_api.core.logging import configure_logging
 from alphadesk_api.infrastructure.database import DatabaseService
@@ -40,15 +38,7 @@ class BacktestBatchWorker:
             lambda: SqlAlchemyUnitOfWork(database.session_factory),
         )
         async def enqueue(payload: dict[str, object]) -> int:
-            return int(
-                await cast(
-                    Awaitable[int],
-                    self._redis.client.rpush(
-                        HISTORY_QUEUE_KEY,
-                        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                    ),
-                )
-            )
+            return await enqueue_history_request(self._redis.client, payload)
 
         self._processor = BacktestBatchProcessor(
             factory,

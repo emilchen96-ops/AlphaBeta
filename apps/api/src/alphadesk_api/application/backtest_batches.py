@@ -15,7 +15,12 @@ from statistics import mean, median
 from typing import Any
 from uuid import UUID, uuid4
 
-from alphadesk_api.application.backtests import BackfillEnqueuer
+from alphadesk_api.application.backtests import (
+    BackfillEnqueuer,
+    BacktestQueryService,
+    BacktestService,
+    CreateBacktestRequest,
+)
 from alphadesk_api.application.common import ApplicationError, UnitOfWorkFactory
 from alphadesk_api.application.research_backtests import (
     QuickBacktestRequest,
@@ -26,19 +31,30 @@ from alphadesk_api.core.config import Settings
 from alphadesk_domain.backtest import BacktestExecutionPriceMode
 from alphadesk_domain.backtest_batches import (
     BacktestBatch,
+    BacktestBatchExecutionMode,
     BacktestBatchItem,
     BacktestBatchItemStatus,
     BacktestBatchResultRow,
     BacktestBatchScope,
 )
+from alphadesk_domain.broker import AshareSimpleFeeModel, FixedBasisPointsSlippageModel
 from alphadesk_domain.entities import Instrument
-from alphadesk_domain.enums import MarketTimeframe, TimeInForce
+from alphadesk_domain.enums import (
+    AdjustmentType,
+    MarketDataQualityStatus,
+    MarketTimeframe,
+    OrderSide,
+    OrderType,
+    RiskDecisionType,
+    TimeInForce,
+)
 from alphadesk_domain.market_reference import PriceAdjustmentMode
 from alphadesk_domain.scanners import is_st_instrument
 from alphadesk_domain.screening import UniverseSpec
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_spec import (
     StrategySpec,
+    StrategySpecCompiler,
     strategy_spec_from_dict,
     strategy_spec_to_dict,
 )
@@ -48,6 +64,8 @@ from alphadesk_domain.values import utc_now
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CreateBacktestBatchRequest:
     scope: BacktestBatchScope
+    execution_mode: BacktestBatchExecutionMode = BacktestBatchExecutionMode.INDEPENDENT
+    instrument_ids: tuple[UUID, ...] = ()
     start_at: datetime
     end_at: datetime
     initial_cash: Decimal
@@ -58,6 +76,7 @@ class CreateBacktestBatchRequest:
     exclude_bse: bool = False
     exclude_star_market: bool = False
     exclude_chinext: bool = False
+    minimum_listing_trading_days: int | None = None
     commission_rate: Decimal = Decimal("0.0003")
     minimum_commission: Decimal = Decimal("5")
     stamp_duty_rate: Decimal = Decimal("0.0005")
@@ -69,6 +88,12 @@ class CreateBacktestBatchRequest:
     auto_prepare_minute_data: bool = True
     optimistic_fill_assumption: bool = False
     position_size_ratio: Decimal | None = Decimal("1")
+    maximum_holdings: int = 5
+    maximum_total_exposure: Decimal = Decimal("1")
+    maximum_instrument_weight: Decimal = Decimal("0.2")
+    allow_position_addition: bool = False
+    entry_ranking: str = "SIGNAL_STRENGTH_VOLUME_SYMBOL"
+    benchmark_symbol: str | None = "000300.SH"
     maximum_entry_gap_ratio: Decimal | None = Decimal("0.05")
     time_in_force: TimeInForce = TimeInForce.DAY
     idempotency_key: str = ""
@@ -90,6 +115,8 @@ def _batch_response(batch: BacktestBatch) -> dict[str, Any]:
         "id": batch.id,
         "name": batch.name,
         "scope": batch.scope.value,
+        "execution_mode": batch.execution_mode.value,
+        "instrument_count": int(batch.configuration.get("instrument_count", batch.total_count)),
         "watchlist_id": batch.watchlist_id,
         "status": batch.status.value,
         "total_count": batch.total_count,
@@ -148,8 +175,18 @@ class BacktestBatchService:
                 "BACKTEST_BATCH_TOO_LARGE",
                 f"批量回测最多支持 {self._settings.backtest_batch_max_instruments} 只股票",
             )
+        if request.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO:
+            if request.position_size_ratio is None:
+                raise ApplicationError("BACKTEST_BATCH_INVALID", "共享资金组合必须设置单次目标仓位")
+            if not Decimal("0") < request.position_size_ratio <= Decimal("1"):
+                raise ApplicationError(
+                    "BACKTEST_BATCH_INVALID", "单次目标仓位必须在 0% 到 100% 之间"
+                )
+            if request.maximum_holdings < 1:
+                raise ApplicationError("BACKTEST_BATCH_INVALID", "最大同时持股数必须大于零")
         configuration = {
-            "schema_version": 1,
+            "schema_version": 2,
+            "execution_mode": request.execution_mode.value,
             "spec": strategy_spec_to_dict(spec),
             "user_strategy_id": (None if user_strategy_id is None else str(user_strategy_id)),
             "user_strategy_version_id": (None if version_id is None else str(version_id)),
@@ -175,6 +212,12 @@ class BacktestBatchService:
                 if request.position_size_ratio is None
                 else format(request.position_size_ratio, "f")
             ),
+            "maximum_holdings": request.maximum_holdings,
+            "maximum_total_exposure": format(request.maximum_total_exposure, "f"),
+            "maximum_instrument_weight": format(request.maximum_instrument_weight, "f"),
+            "allow_position_addition": request.allow_position_addition,
+            "entry_ranking": request.entry_ranking,
+            "benchmark_symbol": request.benchmark_symbol,
             "maximum_entry_gap_ratio": (
                 None
                 if request.maximum_entry_gap_ratio is None
@@ -187,8 +230,10 @@ class BacktestBatchService:
                 "exclude_bse": request.exclude_bse,
                 "exclude_star_market": request.exclude_star_market,
                 "exclude_chinext": request.exclude_chinext,
+                "minimum_listing_trading_days": request.minimum_listing_trading_days,
             },
             "instrument_ids": [str(item.id) for item in instruments],
+            "instrument_count": len(instruments),
         }
         fingerprint = _fingerprint(
             {
@@ -213,18 +258,28 @@ class BacktestBatchService:
                 idempotency_key=request.idempotency_key,
                 request_fingerprint=fingerprint,
                 scope=request.scope,
-                name=(
-                    "自选组合独立回测"
-                    if request.scope is BacktestBatchScope.WATCHLIST
-                    else "全A股批量独立回测"
-                ),
+                name=self._batch_name(request),
                 configuration=configuration,
                 watchlist_id=request.watchlist_id,
-                total_count=len(instruments),
-                pending_count=len(instruments),
+                execution_mode=request.execution_mode,
+                total_count=(
+                    1
+                    if request.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO
+                    else len(instruments)
+                ),
+                pending_count=(
+                    1
+                    if request.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO
+                    else len(instruments)
+                ),
                 correlation_id=request.correlation_id or uuid4(),
             )
             await uow.backtest_batches.add(batch)
+            item_instruments = (
+                instruments[:1]
+                if request.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO
+                else instruments
+            )
             await uow.backtest_batches.add_items(
                 [
                     BacktestBatchItem(
@@ -232,19 +287,28 @@ class BacktestBatchService:
                         instrument_id=instrument.id,
                         ordinal=ordinal,
                     )
-                    for ordinal, instrument in enumerate(instruments)
+                    for ordinal, instrument in enumerate(item_instruments)
                 ]
             )
             await uow.commit()
         return _batch_response(batch)
 
+    @staticmethod
+    def _batch_name(request: CreateBacktestBatchRequest) -> str:
+        scope_name = {
+            BacktestBatchScope.MANUAL: "手选股票",
+            BacktestBatchScope.WATCHLIST: "自选组合",
+            BacktestBatchScope.ALL_A_SHARES: "全A股",
+        }[request.scope]
+        if request.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO:
+            return f"{scope_name}共享资金组合回测"
+        return f"{scope_name}逐股独立回测"
+
     async def cancel(self, batch_id: UUID) -> dict[str, Any]:
         async with self._uow_factory() as uow:
             batch = await uow.backtest_batches.cancel(batch_id, occurred_at=utc_now())
             if batch is None:
-                raise ApplicationError(
-                    "BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务"
-                )
+                raise ApplicationError("BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务")
             await uow.commit()
         return _batch_response(batch)
 
@@ -252,21 +316,30 @@ class BacktestBatchService:
         async with self._uow_factory() as uow:
             existing = await uow.backtest_batches.get_by_id(batch_id)
             if existing is None:
-                raise ApplicationError(
-                    "BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务"
-                )
+                raise ApplicationError("BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务")
             if existing.failed_count + existing.cancelled_count == 0:
                 raise ApplicationError(
                     "BACKTEST_BATCH_NOT_RETRYABLE", "当前任务没有失败或已取消的股票"
                 )
-            batch = await uow.backtest_batches.retry_failed(
-                batch_id, occurred_at=utc_now()
-            )
+            batch = await uow.backtest_batches.retry_failed(batch_id, occurred_at=utc_now())
             assert batch is not None
             await uow.commit()
         return _batch_response(batch)
 
     async def _resolve_instruments(self, request: CreateBacktestBatchRequest) -> list[Instrument]:
+        if request.scope is BacktestBatchScope.MANUAL:
+            if not request.instrument_ids:
+                raise ApplicationError("BACKTEST_BATCH_INSTRUMENTS_REQUIRED", "请至少选择一只股票")
+            async with self._uow_factory() as uow:
+                instruments = await uow.instruments.get_many(list(request.instrument_ids))
+            by_id = {item.id: item for item in instruments if item.is_active}
+            resolved = [
+                by_id[instrument_id]
+                for instrument_id in request.instrument_ids
+                if instrument_id in by_id
+                and self._included_by_filters(by_id[instrument_id], request)
+            ]
+            return await self._filter_by_listing_age(resolved, request)
         if request.scope is BacktestBatchScope.WATCHLIST:
             if request.watchlist_id is None:
                 raise ApplicationError(
@@ -280,12 +353,13 @@ class BacktestBatchService:
                 items = await uow.watchlists.list_items(request.watchlist_id)
                 instruments = await uow.instruments.get_many([item.instrument_id for item in items])
             by_id = {item.id: item for item in instruments if item.is_active}
-            return [
+            resolved = [
                 by_id[item.instrument_id]
                 for item in items
                 if item.instrument_id in by_id
                 and self._included_by_filters(by_id[item.instrument_id], request)
             ]
+            return await self._filter_by_listing_age(resolved, request)
         as_of_date = (request.end_at - timedelta(microseconds=1)).date()
         resolution = await PointInTimeAshareUniverseService(
             self._uow_factory,
@@ -299,7 +373,31 @@ class BacktestBatchService:
                 exclude_chinext=request.exclude_chinext,
             ),
         )
-        return list(resolution.included)
+        return await self._filter_by_listing_age(list(resolution.included), request)
+
+    async def _filter_by_listing_age(
+        self,
+        instruments: list[Instrument],
+        request: CreateBacktestBatchRequest,
+    ) -> list[Instrument]:
+        minimum_days = request.minimum_listing_trading_days
+        if minimum_days is None:
+            return instruments
+        as_of_date = (request.end_at - timedelta(microseconds=1)).date()
+        async with self._uow_factory() as uow:
+            sessions = await uow.trading_calendar.list(
+                exchange="SHSE",
+                start=as_of_date - timedelta(days=minimum_days * 2 + 60),
+                end=as_of_date,
+                limit=max(minimum_days * 2, 500),
+            )
+        open_sessions = sorted(item.session_date for item in sessions if item.is_open)
+        return [
+            instrument
+            for instrument in instruments
+            if instrument.listed_at is None
+            or sum(session >= instrument.listed_at for session in open_sessions) >= minimum_days
+        ]
 
     @staticmethod
     def _included_by_filters(
@@ -324,6 +422,8 @@ class BacktestBatchProcessor:
         enqueue_backfill: BackfillEnqueuer | None = None,
     ) -> None:
         self._uow_factory = uow_factory
+        self._registry = registry
+        self._enqueue_backfill = enqueue_backfill
         self._quick = QuickBacktestService(
             uow_factory,
             registry,
@@ -344,44 +444,47 @@ class BacktestBatchProcessor:
             await uow.commit()
         payload = batch.configuration
         try:
-            result = await self._quick.run(
-                QuickBacktestRequest(
-                    instrument_id=item.instrument_id,
-                    start_at=_parse_datetime(payload["start_at"]),
-                    end_at=_parse_datetime(payload["end_at"]),
-                    initial_cash=Decimal(str(payload["initial_cash"])),
-                    spec=strategy_spec_from_dict(payload["spec"]),
-                    commission_rate=Decimal(str(payload["commission_rate"])),
-                    minimum_commission=Decimal(str(payload["minimum_commission"])),
-                    stamp_duty_rate=Decimal(str(payload["stamp_duty_rate"])),
-                    transfer_fee_rate=Decimal(str(payload["transfer_fee_rate"])),
-                    slippage_basis_points=Decimal(str(payload["slippage_basis_points"])),
-                    maximum_volume_participation=_optional_decimal(
-                        payload.get("maximum_volume_participation")
-                    ),
-                    execution_price_mode=BacktestExecutionPriceMode(
-                        str(payload["execution_price_mode"])
-                    ),
-                    signal_timeframe=MarketTimeframe(
-                        str(payload.get("signal_timeframe", MarketTimeframe.MINUTE_1.value))
-                    ),
-                    auto_prepare_minute_data=bool(
-                        payload.get("auto_prepare_minute_data", True)
-                    ),
-                    optimistic_fill_assumption=bool(
-                        payload.get("optimistic_fill_assumption", False)
-                    ),
-                    position_size_ratio=_optional_decimal(payload.get("position_size_ratio")),
-                    maximum_entry_gap_ratio=_optional_decimal(
-                        payload.get("maximum_entry_gap_ratio")
-                    ),
-                    time_in_force=TimeInForce(str(payload["time_in_force"])),
-                    idempotency_key=(
-                        f"batch:{batch.id}:{item.instrument_id}:attempt:{item.attempt_count}"
-                    ),
-                    correlation_id=batch.correlation_id,
+            if batch.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO:
+                result = await self._run_shared_portfolio(batch, item)
+            else:
+                result = await self._quick.run(
+                    QuickBacktestRequest(
+                        instrument_id=item.instrument_id,
+                        start_at=_parse_datetime(payload["start_at"]),
+                        end_at=_parse_datetime(payload["end_at"]),
+                        initial_cash=Decimal(str(payload["initial_cash"])),
+                        spec=strategy_spec_from_dict(payload["spec"]),
+                        commission_rate=Decimal(str(payload["commission_rate"])),
+                        minimum_commission=Decimal(str(payload["minimum_commission"])),
+                        stamp_duty_rate=Decimal(str(payload["stamp_duty_rate"])),
+                        transfer_fee_rate=Decimal(str(payload["transfer_fee_rate"])),
+                        slippage_basis_points=Decimal(str(payload["slippage_basis_points"])),
+                        maximum_volume_participation=_optional_decimal(
+                            payload.get("maximum_volume_participation")
+                        ),
+                        execution_price_mode=BacktestExecutionPriceMode(
+                            str(payload["execution_price_mode"])
+                        ),
+                        signal_timeframe=MarketTimeframe(
+                            str(payload.get("signal_timeframe", MarketTimeframe.MINUTE_1.value))
+                        ),
+                        auto_prepare_minute_data=bool(
+                            payload.get("auto_prepare_minute_data", True)
+                        ),
+                        optimistic_fill_assumption=bool(
+                            payload.get("optimistic_fill_assumption", False)
+                        ),
+                        position_size_ratio=_optional_decimal(payload.get("position_size_ratio")),
+                        maximum_entry_gap_ratio=_optional_decimal(
+                            payload.get("maximum_entry_gap_ratio")
+                        ),
+                        time_in_force=TimeInForce(str(payload["time_in_force"])),
+                        idempotency_key=(
+                            f"batch:{batch.id}:{item.instrument_id}:attempt:{item.attempt_count}"
+                        ),
+                        correlation_id=batch.correlation_id,
+                    )
                 )
-            )
             item.backtest_run_id = UUID(str(result["id"]))
             result_status = str(result.get("status", ""))
             error_code = str(result.get("error_code") or "")
@@ -406,7 +509,7 @@ class BacktestBatchProcessor:
             elif result_status == "FAILED":
                 item.status = BacktestBatchItemStatus.FAILED
                 item.error_code = error_code or "BACKTEST_BATCH_ITEM_FAILED"
-                item.error_message = error_message[:512] or "单股回测执行失败"
+                item.error_message = error_message[:512] or "回测执行失败"
                 item.completed_at = utc_now()
                 item.updated_at = item.completed_at
             else:
@@ -431,6 +534,94 @@ class BacktestBatchProcessor:
             await uow.backtest_batches.finish_item(item)
             await uow.commit()
         return batch.id
+
+    async def _run_shared_portfolio(
+        self,
+        batch: BacktestBatch,
+        item: BacktestBatchItem,
+    ) -> dict[str, Any]:
+        payload = batch.configuration
+        spec = strategy_spec_from_dict(payload["spec"])
+        strategy_key = StrategySpecCompiler().register(self._registry, spec)
+        execution_price_mode = BacktestExecutionPriceMode(str(payload["execution_price_mode"]))
+        result = await BacktestService(
+            self._uow_factory,
+            self._registry,
+            self._settings,
+            self._enqueue_backfill,
+        ).run(
+            CreateBacktestRequest(
+                strategy_key=strategy_key,
+                parameters={},
+                instrument_ids=tuple(
+                    UUID(str(value)) for value in payload.get("instrument_ids", [])
+                ),
+                timeframe=MarketTimeframe.DAY_1,
+                start_at=_parse_datetime(payload["start_at"]),
+                end_at=_parse_datetime(payload["end_at"]),
+                initial_cash=Decimal(str(payload["initial_cash"])),
+                order_type=(
+                    OrderType.LIMIT
+                    if execution_price_mode is BacktestExecutionPriceMode.SIGNAL_CLOSE_LIMIT
+                    else OrderType.MARKET
+                ),
+                time_in_force=TimeInForce(str(payload["time_in_force"])),
+                execution_price_mode=execution_price_mode,
+                signal_timeframe=MarketTimeframe(
+                    str(payload.get("signal_timeframe", MarketTimeframe.MINUTE_1.value))
+                ),
+                auto_prepare_minute_data=bool(payload.get("auto_prepare_minute_data", True)),
+                optimistic_fill_assumption=bool(payload.get("optimistic_fill_assumption", False)),
+                position_size_ratio=_optional_decimal(payload.get("position_size_ratio")),
+                maximum_entry_gap_ratio=_optional_decimal(payload.get("maximum_entry_gap_ratio")),
+                fee_configuration=AshareSimpleFeeModel(
+                    commission_rate=Decimal(str(payload["commission_rate"])),
+                    minimum_commission=Decimal(str(payload["minimum_commission"])),
+                    stamp_duty_rate=Decimal(str(payload["stamp_duty_rate"])),
+                    transfer_fee_rate=Decimal(str(payload["transfer_fee_rate"])),
+                ),
+                slippage_configuration=FixedBasisPointsSlippageModel(
+                    basis_points=Decimal(str(payload["slippage_basis_points"]))
+                ),
+                maximum_volume_participation=_optional_decimal(
+                    payload.get("maximum_volume_participation")
+                ),
+                benchmark_symbol=(
+                    None
+                    if payload.get("benchmark_symbol") is None
+                    else str(payload["benchmark_symbol"])
+                ),
+                data_source_code=self._settings.authoritative_market_source,
+                idempotency_key=(f"batch-portfolio:{batch.id}:attempt:{item.attempt_count}"),
+                correlation_id=batch.correlation_id,
+                strategy_price_adjustment_mode=PriceAdjustmentMode.RAW,
+                shared_portfolio=True,
+                maximum_holdings=int(payload.get("maximum_holdings", 5)),
+                maximum_total_exposure=_optional_decimal(payload.get("maximum_total_exposure")),
+                maximum_instrument_weight=_optional_decimal(
+                    payload.get("maximum_instrument_weight")
+                ),
+                allow_position_addition=bool(payload.get("allow_position_addition", False)),
+                entry_ranking=str(payload.get("entry_ranking", "SIGNAL_STRENGTH_VOLUME_SYMBOL")),
+            )
+        )
+        await self._quick._save_snapshot(
+            run_id=result.run.id,
+            spec=spec,
+            user_strategy_id=(
+                None
+                if payload.get("user_strategy_id") is None
+                else UUID(str(payload["user_strategy_id"]))
+            ),
+            version_id=(
+                None
+                if payload.get("user_strategy_version_id") is None
+                else UUID(str(payload["user_strategy_version_id"]))
+            ),
+        )
+        detail = await BacktestQueryService(self._uow_factory).detail(result.run.id)
+        detail["replayed"] = result.replayed
+        return detail
 
 
 class BacktestBatchQueryService:
@@ -481,9 +672,15 @@ class BacktestBatchQueryService:
         }
 
     async def summary(self, batch_id: UUID) -> dict[str, Any]:
-        batch = await self.detail(batch_id)
         async with self._uow_factory() as uow:
+            batch_entity = await uow.backtest_batches.get_by_id(batch_id)
             rows = await uow.backtest_batches.list_all_results(batch_id)
+        if batch_entity is None:
+            raise ApplicationError("BACKTEST_BATCH_NOT_FOUND", "没有找到该批量回测任务")
+        if batch_entity.execution_mode is BacktestBatchExecutionMode.SHARED_PORTFOLIO:
+            return await self._shared_portfolio_summary(batch_entity, rows)
+        batch = _batch_response(batch_entity)
+        batch["filters"] = batch_entity.configuration.get("filters", {})
 
         completed = [row for row in rows if row.status is BacktestBatchItemStatus.COMPLETED]
         traded = [row for row in completed if (row.fill_count or 0) > 0]
@@ -503,6 +700,28 @@ class BacktestBatchQueryService:
             if row.status is BacktestBatchItemStatus.FAILED:
                 label = row.error_code or "未分类失败"
                 failures[label] = failures.get(label, 0) + 1
+
+        preparation_required = 0
+        preparation_ready = 0
+        preparing_stocks = 0
+        queued_segments = 0
+        for row in rows:
+            details = row.data_preparation_summary or {}
+            required = int(details.get("required_session_count", 0) or 0)
+            ready = int(details.get("ready_session_count", 0) or 0)
+            preparation_required += required
+            preparation_ready += min(required, ready)
+            queued_segments += int(details.get("request_segment_count", 0) or 0)
+            if row.error_code in {
+                "BACKTEST_DAILY_DATA_PREPARING",
+                "BACKTEST_MINUTE_DATA_PREPARING",
+            }:
+                preparing_stocks += 1
+        preparation_percent = (
+            int(preparation_ready * 100 / preparation_required)
+            if preparation_required > 0
+            else (100 if completed and len(completed) == len(rows) else 0)
+        )
 
         return {
             "batch": batch,
@@ -532,6 +751,10 @@ class BacktestBatchQueryService:
                     "instrument_display": f"{row.name}（{row.symbol}.{row.exchange}）",
                     "total_return": row.total_return,
                     "maximum_drawdown": row.maximum_drawdown,
+                    "fill_count": row.fill_count or 0,
+                    "backtest_run_id": (
+                        None if row.backtest_run_id is None else str(row.backtest_run_id)
+                    ),
                 }
                 for row in completed
                 if row.total_return is not None and row.maximum_drawdown is not None
@@ -542,15 +765,25 @@ class BacktestBatchQueryService:
                 {"code": code, "count": count}
                 for code, count in sorted(failures.items(), key=lambda item: (-item[1], item[0]))
             ],
+            "data_preparation": {
+                "required_sessions": preparation_required,
+                "ready_sessions": preparation_ready,
+                "missing_sessions": max(0, preparation_required - preparation_ready),
+                "progress_percent": preparation_percent,
+                "preparing_stocks": preparing_stocks,
+                "queued_segments": queued_segments,
+            },
             "intraday_execution": {
                 "daily_bars_checked": sum(row.bars_processed or 0 for row in completed),
                 "daily_prefilter_candidates": sum(
                     row.candidate_session_count or 0 for row in completed
                 ),
                 "daily_prefilter_excluded": sum(
-                    int((row.data_preparation_summary or {}).get(
-                        "prefilter_excluded_session_count", 0
-                    ))
+                    int(
+                        (row.data_preparation_summary or {}).get(
+                            "prefilter_excluded_session_count", 0
+                        )
+                    )
                     for row in completed
                 ),
                 "minute_sessions_loaded": sum(
@@ -560,27 +793,366 @@ class BacktestBatchQueryService:
                     row.processed_minute_bar_count or 0 for row in completed
                 ),
                 "signals_generated": sum(row.signals_generated or 0 for row in completed),
-                "stocks_with_signals": sum(
-                    (row.signals_generated or 0) > 0 for row in completed
-                ),
+                "stocks_with_signals": sum((row.signals_generated or 0) > 0 for row in completed),
                 "stocks_with_fills": len(traded),
                 "data_preparation_seconds": sum(
-                    float((row.performance_summary or {}).get(
-                        "data_preparation_seconds", 0
-                    ))
+                    float((row.performance_summary or {}).get("data_preparation_seconds", 0))
                     for row in completed
                 ),
                 "strategy_replay_seconds": sum(
-                    float((row.performance_summary or {}).get(
-                        "strategy_replay_seconds", 0
-                    ))
+                    float((row.performance_summary or {}).get("strategy_replay_seconds", 0))
                     for row in completed
                 ),
             },
         }
 
+    async def preparation(self, batch_id: UUID) -> dict[str, Any]:
+        """Return durable data-preparation and replay counters for polling UIs."""
+
+        detail = await self.detail(batch_id)
+        summary = await self.summary(batch_id)
+        return {
+            "batch_id": batch_id,
+            "status": detail["status"],
+            "progress_percent": detail["progress_percent"],
+            "data_preparation": summary["data_preparation"],
+            "intraday_execution": summary["intraday_execution"],
+        }
+
+    async def portfolio_report(self, batch_id: UUID) -> dict[str, Any]:
+        summary = await self.summary(batch_id)
+        portfolio = summary.get("portfolio")
+        if portfolio is None:
+            batch = summary.get("batch") or await self.detail(batch_id)
+            if batch.get("execution_mode") != BacktestBatchExecutionMode.SHARED_PORTFOLIO.value:
+                raise ApplicationError(
+                    "BACKTEST_BATCH_NOT_SHARED_PORTFOLIO",
+                    "该任务是逐股独立回测，没有共享资金组合报告",
+                )
+            return {
+                "batch": batch,
+                "notice": summary.get("notice"),
+                "portfolio": None,
+            }
+        return {
+            "batch": summary["batch"],
+            "notice": summary["notice"],
+            "portfolio": portfolio,
+        }
+
+    async def portfolio_section(
+        self,
+        batch_id: UUID,
+        section: str,
+    ) -> dict[str, Any]:
+        report = await self.portfolio_report(batch_id)
+        portfolio = report.get("portfolio")
+        if portfolio is None:
+            return {"batch_id": batch_id, "items": [], "ready": False}
+        value = portfolio.get(section, [])
+        return {
+            "batch_id": batch_id,
+            "items": value,
+            "ready": True,
+        }
+
+    async def _shared_portfolio_summary(
+        self,
+        batch: BacktestBatch,
+        rows: list[BacktestBatchResultRow],
+    ) -> dict[str, Any]:
+        batch_payload = _batch_response(batch)
+        batch_payload["filters"] = batch.configuration.get("filters", {})
+        instrument_ids = tuple(
+            UUID(str(value)) for value in batch.configuration.get("instrument_ids", [])
+        )
+        async with self._uow_factory() as uow:
+            instruments = await uow.instruments.get_many(list(instrument_ids))
+        instruments_by_id = {item.id: item for item in instruments}
+        display_by_id = {
+            item.id: f"{item.name}（{item.symbol}.{item.exchange}）" for item in instruments
+        }
+        row = rows[0] if rows else None
+        run_id = None if row is None else row.backtest_run_id
+        if run_id is None:
+            return {
+                "batch": batch_payload,
+                "notice": "共享资金组合任务尚未生成组合回测运行。",
+                "portfolio": None,
+                "data_preparation": _batch_data_preparation(rows),
+                "intraday_execution": _batch_intraday_execution(rows),
+            }
+
+        query = BacktestQueryService(self._uow_factory)
+        detail = await query.detail(run_id)
+        points = await query.equity_curve(run_id)
+        trades = await query.trades(run_id)
+        signals = await query.signals(run_id)
+        orders = await query.orders(run_id)
+        fills = await query.fills(run_id)
+        risk_decisions = await query.risk_decisions(run_id)
+        timeline = await query.timeline(run_id)
+        benchmark = await self._benchmark_curve(batch.configuration)
+        account_id = detail.get("account_id")
+        async with self._uow_factory() as uow:
+            positions = (
+                []
+                if account_id is None
+                else await uow.positions.list_for_account(UUID(str(account_id)))
+            )
+
+        order_by_id = {item.id: item for item in orders}
+        contributions: dict[UUID, dict[str, Any]] = {}
+        for instrument_id in instrument_ids:
+            instrument = instruments_by_id.get(instrument_id)
+            contribution = _empty_contribution(instrument_id, display_by_id)
+            contribution["symbol"] = None if instrument is None else instrument.symbol
+            contribution["exchange"] = None if instrument is None else instrument.exchange
+            contributions[instrument_id] = contribution
+        for trade in trades:
+            item = contributions.setdefault(
+                trade.instrument_id,
+                _empty_contribution(trade.instrument_id, display_by_id),
+            )
+            item["realized_pnl"] += trade.net_pnl
+            item["fees"] += trade.fees
+            item["trade_count"] += 1
+        for fill in fills:
+            item = contributions.setdefault(
+                fill.instrument_id,
+                _empty_contribution(fill.instrument_id, display_by_id),
+            )
+            order = order_by_id.get(fill.order_id)
+            if order is not None and order.side is OrderSide.BUY:
+                item["buy_fill_count"] += 1
+            elif order is not None and order.side is OrderSide.SELL:
+                item["sell_fill_count"] += 1
+
+        for position in positions:
+            item = contributions.setdefault(
+                position.instrument_id,
+                _empty_contribution(position.instrument_id, display_by_id),
+            )
+            item["current_market_value"] = position.market_value or Decimal("0")
+            item["unrealized_pnl"] = position.unrealized_pnl or Decimal("0")
+        for item in contributions.values():
+            item["total_contribution"] = item["realized_pnl"] + item["unrealized_pnl"]
+
+        rejection_payload = [
+            {
+                **asdict(item),
+                "overall_decision": item.overall_decision.value,
+                "instrument_display": display_by_id.get(
+                    item.instrument_id, str(item.instrument_id)
+                ),
+                "reason_code": (item.warnings[0] if item.warnings else item.source_type),
+                "reason": (
+                    "；".join(item.warnings) if item.warnings else "组合风控规则未允许该订单"
+                ),
+            }
+            for item in risk_decisions
+            if item.overall_decision is not RiskDecisionType.ALLOW
+        ]
+        controlled_rejection_codes = {
+            "BACKTEST_PORTFOLIO_CAPACITY_REJECTED",
+            "BACKTEST_ENTRY_GAP_EXCEEDED",
+            "BACKTEST_NO_NEXT_VALID_MINUTE",
+            "BACKTEST_T1_SELL_NOT_AVAILABLE",
+            "BACKTEST_MINUTE_SESSION_MISSING",
+            "BACKTEST_POSITION_SIZE_NOT_TRADABLE",
+        }
+        for event in timeline:
+            details = dict(event.details)
+            reason_code = str(details.get("code") or "")
+            if reason_code not in controlled_rejection_codes:
+                continue
+            instrument_id_value = details.get("instrument_id")
+            instrument_display = "组合级约束"
+            if instrument_id_value:
+                try:
+                    instrument_id = UUID(str(instrument_id_value))
+                    instrument_display = display_by_id.get(instrument_id, str(instrument_id_value))
+                except ValueError:
+                    instrument_display = str(instrument_id_value)
+            rejection_payload.append(
+                {
+                    "id": event.id,
+                    "created_at": event.occurred_at,
+                    "overall_decision": "REJECT",
+                    "instrument_display": instrument_display,
+                    "reason_code": reason_code,
+                    "reason": str(details.get("reason") or event.summary),
+                    "details": details,
+                }
+            )
+        rejection_payload.sort(key=lambda item: str(item.get("created_at") or ""))
+        derived_summary = _portfolio_derived_summary(
+            detail.get("metrics"), points, trades, benchmark
+        )
+        portfolio_payload = {
+            "run": detail,
+            "configuration": batch.configuration,
+            "metrics": detail.get("metrics"),
+            "equity_curve": [asdict(item) for item in points],
+            "snapshots": [asdict(item) for item in points],
+            "drawdown_landmarks": _drawdown_landmarks(points),
+            "benchmark": benchmark,
+            "summary": derived_summary,
+            "signals": [
+                {
+                    **asdict(item),
+                    "side": item.side.value,
+                    "signal_type": item.signal_type.value,
+                    "status": item.status.value,
+                    "instrument_display": display_by_id.get(
+                        item.instrument_id, str(item.instrument_id)
+                    ),
+                }
+                for item in signals
+            ],
+            "orders": [
+                {
+                    **asdict(item),
+                    "side": item.side.value,
+                    "order_type": item.order_type.value,
+                    "time_in_force": item.time_in_force.value,
+                    "status": item.status.value,
+                    "instrument_display": display_by_id.get(
+                        item.instrument_id, str(item.instrument_id)
+                    ),
+                }
+                for item in orders
+            ],
+            "fills": [
+                {
+                    **asdict(item),
+                    "side": (
+                        None
+                        if order_by_id.get(item.order_id) is None
+                        else order_by_id[item.order_id].side.value
+                    ),
+                    "instrument_display": display_by_id.get(
+                        item.instrument_id, str(item.instrument_id)
+                    ),
+                }
+                for item in fills
+            ],
+            "trades": [
+                {
+                    **asdict(item),
+                    "instrument_display": display_by_id.get(
+                        item.instrument_id, str(item.instrument_id)
+                    ),
+                }
+                for item in trades
+            ],
+            "rejections": rejection_payload,
+            "positions": [
+                {
+                    **asdict(item),
+                    "instrument_display": display_by_id.get(
+                        item.instrument_id, str(item.instrument_id)
+                    ),
+                }
+                for item in positions
+            ],
+            "contributions": sorted(
+                contributions.values(),
+                key=lambda item: (
+                    -item["total_contribution"],
+                    item["instrument_display"],
+                ),
+            ),
+            "timeline": [asdict(item) for item in timeline],
+        }
+        return {
+            "batch": batch_payload,
+            "notice": (
+                "本报告来自一个共享现金、共享持仓和统一时间轴的组合账户；"
+                "收益、回撤、敞口与成交均为组合级真实结果，不是逐股结果的平均值。"
+            ),
+            "portfolio": portfolio_payload,
+            "data_preparation": _batch_data_preparation(rows),
+            "intraday_execution": _batch_intraday_execution(rows),
+        }
+
+    async def _benchmark_curve(self, configuration: dict[str, Any]) -> dict[str, Any]:
+        benchmark_symbol = str(configuration.get("benchmark_symbol") or "").strip()
+        if not benchmark_symbol:
+            return {"symbol": None, "curve": [], "warning": "本次未配置比较基准"}
+        raw_symbol, _, suffix = benchmark_symbol.partition(".")
+        exchange = {"SH": "SSE", "SZ": "SZSE", "BJ": "BSE"}.get(suffix.upper(), suffix.upper())
+        async with self._uow_factory() as uow:
+            instrument = await uow.instruments.get_by_business_key(exchange, raw_symbol)
+            bars = (
+                []
+                if instrument is None
+                else await uow.historical_bars.list_authoritative_bars(
+                    instrument_ids=(instrument.id,),
+                    timeframe=MarketTimeframe.DAY_1,
+                    start_at=_parse_datetime(configuration["start_at"]),
+                    end_at=_parse_datetime(configuration["end_at"]),
+                    source_code=self._settings.authoritative_market_source,
+                    adjustment_type=AdjustmentType.NONE,
+                    accepted_quality_statuses=(MarketDataQualityStatus.NORMAL,),
+                )
+            )
+        ordered = sorted(bars, key=lambda item: item.timestamp)
+        if not ordered:
+            return {
+                "symbol": benchmark_symbol,
+                "curve": [],
+                "warning": "比较基准在所选区间没有可用日线，组合结果不受影响",
+            }
+        initial_close = ordered[0].close
+        return {
+            "symbol": benchmark_symbol,
+            "name": instrument.name if instrument is not None else benchmark_symbol,
+            "curve": [
+                {
+                    "timestamp": item.timestamp,
+                    "cumulative_return": item.close / initial_close - Decimal("1"),
+                }
+                for item in ordered
+            ],
+            "warning": None,
+        }
+
     async def csv(self, batch_id: UUID) -> str:
-        await self.detail(batch_id)
+        batch = await self.detail(batch_id)
+        if batch["execution_mode"] == BacktestBatchExecutionMode.SHARED_PORTFOLIO.value:
+            summary = await self.summary(batch_id)
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(
+                [
+                    "股票",
+                    "已实现盈亏",
+                    "未实现盈亏",
+                    "总贡献",
+                    "当前持仓市值",
+                    "费用",
+                    "完整交易数",
+                    "买入成交数",
+                    "卖出成交数",
+                ]
+            )
+            portfolio = summary.get("portfolio") or {}
+            for item in portfolio.get("contributions", []):
+                writer.writerow(
+                    [
+                        item["instrument_display"],
+                        item["realized_pnl"],
+                        item["unrealized_pnl"],
+                        item["total_contribution"],
+                        item["current_market_value"],
+                        item["fees"],
+                        item["trade_count"],
+                        item["buy_fill_count"],
+                        item["sell_fill_count"],
+                    ]
+                )
+            return "\ufeff" + output.getvalue()
         async with self._uow_factory() as uow:
             rows = await uow.backtest_batches.list_all_results(batch_id)
         output = io.StringIO()
@@ -702,4 +1274,179 @@ def _row_payload(row: BacktestBatchResultRow) -> dict[str, Any]:
         **asdict(row),
         "status": row.status.value,
         "instrument_display": f"{row.name}（{row.symbol}.{row.exchange}）",
+    }
+
+
+def _empty_contribution(
+    instrument_id: UUID,
+    display_by_id: dict[UUID, str],
+) -> dict[str, Any]:
+    return {
+        "instrument_id": instrument_id,
+        "instrument_display": display_by_id.get(instrument_id, str(instrument_id)),
+        "symbol": None,
+        "exchange": None,
+        "realized_pnl": Decimal("0"),
+        "unrealized_pnl": Decimal("0"),
+        "total_contribution": Decimal("0"),
+        "current_market_value": Decimal("0"),
+        "fees": Decimal("0"),
+        "trade_count": 0,
+        "buy_fill_count": 0,
+        "sell_fill_count": 0,
+    }
+
+
+def _longest_drawdown_sessions(points: list[Any]) -> int:
+    longest = 0
+    current = 0
+    for point in points:
+        if point.drawdown < Decimal("0"):
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _portfolio_derived_summary(
+    metrics: dict[str, Any] | None,
+    points: list[Any],
+    trades: list[Any],
+    benchmark: dict[str, Any],
+) -> dict[str, Any]:
+    if not points:
+        return {
+            "benchmark_total_return": None,
+            "excess_return": None,
+            "maximum_positions": 0,
+            "average_positions": Decimal("0"),
+            "average_exposure": Decimal("0"),
+            "average_idle_cash_ratio": Decimal("1"),
+            "average_holding_days": None,
+            "current_drawdown": Decimal("0"),
+            "longest_drawdown_sessions": 0,
+        }
+    benchmark_curve = benchmark.get("curve") or []
+    benchmark_total_return = (
+        None if not benchmark_curve else _number(benchmark_curve[-1]["cumulative_return"])
+    )
+    portfolio_total_return = (
+        points[-1].cumulative_return
+        if not metrics or metrics.get("total_return") is None
+        else _number(metrics["total_return"])
+    )
+    exposure_ratios = [
+        point.gross_exposure / point.total_equity
+        if point.total_equity > Decimal("0")
+        else Decimal("0")
+        for point in points
+    ]
+    average_exposure = sum(exposure_ratios, Decimal("0")) / Decimal(len(points))
+    average_positions = Decimal(sum(point.positions_count for point in points)) / Decimal(
+        len(points)
+    )
+    holding_days = [
+        Decimal(str((trade.closed_at - trade.opened_at).total_seconds())) / Decimal("86400")
+        for trade in trades
+    ]
+    return {
+        "benchmark_total_return": benchmark_total_return,
+        "excess_return": (
+            None
+            if benchmark_total_return is None
+            else portfolio_total_return - benchmark_total_return
+        ),
+        "maximum_positions": max(point.positions_count for point in points),
+        "average_positions": average_positions,
+        "average_exposure": average_exposure,
+        "average_idle_cash_ratio": max(Decimal("0"), Decimal("1") - average_exposure),
+        "average_holding_days": None if not holding_days else mean(holding_days),
+        "current_drawdown": points[-1].drawdown,
+        "longest_drawdown_sessions": _longest_drawdown_sessions(points),
+    }
+
+
+def _drawdown_landmarks(points: list[Any]) -> dict[str, Any] | None:
+    if not points:
+        return None
+    trough_index = min(range(len(points)), key=lambda index: points[index].drawdown)
+    peak_index = max(
+        range(trough_index + 1),
+        key=lambda index: points[index].total_equity,
+    )
+    peak_equity = points[peak_index].total_equity
+    recovery = next(
+        (item for item in points[trough_index + 1 :] if item.total_equity >= peak_equity),
+        None,
+    )
+    return {
+        "peak_at": points[peak_index].timestamp,
+        "peak_equity": peak_equity,
+        "trough_at": points[trough_index].timestamp,
+        "trough_equity": points[trough_index].total_equity,
+        "maximum_drawdown": points[trough_index].drawdown,
+        "recovered_at": None if recovery is None else recovery.timestamp,
+        "recovered": recovery is not None,
+        "current_drawdown": points[-1].drawdown,
+        "longest_drawdown_sessions": _longest_drawdown_sessions(points),
+    }
+
+
+def _batch_data_preparation(rows: list[BacktestBatchResultRow]) -> dict[str, int]:
+    required = 0
+    ready = 0
+    preparing_stocks = 0
+    queued_segments = 0
+    for row in rows:
+        details = row.data_preparation_summary or {}
+        item_required = int(details.get("required_session_count", 0) or 0)
+        item_ready = int(details.get("ready_session_count", 0) or 0)
+        required += item_required
+        ready += min(item_required, item_ready)
+        queued_segments += int(details.get("request_segment_count", 0) or 0)
+        if row.error_code in {
+            "BACKTEST_DAILY_DATA_PREPARING",
+            "BACKTEST_MINUTE_DATA_PREPARING",
+        }:
+            preparing_stocks += 1
+    completed = sum(row.status is BacktestBatchItemStatus.COMPLETED for row in rows)
+    progress = (
+        int(ready * 100 / required)
+        if required > 0
+        else (100 if rows and completed == len(rows) else 0)
+    )
+    return {
+        "required_sessions": required,
+        "ready_sessions": ready,
+        "missing_sessions": max(0, required - ready),
+        "progress_percent": progress,
+        "preparing_stocks": preparing_stocks,
+        "queued_segments": queued_segments,
+    }
+
+
+def _batch_intraday_execution(rows: list[BacktestBatchResultRow]) -> dict[str, int | float]:
+    completed = [row for row in rows if row.status is BacktestBatchItemStatus.COMPLETED]
+    traded = [row for row in completed if (row.fill_count or 0) > 0]
+    return {
+        "daily_bars_checked": sum(row.bars_processed or 0 for row in completed),
+        "daily_prefilter_candidates": sum(row.candidate_session_count or 0 for row in completed),
+        "daily_prefilter_excluded": sum(
+            int((row.data_preparation_summary or {}).get("prefilter_excluded_session_count", 0))
+            for row in completed
+        ),
+        "minute_sessions_loaded": sum(row.minute_replay_session_count or 0 for row in completed),
+        "minute_bars_processed": sum(row.processed_minute_bar_count or 0 for row in completed),
+        "signals_generated": sum(row.signals_generated or 0 for row in completed),
+        "stocks_with_signals": sum((row.signals_generated or 0) > 0 for row in completed),
+        "stocks_with_fills": len(traded),
+        "data_preparation_seconds": sum(
+            float((row.performance_summary or {}).get("data_preparation_seconds", 0))
+            for row in completed
+        ),
+        "strategy_replay_seconds": sum(
+            float((row.performance_summary or {}).get("strategy_replay_seconds", 0))
+            for row in completed
+        ),
     }

@@ -231,26 +231,26 @@ export function AtomicConditionCatalog({
 
   return (
     <Card
-      title={`原子条件目录（共${activeDefinitions.length}项）`}
+      title={`选股条件库（共${activeDefinitions.length}项）`}
       style={{ marginTop: 16 }}
     >
       <Typography.Paragraph type="secondary">
-        输入选股描述时，系统会从下列条件中实时推荐；也可以不写完整句子，直接搜索并添加条件积木。
-        每个条件的数字参数都能在添加后继续修改。
+        搜索并添加需要的选股条件，再设置参数和“同时满足/满足任一”的组合关系。
+        每个条件的数字参数都可以在添加后继续修改。
       </Typography.Paragraph>
       <Input
         allowClear
         prefix={<SearchOutlined />}
-        aria-label="搜索原子条件"
+        aria-label="搜索选股条件"
         value={catalogSearch}
         onChange={(event) => setCatalogSearch(event.target.value)}
-        placeholder="搜索全部原子条件，例如：涨停、成交额、均线、放量"
+        placeholder="搜索选股条件，例如：涨停、成交额、均线、放量"
         style={{ marginBottom: 16 }}
       />
 
       {naturalLanguageText.trim() ? (
         <>
-          <Typography.Title level={5}>根据当前描述推荐</Typography.Title>
+          <Typography.Title level={5}>根据关键词推荐</Typography.Title>
           {recommended.length ? (
             renderTiles(recommended)
           ) : (
@@ -266,12 +266,12 @@ export function AtomicConditionCatalog({
         level={5}
         style={{ marginTop: naturalLanguageText.trim() ? 24 : 0 }}
       >
-        全部原子条件
+        全部选股条件
       </Typography.Title>
       {visibleDefinitions.length ? (
         renderTiles(visibleDefinitions)
       ) : (
-        <Empty description="没有匹配的原子条件，请换一个关键词" />
+        <Empty description="没有匹配的选股条件，请换一个关键词" />
       )}
     </Card>
   );

@@ -53,10 +53,11 @@ flowchart LR
   Order -. SUPPRESSED .-> Outbox[(PostgreSQL Outbox)]
 ```
 
-> BT02-A 增量：回测先用 PostgreSQL 日线做可证明安全的候选日预筛，只对候选日及持仓后续日
-> 校验和补齐 MiniQMT 1 分钟线；分钟闭合后构造当日部分日线，默认在下一根真实分钟开盘执行。
+> BT02-A 增量：回测先用 PostgreSQL 日线做可证明安全的买入/卖出候选日预筛，只对这些候选日
+> 稀疏读取和补齐 MiniQMT 1 分钟线；分钟闭合后构造当日部分日线，默认在下一根真实分钟开盘执行。
 > 批量任务使用 PostgreSQL 状态与 Redis 队列，支持关闭页面、取消、失败项重试和 Worker 重启
-> 后重新认领。策略不具备安全预筛器时退化为完整分钟回放。详见
+> 后重新认领。分钟请求按交易日分段并短期去重，批量页展示真实数据准备进度。策略不具备安全
+> 预筛器时退化为完整分钟回放。详见
 > [BT02-A 分钟级触发回测](bt02_intraday_backtest.md)。
 
 ```mermaid
@@ -123,6 +124,9 @@ flowchart LR
 
 > MiniQMT 实时行情通过 Windows 只读 Agent 接入；历史 K 线和实时快照保持不同的持久化语义。
 > 该 Agent 没有交易能力，系统仍不得部署到公网。
+> 历史补数使用持久去重、成功后确认、失败轮转和死信隔离的可恢复队列；Agent 重启会压缩
+> 旧版重复任务，并在自动维护与实时快照之前优先推进历史补数。PostgreSQL 唯一键承担最终
+> 幂等边界。详见 [ADR 0020](adr/0020-miniqmt-history-recoverable-queue.md)。
 
 > M04.1A 新增独立 `market_worker`：PostgreSQL 保存来源、K 线和运行审计；Redis 保存可重建的最新 quote、leader 租约、状态及 UI Pub/Sub；FastAPI 只运行共享 Redis listener 和只读 HTTP/WebSocket 接口，不在 lifespan 抓取外部行情。
 
@@ -258,3 +262,13 @@ M02 新增独立的 `alphadesk_domain` 纯 Python 包，以及位于 `alphadesk_
 TA01 在 FastAPI 与 PostgreSQL 之间增加持久化调研任务、角色步骤、Graph/工具事件、独立角色产物和最终报告。独立 `ai_research_worker` 运行固定 revision 的 TradingAgents LangGraph；Redis 仅提供 Worker 心跳，PostgreSQL 是审计事实来源，上游 SQLite checkpointer 提供节点级断点恢复。Web 只创建任务、轮询状态和读取报告，不直接调用模型。
 
 `D:\QTM\TradingAgents` 只用于开发期基准验收。生产运行安装仓库中固定的 Apache-2.0 上游 revision，不导入该本地目录、不执行 CLI，也不读取上游配置或 Secret。AlphaDesk 工具路由负责 MiniQMT A 股行情与可审计外部资料，密钥只由 Worker 环境注入。
+
+## SC02-E 条件选股架构
+
+浏览器中的积木式编辑器、内置模板、已保存规则和历史结果共同使用版本化 `ScreeningSpec`。
+可添加条件来自后端 `ConditionCatalog`；参数控件、单位、比较方式、历史窗口和结果解释均由
+条件定义的 Schema 驱动。规则树只允许两层 `AND/OR` 组合，执行前必须经过同一领域校验器。
+
+旧的自然语言解析端点和两个复合条件键继续用于历史规格读取，但不会进入新建条件目录。
+执行仍复用 SC02-D 数据准备和 SC02-A 批量规则引擎，不引入动态 Python、SQL、任意表达式、
+交易信号或下单能力。

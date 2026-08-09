@@ -1,6 +1,7 @@
 import { apiRequest } from "./client";
 import type {
   ScreeningConditionDefinition,
+  ScreeningConditionCategory,
   ScreeningParseResult,
   ScreeningPreviewResult,
   ScreeningProgress,
@@ -25,6 +26,11 @@ export const getScreeningTemplate = (key: string) =>
 
 export const getScreeningConditions = () =>
   apiRequest<ScreeningConditionDefinition[]>("/api/v1/screening-conditions");
+
+export const getScreeningConditionCategories = () =>
+  apiRequest<ScreeningConditionCategory[]>(
+    "/api/v1/screening-condition-categories",
+  );
 
 export function parseScreeningText(input: {
   text: string;

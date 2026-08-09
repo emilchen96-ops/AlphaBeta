@@ -1,7 +1,5 @@
 """Product-facing quick-backtest endpoints using BT01 as the execution engine."""
 
-import json
-from collections.abc import Awaitable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -19,7 +17,7 @@ from alphadesk_api.application.backtest_batches import (
     CreateBacktestBatchRequest,
 )
 from alphadesk_api.application.common import ApplicationError
-from alphadesk_api.application.miniqmt_market_data import HISTORY_QUEUE_KEY
+from alphadesk_api.application.miniqmt_market_data import enqueue_history_request
 from alphadesk_api.application.research_backtests import (
     QuickBacktestRequest,
     QuickBacktestService,
@@ -31,7 +29,10 @@ from alphadesk_api.schemas.research_backtests import (
     QuickBacktestBody,
     ResearchBacktestPageResponse,
 )
-from alphadesk_domain.backtest_batches import BacktestBatchScope
+from alphadesk_domain.backtest_batches import (
+    BacktestBatchExecutionMode,
+    BacktestBatchScope,
+)
 from alphadesk_domain.strategy import StrategyRegistry
 from alphadesk_domain.strategy_spec import StrategySpecError, strategy_spec_from_dict
 
@@ -52,15 +53,7 @@ def _backfill_enqueuer(request: Request):
         return None
 
     async def enqueue(payload: dict[str, object]) -> int:
-        return int(
-            await cast(
-                Awaitable[int],
-                client.rpush(
-                    HISTORY_QUEUE_KEY,
-                    json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
-                ),
-            )
-        )
+        return await enqueue_history_request(client, payload)
 
     return enqueue
 
@@ -195,16 +188,19 @@ async def create_backtest_batch(request: Request, body: BacktestBatchBody) -> di
         ).create(
             CreateBacktestBatchRequest(
                 scope=BacktestBatchScope(body.scope),
+                execution_mode=BacktestBatchExecutionMode(body.execution_mode),
+                instrument_ids=tuple(body.instrument_ids),
                 watchlist_id=body.watchlist_id,
                 start_at=body.start_at,
                 end_at=body.end_at,
-                initial_cash=_decimal(body.initial_cash, "每只股票初始资金"),
+                initial_cash=_decimal(body.initial_cash, "初始资金"),
                 spec=spec,
                 user_strategy_id=body.user_strategy_id,
                 exclude_st=body.exclude_st,
                 exclude_bse=body.exclude_bse,
                 exclude_star_market=body.exclude_star_market,
                 exclude_chinext=body.exclude_chinext,
+                minimum_listing_trading_days=body.minimum_listing_trading_days,
                 commission_rate=_decimal(body.commission_rate, "佣金率"),
                 minimum_commission=_decimal(body.minimum_commission or "5", "最低佣金"),
                 stamp_duty_rate=_decimal(body.stamp_duty_rate, "印花税率"),
@@ -227,6 +223,16 @@ async def create_backtest_batch(request: Request, body: BacktestBatchBody) -> di
                     if body.position_size_ratio is None
                     else _decimal(body.position_size_ratio, "单次买入仓位")
                 ),
+                maximum_holdings=body.maximum_holdings,
+                maximum_total_exposure=_decimal(
+                    body.maximum_total_exposure, "组合最大总仓位"
+                ),
+                maximum_instrument_weight=_decimal(
+                    body.maximum_instrument_weight, "单只股票最大仓位"
+                ),
+                allow_position_addition=body.allow_position_addition,
+                entry_ranking=body.entry_ranking,
+                benchmark_symbol=body.benchmark_symbol,
                 maximum_entry_gap_ratio=(
                     None
                     if body.maximum_entry_gap_ratio is None
@@ -311,6 +317,80 @@ async def get_backtest_batch_summary(request: Request, batch_id: UUID) -> dict[s
         return await BacktestBatchQueryService(uow_factory(request)).summary(batch_id)
     except ApplicationError as exc:
         raise to_app_error(exc) from exc
+
+
+@router.get("/backtest-batches/{batch_id}/preparation")
+async def get_backtest_batch_preparation(
+    request: Request,
+    batch_id: UUID,
+) -> dict[str, Any]:
+    try:
+        return await BacktestBatchQueryService(uow_factory(request)).preparation(batch_id)
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.get("/backtest-batches/{batch_id}/portfolio-report")
+async def get_backtest_batch_portfolio_report(
+    request: Request,
+    batch_id: UUID,
+) -> dict[str, Any]:
+    try:
+        return await BacktestBatchQueryService(uow_factory(request)).portfolio_report(
+            batch_id
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+async def _portfolio_section(
+    request: Request,
+    batch_id: UUID,
+    section: str,
+) -> dict[str, Any]:
+    try:
+        return await BacktestBatchQueryService(uow_factory(request)).portfolio_section(
+            batch_id,
+            section,
+        )
+    except ApplicationError as exc:
+        raise to_app_error(exc) from exc
+
+
+@router.get("/backtest-batches/{batch_id}/equity")
+async def get_backtest_batch_equity(request: Request, batch_id: UUID) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "equity_curve")
+
+
+@router.get("/backtest-batches/{batch_id}/snapshots")
+async def get_backtest_batch_snapshots(
+    request: Request,
+    batch_id: UUID,
+) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "snapshots")
+
+
+@router.get("/backtest-batches/{batch_id}/orders")
+async def get_backtest_batch_orders(request: Request, batch_id: UUID) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "orders")
+
+
+@router.get("/backtest-batches/{batch_id}/fills")
+async def get_backtest_batch_fills(request: Request, batch_id: UUID) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "fills")
+
+
+@router.get("/backtest-batches/{batch_id}/trades")
+async def get_backtest_batch_trades(request: Request, batch_id: UUID) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "trades")
+
+
+@router.get("/backtest-batches/{batch_id}/rejections")
+async def get_backtest_batch_rejections(
+    request: Request,
+    batch_id: UUID,
+) -> dict[str, Any]:
+    return await _portfolio_section(request, batch_id, "rejections")
 
 
 @router.get("/backtest-batches/{batch_id}/export.csv")

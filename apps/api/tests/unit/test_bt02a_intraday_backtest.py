@@ -8,6 +8,7 @@ import pytest
 from alphadesk_api.application.backtests import (
     _intraday_replay_context,
     _limit_locked_available_volume,
+    _minute_backfill_segments,
     _reliable_price_limits,
 )
 from alphadesk_domain.backtest import (
@@ -358,7 +359,7 @@ def test_safe_prefilter_excludes_mathematically_impossible_days() -> None:
     assert plan.replay_dates == frozenset()
 
 
-def test_safe_prefilter_replays_every_session_after_first_candidate_for_exits() -> None:
+def test_safe_prefilter_keeps_only_entry_and_mathematically_possible_exit_days() -> None:
     start = date(2026, 7, 1)
     bars = [_bar(start + timedelta(days=index)) for index in range(10)]
     candidate = _bar(
@@ -367,10 +368,22 @@ def test_safe_prefilter_replays_every_session_after_first_candidate_for_exits() 
         high=Decimal("11"),
         volume=Decimal("121"),
     )
-    following = _bar(start + timedelta(days=11), value=Decimal("9"), volume=Decimal("80"))
-    plan = safe_prefilter_plan([*bars, candidate, following], _rule())
+    neutral = _bar(
+        start + timedelta(days=11),
+        value=Decimal("10.5"),
+        low=Decimal("10.3"),
+        volume=Decimal("80"),
+    )
+    exit_candidate = _bar(
+        start + timedelta(days=12), value=Decimal("9"), volume=Decimal("80")
+    )
+    plan = safe_prefilter_plan([*bars, candidate, neutral, exit_candidate], _rule())
     assert plan.candidate_entry_dates == frozenset({_bar_date(candidate)})
-    assert plan.replay_dates == frozenset({_bar_date(candidate), _bar_date(following)})
+    assert _bar_date(neutral) not in plan.candidate_exit_dates
+    assert _bar_date(exit_candidate) in plan.candidate_exit_dates
+    assert plan.replay_dates == frozenset(
+        {_bar_date(candidate), _bar_date(exit_candidate)}
+    )
 
 
 def test_safe_prefilter_and_full_minute_scan_emit_identical_reference_signals() -> None:
@@ -387,6 +400,13 @@ def test_safe_prefilter_and_full_minute_scan_emit_identical_reference_signals() 
             ),
             _bar(
                 start + timedelta(days=11),
+                value=Decimal("10.5"),
+                high=Decimal("10.8"),
+                low=Decimal("10.3"),
+                volume=Decimal("80"),
+            ),
+            _bar(
+                start + timedelta(days=12),
                 value=Decimal("9"),
                 high=Decimal("11"),
                 low=Decimal("9"),
@@ -395,17 +415,19 @@ def test_safe_prefilter_and_full_minute_scan_emit_identical_reference_signals() 
         ]
     )
 
-    def session(day: date, *, final_price: Decimal) -> list[StrategyBar]:
+    def session(
+        day: date, *, opening_price: Decimal, final_price: Decimal
+    ) -> list[StrategyBar]:
         return [
-            _minute(day, time(9, 30), price=Decimal("10"), volume=Decimal("30")),
-            _minute(day, time(9, 31), price=Decimal("10"), volume=Decimal("30")),
-            _minute(day, time(9, 32), price=Decimal("10"), volume=Decimal("30")),
+            _minute(day, time(9, 30), price=opening_price, volume=Decimal("30")),
+            _minute(day, time(9, 31), price=opening_price, volume=Decimal("30")),
+            _minute(day, time(9, 32), price=opening_price, volume=Decimal("30")),
             _minute(day, time(9, 33), price=final_price, volume=Decimal("40")),
         ]
 
     sessions = {
         _bar_date(item): session(
-            _bar_date(item), final_price=item.close
+            _bar_date(item), opening_price=item.open, final_price=item.close
         )
         for item in daily_bars
     }
@@ -437,8 +459,46 @@ def test_safe_prefilter_and_full_minute_scan_emit_identical_reference_signals() 
 
     assert replay(plan.replay_dates) == replay(full_dates) == [
         (start + timedelta(days=10), OrderSide.BUY),
-        (start + timedelta(days=11), OrderSide.SELL),
+        (start + timedelta(days=12), OrderSide.SELL),
     ]
+
+
+def test_minute_backfill_segments_do_not_widen_sparse_candidate_dates() -> None:
+    second_instrument = uuid4()
+    start = date(2026, 7, 1)
+    first_bars = [_bar(start + timedelta(days=index)) for index in range(5)]
+    second_bars = [
+        replace(item, instrument_id=second_instrument) for item in first_bars
+    ]
+
+    segments = _minute_backfill_segments(
+        missing={
+            INSTRUMENT_ID: [start + timedelta(days=1), start + timedelta(days=3)],
+            second_instrument: [start + timedelta(days=3), start + timedelta(days=4)],
+        },
+        strategy_bars_by_instrument={
+            INSTRUMENT_ID: first_bars,
+            second_instrument: second_bars,
+        },
+        provider_symbols={
+            INSTRUMENT_ID: "300088.SZ",
+            second_instrument: "600000.SH",
+        },
+        maximum_instruments=50,
+    )
+
+    assert [
+        (
+            datetime.fromisoformat(item["start_at"]).astimezone(ASHARE_TIMEZONE).date(),
+            datetime.fromisoformat(item["end_at"]).astimezone(ASHARE_TIMEZONE).date(),
+        )
+        for item in segments
+    ] == [
+        (date(2026, 7, 2), date(2026, 7, 3)),
+        (date(2026, 7, 4), date(2026, 7, 5)),
+        (date(2026, 7, 4), date(2026, 7, 6)),
+    ]
+    assert all(len(item["instruments"]) == 1 for item in segments)
 
 
 def test_unknown_strategy_prefilter_is_conservative() -> None:

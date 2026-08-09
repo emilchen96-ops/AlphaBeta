@@ -24,6 +24,9 @@ from alphadesk_domain.intraday import IntradaySessionTemplate
 LOGGER = logging.getLogger(__name__)
 AGENT_VERSION = "L2.5-A.1"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+HISTORY_UPLOAD_TIMEOUT_SECONDS = 120
+HISTORY_INGEST_CHUNK_SIZE = 250
+API_RETRY_MAX_DELAY_SECONDS = 5.0
 
 
 class MiniQMTReadOnlyAgent:
@@ -41,20 +44,9 @@ class MiniQMTReadOnlyAgent:
         self._provider = MiniQMTMarketDataProvider(
             data_path=settings.miniqmt_data_path,
             xtquant_path=settings.miniqmt_xtquant_path,
+            history_download_timeout_seconds=settings.miniqmt_history_download_timeout_seconds,
         )
-        headers = {}
-        if settings.miniqmt_agent_token is not None:
-            headers["X-AlphaDesk-Agent-Token"] = settings.miniqmt_agent_token.get_secret_value()
-        self._http = httpx.Client(
-            base_url=settings.miniqmt_agent_api_url.rstrip("/"),
-            headers=headers,
-            timeout=10,
-            # The agent reconciles every five seconds, which can race with
-            # Uvicorn's default five-second keep-alive expiry. Retire idle
-            # sockets earlier so a normal server close is not mistaken for a
-            # market-data disconnection.
-            limits=httpx.Limits(keepalive_expiry=2),
-        )
+        self._http = self._make_http_client()
         self._quotes: queue.Queue[tuple[dict[str, Any], dict[str, object]]] = queue.Queue(
             maxsize=10_000
         )
@@ -72,6 +64,50 @@ class MiniQMTReadOnlyAgent:
         self._startup_repair_pending = True
         self._last_daily_maintenance_date: date | None = None
 
+    def _make_http_client(self) -> httpx.Client:
+        headers = {}
+        if self._settings.miniqmt_agent_token is not None:
+            headers["X-AlphaDesk-Agent-Token"] = (
+                self._settings.miniqmt_agent_token.get_secret_value()
+            )
+        return httpx.Client(
+            base_url=self._settings.miniqmt_agent_api_url.rstrip("/"),
+            headers=headers,
+            timeout=10,
+            # The agent reconciles every five seconds, which can race with
+            # Uvicorn's default five-second keep-alive expiry. Retire idle
+            # sockets earlier so a normal server close is not mistaken for a
+            # market-data disconnection.
+            limits=httpx.Limits(keepalive_expiry=2),
+        )
+
+    def _reset_http_client(self) -> None:
+        try:
+            self._http.close()
+        except Exception:
+            LOGGER.debug("Unable to close stale AlphaDesk API client", exc_info=True)
+        self._http = self._make_http_client()
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Reach the API without abandoning a claimed history job."""
+
+        attempt = 0
+        while True:
+            try:
+                return self._http.request(method, path, **kwargs)
+            except httpx.TransportError as exc:
+                attempt += 1
+                delay = min(0.25 * (2 ** min(attempt - 1, 5)), API_RETRY_MAX_DELAY_SECONDS)
+                LOGGER.warning(
+                    "AlphaDesk API unavailable; rebuilding connection and retrying "
+                    "in %.2fs (attempt %s): %s",
+                    delay,
+                    attempt,
+                    exc,
+                )
+                self._reset_http_client()
+                time.sleep(delay)
+
     def run(self, *, once: bool = False) -> None:
         while True:
             try:
@@ -79,14 +115,30 @@ class MiniQMTReadOnlyAgent:
                 self._startup_repair_pending = True
                 self._report_status("CONNECTED")
                 self._sync_catalog()
+                self._compact_history_queue()
                 while True:
                     self._reconcile()
-                    self._automatic_maintenance()
-                    deadline = time.monotonic() + (1 if once else 5)
+                    self._flush()
+                    processed_history = self._process_history()
+                    if not processed_history:
+                        try:
+                            self._automatic_maintenance()
+                        except Exception:
+                            # Automatic cache warming is best effort.  It must
+                            # never tear down subscriptions or starve explicit
+                            # scanner/backtest history requests.
+                            LOGGER.exception("MiniQMT automatic maintenance failed")
+                    # Explicit history work is already serialized and each
+                    # batch performs its own API/QMT I/O.  Sleeping five full
+                    # seconds after every successful batch made a 109-batch
+                    # full-market scan spend more than nine minutes doing
+                    # nothing.  Keep the normal reconciliation cadence only
+                    # while idle; active history queues drain continuously.
+                    delay_seconds = 0.1 if processed_history else (1 if once else 5)
+                    deadline = time.monotonic() + delay_seconds
                     while time.monotonic() < deadline:
                         self._flush()
                         time.sleep(0.1)
-                    self._process_history()
                     self._report_status("CONNECTED")
                     if once:
                         return
@@ -116,6 +168,10 @@ class MiniQMTReadOnlyAgent:
         now = datetime.now(SHANGHAI)
         selected = list(self._items.values())[: self._settings.miniqmt_history_max_instruments]
         if self._startup_repair_pending:
+            # Mark the startup maintenance as attempted before any network I/O.
+            # A slow ingestion endpoint must not reconnect and repeat the same
+            # automatic downloads forever ahead of user-requested history jobs.
+            self._startup_repair_pending = False
             self._persist_history(
                 selected,
                 timeframe="DAY_1",
@@ -128,19 +184,18 @@ class MiniQMTReadOnlyAgent:
                 start_at=now - timedelta(days=3),
                 end_at=now + timedelta(days=1),
             )
-            self._startup_repair_pending = False
             if now.hour > 15 or (now.hour == 15 and now.minute >= 10):
                 self._last_daily_maintenance_date = now.date()
             return
         after_close = now.hour > 15 or (now.hour == 15 and now.minute >= 10)
         if after_close and self._last_daily_maintenance_date != now.date():
+            self._last_daily_maintenance_date = now.date()
             self._persist_history(
                 selected,
                 timeframe="DAY_1",
                 start_at=now - timedelta(days=7),
                 end_at=now + timedelta(days=1),
             )
-            self._last_daily_maintenance_date = now.date()
 
     def _persist_history(
         self,
@@ -169,19 +224,41 @@ class MiniQMTReadOnlyAgent:
             for row in rows
             if row["provider_symbol"] in by_symbol
         ]
-        for offset in range(0, len(items), 1000):
-            response = self._http.post(
+        for offset in range(0, len(items), HISTORY_INGEST_CHUNK_SIZE):
+            response = self._request(
+                "POST",
                 "/api/v1/miniqmt/agent/minute-bars",
-                json={"items": items[offset : offset + 1000]},
+                json={"items": items[offset : offset + HISTORY_INGEST_CHUNK_SIZE]},
+                timeout=HISTORY_UPLOAD_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
+
+    def _compact_history_queue(self) -> None:
+        response = self._request("POST", "/api/v1/miniqmt/agent/history/compact")
+        response.raise_for_status()
+        result = response.json()["data"]
+        if (
+            result.get("duplicates_removed")
+            or result.get("malformed_removed")
+            or result.get("transient_recovered")
+        ):
+            LOGGER.warning(
+                "Compacted MiniQMT history queue: "
+                "before=%s remaining=%s duplicates=%s malformed=%s recovered=%s",
+                result.get("before"),
+                result.get("remaining"),
+                result.get("duplicates_removed"),
+                result.get("malformed_removed"),
+                result.get("transient_recovered"),
+            )
 
     def _sync_catalog(self) -> None:
         catalog = self._provider.instrument_catalog()
         sync_token = uuid4()
         for offset in range(0, len(catalog), 500):
             items = catalog[offset : offset + 500]
-            response = self._http.post(
+            response = self._request(
+                "POST",
                 "/api/v1/miniqmt/agent/instruments",
                 json={
                     "sync_token": str(sync_token),
@@ -195,8 +272,8 @@ class MiniQMTReadOnlyAgent:
         self._report_status("CONNECTED")
 
     def _reconcile(self) -> None:
-        self._http.post("/api/v1/market-subscriptions/rebuild").raise_for_status()
-        sync = self._http.post("/api/v1/market-subscriptions/sync")
+        self._request("POST", "/api/v1/market-subscriptions/rebuild").raise_for_status()
+        sync = self._request("POST", "/api/v1/market-subscriptions/sync")
         sync.raise_for_status()
         payload = sync.json()["data"]
         plan_items = {UUID(item["instrument_id"]): item for item in payload["plan"]["items"]}
@@ -291,7 +368,8 @@ class MiniQMTReadOnlyAgent:
                         "error_message": str(exc)[:512],
                     }
                 )
-        report = self._http.post(
+        report = self._request(
+            "POST",
             f"/api/v1/miniqmt/agent/subscription-sync/{payload['sync_run_id']}",
             json={
                 "subscriptions": subscription_results,
@@ -301,7 +379,11 @@ class MiniQMTReadOnlyAgent:
         report.raise_for_status()
 
     def _put_quote(self, item: dict[str, Any], raw: dict[str, Any]) -> None:
-        normalized = self._provider.normalize_quote(raw)
+        try:
+            normalized = self._provider.normalize_quote(raw)
+        except (KeyError, ValueError):
+            LOGGER.info("Ignoring incomplete MiniQMT quote snapshot", exc_info=True)
+            return
         try:
             self._quotes.put_nowait((item, normalized))
         except queue.Full:
@@ -338,7 +420,8 @@ class MiniQMTReadOnlyAgent:
             market_time = quote.pop("market_time")
             if not isinstance(market_time, datetime):
                 raise ValueError("MiniQMT行情时间无效")
-            response = self._http.post(
+            response = self._request(
+                "POST",
                 "/api/v1/miniqmt/agent/quotes",
                 json={
                     "schema_version": 1,
@@ -352,7 +435,17 @@ class MiniQMTReadOnlyAgent:
                     **self._json_values(quote),
                 },
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                if 400 <= response.status_code < 500:
+                    LOGGER.warning(
+                        "Dropping invalid MiniQMT quote snapshot: status=%s body=%s",
+                        response.status_code,
+                        response.text[:512],
+                    )
+                    continue
+                raise
             self._last_market_time = market_time.isoformat()
             self._last_received_at = now.isoformat()
         bars: list[dict[str, object]] = []
@@ -373,28 +466,100 @@ class MiniQMTReadOnlyAgent:
                 bar_time.isoformat() if isinstance(bar_time, datetime) else bar_time
             )
         if bars:
-            response = self._http.post("/api/v1/miniqmt/agent/minute-bars", json={"items": bars})
-            response.raise_for_status()
+            response = self._request(
+                "POST", "/api/v1/miniqmt/agent/minute-bars", json={"items": bars}
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError:
+                if 400 <= response.status_code < 500:
+                    LOGGER.warning(
+                        "Dropping invalid MiniQMT minute callback batch: status=%s body=%s",
+                        response.status_code,
+                        response.text[:512],
+                    )
+                else:
+                    raise
 
-    def _process_history(self) -> None:
-        response = self._http.get("/api/v1/miniqmt/agent/history/next")
+    def _process_history(self) -> bool:
+        response = self._request("GET", "/api/v1/miniqmt/agent/history/next")
         response.raise_for_status()
         request = response.json()["data"]["request"]
         if request is None:
-            return
-        selected = list(request.get("instruments", []))
-        if not selected:
-            instrument_ids = [UUID(item) for item in request["instrument_ids"]]
-            selected = [self._items[item] for item in instrument_ids if item in self._items]
-        if not selected:
-            LOGGER.warning("History request has no currently planned instruments")
-            return
-        self._persist_history(
-            selected,
-            timeframe=request["timeframe"],
-            start_at=datetime.fromisoformat(request["start_at"]),
-            end_at=datetime.fromisoformat(request["end_at"]),
-        )
+            return False
+        request_id = str(request.get("request_id") or "")
+        try:
+            segments = request.get("segments")
+            if isinstance(segments, list) and segments:
+                persisted_segment = False
+                for segment in segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    selected = list(segment.get("instruments", []))
+                    if not selected:
+                        instrument_ids = [
+                            UUID(item) for item in segment.get("instrument_ids", [])
+                        ]
+                        selected = [
+                            self._items[item] for item in instrument_ids if item in self._items
+                        ]
+                    if not selected:
+                        raise ValueError("MINIQMT_HISTORY_INSTRUMENTS_UNRESOLVED")
+                    self._persist_history(
+                        selected,
+                        timeframe=request["timeframe"],
+                        start_at=datetime.fromisoformat(segment["start_at"]),
+                        end_at=datetime.fromisoformat(segment["end_at"]),
+                    )
+                    persisted_segment = True
+                if not persisted_segment:
+                    raise ValueError("MINIQMT_HISTORY_SEGMENTS_EMPTY")
+            else:
+                selected = list(request.get("instruments", []))
+                if not selected:
+                    instrument_ids = [UUID(item) for item in request["instrument_ids"]]
+                    selected = [
+                        self._items[item] for item in instrument_ids if item in self._items
+                    ]
+                if not selected:
+                    raise ValueError("MINIQMT_HISTORY_INSTRUMENTS_UNRESOLVED")
+                self._persist_history(
+                    selected,
+                    timeframe=request["timeframe"],
+                    start_at=datetime.fromisoformat(request["start_at"]),
+                    end_at=datetime.fromisoformat(request["end_at"]),
+                )
+            completed = self._request(
+                "POST",
+                "/api/v1/miniqmt/agent/history/complete",
+                json={"request_id": request_id},
+            )
+            completed.raise_for_status()
+        except Exception as exc:
+            LOGGER.exception("MiniQMT history request failed and will be rotated")
+            try:
+                failed = self._request(
+                    "POST",
+                    "/api/v1/miniqmt/agent/history/fail",
+                    json={
+                        "request_id": request_id,
+                        "error_code": getattr(exc, "code", type(exc).__name__),
+                        "error_message": str(exc)[:512],
+                    },
+                )
+                failed.raise_for_status()
+            except Exception:
+                # The request is still at the queue head when failure reporting
+                # cannot reach the API, so it will survive an agent restart.
+                LOGGER.exception("Unable to rotate failed MiniQMT history request")
+            if not self._provider.connected:
+                # XtQuant history downloads have no native deadline.  The
+                # provider deliberately drops its connection state after our
+                # watchdog cancels a stalled call; reconnect here before the
+                # next queue item so one timeout cannot make every following
+                # workflow fail immediately with MINIQMT_NOT_CONNECTED.
+                self._provider.connect()
+        return True
 
     def _report_status(
         self,
@@ -404,7 +569,8 @@ class MiniQMTReadOnlyAgent:
         error_message: str | None = None,
     ) -> None:
         try:
-            self._http.post(
+            self._request(
+                "POST",
                 "/api/v1/miniqmt/agent/status",
                 json={
                     "state": state,

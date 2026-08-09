@@ -30,7 +30,7 @@ import {
   Tag,
   Typography,
 } from "antd";
-import { useEffect, useMemo, useRef, useState, type Key } from "react";
+import { useEffect, useRef, useState, type Key } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import {
@@ -46,7 +46,6 @@ import {
   getScreeningRuns,
   getScreeningTemplates,
   listUserScreenings,
-  parseScreeningText,
   previewScreeningSpec,
   restoreUserScreening,
   retryFailedScreening,
@@ -58,15 +57,10 @@ import {
 import { createWatchlist, getWatchlists } from "../api/market";
 import { getScannerSessionDefault } from "../api/scanners";
 import { PageHeader } from "../components/PageHeader/PageHeader";
-import { AtomicConditionCatalog } from "../components/ScreeningBuilder/AtomicConditionCatalog";
-import {
-  conditionFromDefinition,
-  VisualScreeningEditor,
-} from "../components/ScreeningBuilder/VisualScreeningEditor";
+import { VisualScreeningEditor } from "../components/ScreeningBuilder/VisualScreeningEditor";
 import type {
   ScreeningConditionDefinition,
   ScreeningConditionGroupSpec,
-  ScreeningParseResult,
   ScreeningPreview,
   ScreeningResult,
   ScreeningRun,
@@ -144,12 +138,8 @@ const displayUnknown = (value: unknown, fallback = "—") => {
   return fallback;
 };
 
-const parseStatusText = {
-  COMPLETE: "条件已识别，可以确认",
-  PARTIAL: "只识别了部分条件",
-  AMBIGUOUS: "需要确认几个参数",
-  UNSUPPORTED: "当前条件暂不支持",
-} as const;
+const displayScreeningText = (value: string) =>
+  value.replaceAll("自然语言选股", "条件组合选股");
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function screeningConditionCount(
@@ -268,109 +258,6 @@ function requestKey() {
   return `screening:${random}`;
 }
 
-function TextList({
-  items,
-  numbered = false,
-}: {
-  items: string[];
-  numbered?: boolean;
-}) {
-  return (
-    <ul style={{ margin: 0, paddingInlineStart: 22 }}>
-      {items.map((item, index) => (
-        <li key={`${index}-${item}`}>
-          {numbered ? `${index + 1}. ` : null}
-          {item}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PreviewCard({ preview }: { preview: ScreeningPreview }) {
-  return (
-    <Card title="中文规则预览">
-      <Descriptions
-        column={{ xs: 1, lg: 2 }}
-        items={[
-          { key: "universe", label: "股票范围", children: preview.universe },
-          {
-            key: "date",
-            label: "筛选时间",
-            children: preview.screening_time,
-          },
-          {
-            key: "source",
-            label: "解析来源",
-            children: preview.parser_source,
-          },
-          {
-            key: "ready",
-            label: "数据状态",
-            children: (
-              <Tag color={preview.data_ready ? "success" : "warning"}>
-                {preview.data_ready ? "可以执行" : "尚未就绪"}
-              </Tag>
-            ),
-          },
-        ]}
-      />
-      <Typography.Title level={5}>筛选条件</Typography.Title>
-      <TextList items={preview.conditions} numbered />
-      {preview.ranking.length ? (
-        <>
-          <Typography.Title level={5}>结果排序</Typography.Title>
-          <TextList items={preview.ranking} />
-        </>
-      ) : null}
-      <Alert
-        type={preview.data_ready ? "success" : "warning"}
-        showIcon
-        title={preview.data_readiness_message}
-        description={preview.no_future_data_rule}
-        style={{ marginTop: 12 }}
-      />
-      {preview.defaults.length ? (
-        <Alert
-          type="info"
-          showIcon
-          title="系统使用的默认解释"
-          description={<TextList items={preview.defaults} />}
-          style={{ marginTop: 12 }}
-        />
-      ) : null}
-      {preview.notices.map((notice) => (
-        <Alert
-          key={notice}
-          type="info"
-          showIcon
-          title={notice}
-          style={{ marginTop: 12 }}
-        />
-      ))}
-      <Collapse
-        ghost
-        style={{ marginTop: 8 }}
-        items={[
-          {
-            key: "requirements",
-            label: "数据要求与诊断信息",
-            children: (
-              <>
-                <TextList items={preview.data_requirements} />
-                <Typography.Paragraph type="secondary">
-                  规则来源：{preview.parser_source}
-                  。本页不会执行用户代码，也不会创建订单或成交。
-                </Typography.Paragraph>
-              </>
-            ),
-          },
-        ]}
-      />
-    </Card>
-  );
-}
-
 interface NaturalLanguagePaneProps {
   preset?: {
     spec: ScreeningSpecSnapshot;
@@ -395,13 +282,32 @@ function NaturalLanguageScreeningPane({
   const previewTimer = useRef<number | undefined>(undefined);
   const idempotencyKey = useRef(requestKey());
   const submissionLock = useRef(false);
-  const [text, setText] = useState(preset?.sourceText ?? "");
+  const text = preset?.sourceText ?? "";
   const [asOfDate, setAsOfDate] = useState(
     preset?.useLatestDate ? "" : (preset?.spec.as_of_date ?? ""),
   );
-  const [parseResult, setParseResult] = useState<ScreeningParseResult>();
-  const [draftSpec, setDraftSpec] = useState<ScreeningSpecSnapshot | undefined>(
-    preset?.spec,
+  const [draftSpec, setDraftSpec] = useState<ScreeningSpecSnapshot>(
+    preset?.spec ?? {
+      schema_version: 2,
+      name: "自定义条件选股",
+      origin: "USER_STRUCTURED",
+      universe_spec: {
+        universe_key: "ALL_A_SHARES",
+        excluded_instrument_ids: [],
+        exclude_st: false,
+        exclude_bse: false,
+        exclude_star_market: false,
+        exclude_chinext: false,
+      },
+      as_of_date: new Date().toISOString().slice(0, 10),
+      timeframe: "DAY_1",
+      conditions: [],
+      root_group: { node_type: "GROUP", operator: "AND", children: [] },
+      exclusions: {},
+      ranking_rules: [{ field: "score", direction: "DESC" }],
+      top_n: 50,
+      price_adjustment_mode: "RAW",
+    },
   );
   const [preview, setPreview] = useState<ScreeningPreview>();
   const [activeId, setActiveId] = useState<string | undefined>(openRunId);
@@ -430,20 +336,6 @@ function NaturalLanguageScreeningPane({
     queryFn: getWatchlists,
   });
   const resolvedAsOfDate = asOfDate || sessionDefault.data?.scan_date || "";
-  const addedConditionKeys = useMemo(() => {
-    const keys = new Set<string>();
-    const visit = (group: ScreeningConditionGroupSpec) => {
-      group.children.forEach((child) => {
-        if (child.node_type === "GROUP") visit(child);
-        else keys.add(child.condition_key);
-      });
-    };
-    draftSpec?.conditions.forEach((condition) =>
-      keys.add(condition.condition_key),
-    );
-    if (draftSpec?.root_group) visit(draftSpec.root_group);
-    return keys;
-  }, [draftSpec]);
 
   useEffect(
     () => () => {
@@ -454,21 +346,6 @@ function NaturalLanguageScreeningPane({
     [],
   );
 
-  const parseMutation = useMutation({
-    mutationFn: parseScreeningText,
-    onSuccess: (result) => {
-      setParseResult(result);
-      setDraftSpec(result.screening_spec ?? undefined);
-      setSavedScreeningId(undefined);
-      setPreview(result.preview ?? undefined);
-      idempotencyKey.current = requestKey();
-      if (result.parse_status === "COMPLETE") {
-        void message.success("已识别选股条件，请检查中文预览和参数");
-      }
-    },
-    onError: (error: Error) => void message.error(error.message),
-  });
-
   const previewMutation = useMutation({
     mutationFn: previewScreeningSpec,
     onSuccess: (result) => setPreview(result.preview),
@@ -477,10 +354,21 @@ function NaturalLanguageScreeningPane({
 
   useEffect(() => {
     if (!preset) return;
-    previewMutation.mutate(preset.spec);
+    const nextSpec = {
+      ...preset.spec,
+      top_n: preset.spec.top_n ?? 50,
+      as_of_date:
+        preset.useLatestDate && sessionDefault.data?.scan_date
+          ? sessionDefault.data.scan_date
+          : preset.spec.as_of_date,
+    };
+    setDraftSpec(nextSpec);
+    setAsOfDate(preset.useLatestDate ? "" : nextSpec.as_of_date);
+    setPreview(undefined);
+    previewMutation.mutate(nextSpec);
     // preset.nonce deliberately re-applies the same saved/template spec.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preset?.nonce]);
+  }, [preset?.nonce, sessionDefault.data?.scan_date]);
 
   const active = useQuery({
     queryKey: ["screening", activeId],
@@ -563,7 +451,7 @@ function NaturalLanguageScreeningPane({
       setSaveName("");
       setSaveDescription("");
       await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
-      void message.success("选股方案已保存");
+      void message.success("选股规则已保存");
     },
     onError: (error: Error) => void message.error(error.message),
   });
@@ -625,115 +513,22 @@ function NaturalLanguageScreeningPane({
     onError: (error: Error) => void message.error(error.message),
   });
 
-  const parse = () => {
-    if (!text.trim()) {
-      void message.warning("请先用中文描述选股条件");
-      return;
-    }
-    if (!resolvedAsOfDate) {
-      void message.warning("请选择筛选日期");
-      return;
-    }
-    parseMutation.mutate({
-      text,
-      as_of_date: resolvedAsOfDate,
-      universe: {
-        universe_key: "ALL_A_SHARES",
-        excluded_instrument_ids: [],
-        exclude_st: false,
-        exclude_bse: false,
-        exclude_star_market: false,
-        exclude_chinext: false,
-      },
-      allow_ai_assistance: true,
-    });
-  };
-
-  const updateDraft = (next: ScreeningSpecSnapshot) => {
-    setDraftSpec(next);
+  const updateDraft = (next: ScreeningSpecSnapshot, asOfOverride?: string) => {
+    const effectiveDate = asOfOverride || resolvedAsOfDate || next.as_of_date;
+    const normalized = { ...next, as_of_date: effectiveDate };
+    setDraftSpec(normalized);
+    setPreview(undefined);
     setSavedScreeningId(undefined);
     idempotencyKey.current = requestKey();
     if (previewTimer.current !== undefined) {
       window.clearTimeout(previewTimer.current);
     }
-    previewTimer.current = window.setTimeout(
-      () => previewMutation.mutate(next),
-      250,
-    );
-  };
-
-  const addCatalogCondition = (
-    definition: ScreeningConditionDefinition,
-    phrase: string,
-  ) => {
-    if (addedConditionKeys.has(definition.condition_key)) {
-      void message.info("该原子条件已经在当前方案中");
-      return;
+    if (screeningConditionCount(normalized) > 0) {
+      previewTimer.current = window.setTimeout(
+        () => previewMutation.mutate(normalized),
+        250,
+      );
     }
-    const condition = conditionFromDefinition(definition, phrase);
-    const nextCustomName = (() => {
-      if (
-        draftSpec &&
-        draftSpec.origin !== "USER_STRUCTURED" &&
-        !draftSpec.name.startsWith("自定义选股：")
-      ) {
-        return draftSpec.name;
-      }
-      const labels = [...addedConditionKeys, definition.condition_key]
-        .map(
-          (key) =>
-            definitions.data?.find((item) => item.condition_key === key)
-              ?.display_name ?? key,
-        )
-        .slice(0, 4);
-      return `自定义选股：${labels.join(" + ")}`;
-    })();
-    if (!draftSpec) {
-      updateDraft({
-        schema_version: 1,
-        name: nextCustomName,
-        origin: "USER_STRUCTURED",
-        universe_spec: {
-          universe_key: "ALL_A_SHARES",
-          excluded_instrument_ids: [],
-          exclude_st: false,
-          exclude_bse: false,
-          exclude_star_market: false,
-          exclude_chinext: false,
-        },
-        as_of_date: resolvedAsOfDate,
-        timeframe: "DAY_1",
-        conditions: [condition],
-        root_group: null,
-        exclusions: {},
-        ranking_rules: [{ field: "score", direction: "DESC" }],
-        top_n: null,
-        price_adjustment_mode: "RAW",
-      });
-      void message.success(`已添加“${definition.display_name}”，请确认参数`);
-      return;
-    }
-    if (draftSpec.root_group) {
-      updateDraft({
-        ...draftSpec,
-        name: nextCustomName,
-        schema_version: 2,
-        origin: "USER_CORRECTED",
-        conditions: [],
-        root_group: {
-          ...draftSpec.root_group,
-          children: [...draftSpec.root_group.children, condition],
-        },
-      });
-    } else {
-      updateDraft({
-        ...draftSpec,
-        name: nextCustomName,
-        origin: "USER_CORRECTED",
-        conditions: [...draftSpec.conditions, condition],
-      });
-    }
-    void message.success(`已添加“${definition.display_name}”`);
   };
 
   const start = async () => {
@@ -812,183 +607,115 @@ function NaturalLanguageScreeningPane({
         </Button>
       </div>
 
-      <Card title="自然语言选股">
+      <Card title="选股设置">
         <Row gutter={[16, 16]}>
-          <Col xs={24} lg={8}>
-            <Typography.Text strong>股票范围</Typography.Text>
-            <Select
-              aria-label="股票范围"
-              value="ALL_A_SHARES"
-              style={{ width: "100%", marginTop: 8 }}
-              options={[
-                {
-                  value: "ALL_A_SHARES",
-                  label: "全部A股（沪、深、北）",
-                },
-              ]}
-            />
-          </Col>
           <Col xs={24} lg={8}>
             <Typography.Text strong>筛选日期</Typography.Text>
             <Input
               aria-label="筛选日期"
               type="date"
               value={resolvedAsOfDate}
-              onChange={(event) => setAsOfDate(event.target.value)}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                setAsOfDate(nextDate);
+                updateDraft(
+                  { ...draftSpec, as_of_date: nextDate || resolvedAsOfDate },
+                  nextDate || sessionDefault.data?.scan_date,
+                );
+              }}
               style={{ marginTop: 8 }}
             />
           </Col>
           <Col xs={24}>
-            <Typography.Text strong>选股描述</Typography.Text>
-            <Input.TextArea
-              aria-label="选股描述"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              autoSize={{ minRows: 3, maxRows: 8 }}
-              maxLength={1000}
-              showCount
-              placeholder="例如：找过去20日涨停过，目前回踩到涨停前收盘价附近3%，并且明显缩量的股票。"
-              style={{ marginTop: 8 }}
-            />
-          </Col>
-          <Col xs={24}>
-            <Button
-              type="primary"
-              icon={<FilterOutlined />}
-              loading={parseMutation.isPending}
-              disabled={!text.trim() || !resolvedAsOfDate}
-              onClick={parse}
-            >
-              解析选股条件
-            </Button>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              选择股票范围，添加选股条件并设置参数；系统会自动检查并补齐所需历史数据。
+            </Typography.Paragraph>
           </Col>
         </Row>
       </Card>
 
-      {definitions.data ? (
-        <AtomicConditionCatalog
-          definitions={definitions.data}
-          naturalLanguageText={text}
-          addedConditionKeys={addedConditionKeys}
-          onAdd={addCatalogCondition}
-        />
-      ) : definitions.isLoading ? (
-        <Card loading title="正在加载原子条件目录" style={{ marginTop: 16 }} />
-      ) : (
+      {!definitions.data && definitions.isLoading ? (
+        <Card loading title="正在加载选股条件库" style={{ marginTop: 16 }} />
+      ) : !definitions.data ? (
         <Alert
           style={{ marginTop: 16 }}
           type="error"
           showIcon
-          title="原子条件目录加载失败"
+          title="选股条件库加载失败"
           description="请确认 AlphaDesk API 在线后点击右上角刷新。"
         />
-      )}
+      ) : null}
 
-      {parseResult ? (
-        <Alert
-          style={{ marginTop: 16 }}
-          type={
-            parseResult.parse_status === "COMPLETE"
-              ? "success"
-              : parseResult.parse_status === "UNSUPPORTED"
-                ? "error"
-                : "warning"
-          }
-          showIcon
-          title={parseStatusText[parseResult.parse_status]}
-          description={
-            <Space orientation="vertical" size={4}>
-              {parseResult.ambiguities.map((item) => (
-                <span key={item}>{item}</span>
-              ))}
-              {parseResult.unsupported_fragments.map((item) => (
-                <span key={item}>
-                  当前系统尚未准备“{item}
-                  ”对应的字段或组合语义，不能执行这部分条件。
-                </span>
-              ))}
-            </Space>
-          }
+      <Card
+        title="确认或修改条件"
+        style={{ marginTop: 16 }}
+        extra={
+          <Tag color={preview?.can_execute ? "success" : "warning"}>
+            {preview?.can_execute ? "规则可执行" : "请完成确认"}
+          </Tag>
+        }
+      >
+        <VisualScreeningEditor
+          definitions={definitions.data ?? []}
+          value={draftSpec}
+          onChange={updateDraft}
         />
-      ) : null}
-
-      {preview ? (
-        <div style={{ marginTop: 16 }}>
-          <PreviewCard preview={preview} />
-        </div>
-      ) : null}
-
-      {draftSpec && definitions.data ? (
-        <Card
-          title="确认或修改条件"
-          style={{ marginTop: 16 }}
-          extra={
-            <Tag color={preview?.can_execute ? "success" : "warning"}>
-              {preview?.can_execute ? "规则可执行" : "请完成确认"}
-            </Tag>
-          }
-        >
-          <VisualScreeningEditor
-            definitions={definitions.data}
-            value={draftSpec}
-            onChange={updateDraft}
-          />
-          <Collapse
-            ghost
-            style={{ marginTop: 12 }}
-            items={[
-              {
-                key: "advanced-data",
-                label: "高级数据设置",
-                children: (
-                  <Space orientation="vertical">
-                    <Checkbox
-                      checked={useExistingDataOnly}
-                      onChange={(event) =>
-                        setUseExistingDataOnly(event.target.checked)
-                      }
-                    >
-                      仅使用当前已有数据运行
-                    </Checkbox>
-                    <Typography.Text type="secondary">
-                      默认会通过MiniQMT只补齐缺失的历史日线；启用后不会下载，
-                      数据不完整的股票将单独标记并跳过。
-                    </Typography.Text>
-                  </Space>
-                ),
-              },
-            ]}
-          />
-          <Space style={{ marginTop: 20 }}>
-            <Button
-              type="primary"
-              size="large"
-              icon={<FilterOutlined />}
-              loading={createMutation.isPending || rerunMutation.isPending}
-              disabled={
-                createMutation.isPending ||
-                rerunMutation.isPending ||
-                previewMutation.isPending ||
-                !preview?.can_execute
-              }
-              onClick={() => void start()}
-            >
-              开始选股
-            </Button>
-            <Button
-              size="large"
-              icon={<SaveOutlined />}
-              onClick={() => {
-                setSaveName(editing?.name ?? draftSpec.name);
-                setSaveDescription(editing?.description ?? "");
-                setSaveOpen(true);
-              }}
-            >
-              保存方案
-            </Button>
-          </Space>
-        </Card>
-      ) : null}
+        <Collapse
+          ghost
+          style={{ marginTop: 12 }}
+          items={[
+            {
+              key: "advanced-data",
+              label: "高级数据设置",
+              children: (
+                <Space orientation="vertical">
+                  <Checkbox
+                    checked={useExistingDataOnly}
+                    onChange={(event) =>
+                      setUseExistingDataOnly(event.target.checked)
+                    }
+                  >
+                    仅使用当前已有数据运行
+                  </Checkbox>
+                  <Typography.Text type="secondary">
+                    默认会通过MiniQMT只补齐缺失的历史日线；启用后不会下载，
+                    数据不完整的股票将单独标记并跳过。
+                  </Typography.Text>
+                </Space>
+              ),
+            },
+          ]}
+        />
+        <Space style={{ marginTop: 20 }}>
+          <Button
+            type="primary"
+            size="large"
+            icon={<FilterOutlined />}
+            loading={createMutation.isPending || rerunMutation.isPending}
+            disabled={
+              createMutation.isPending ||
+              rerunMutation.isPending ||
+              previewMutation.isPending ||
+              !preview?.can_execute
+            }
+            onClick={() => void start()}
+          >
+            开始选股
+          </Button>
+          <Button
+            size="large"
+            icon={<SaveOutlined />}
+            disabled={screeningConditionCount(draftSpec) === 0}
+            onClick={() => {
+              setSaveName(editing?.name ?? draftSpec.name);
+              setSaveDescription(editing?.description ?? "");
+              setSaveOpen(true);
+            }}
+          >
+            保存规则
+          </Button>
+        </Space>
+      </Card>
 
       <div ref={progressAnchor}>
         {current ? (
@@ -1445,7 +1172,7 @@ function NaturalLanguageScreeningPane({
                   : [];
                 return (
                   <Space orientation="vertical" size={8}>
-                    <Typography.Text strong>原子条件逐项判断</Typography.Text>
+                    <Typography.Text strong>选股条件逐项判断</Typography.Text>
                     {evaluations.map((item, index) => {
                       const detail =
                         typeof item === "object" && item !== null
@@ -1492,15 +1219,15 @@ function NaturalLanguageScreeningPane({
         </Card>
       ) : null}
       <Modal
-        title={editing ? "保存方案新版本" : "保存为我的选股方案"}
+        title={editing ? "保存规则新版本" : "保存为我的规则"}
         open={saveOpen}
-        okText="保存方案"
+        okText="保存规则"
         cancelText="取消"
         confirmLoading={saveMutation.isPending}
         onCancel={() => setSaveOpen(false)}
         onOk={() => {
           if (!draftSpec || !saveName.trim()) {
-            void message.warning("请输入方案名称");
+            void message.warning("请输入规则名称");
             return;
           }
           saveMutation.mutate({
@@ -1512,7 +1239,7 @@ function NaturalLanguageScreeningPane({
           });
         }}
       >
-        <Typography.Text>方案名称</Typography.Text>
+        <Typography.Text>规则名称</Typography.Text>
         <Input
           value={saveName}
           maxLength={128}
@@ -1573,7 +1300,13 @@ export function ScannersPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [search, setSearch] = useSearchParams();
-  const activeTab = search.get("tab") ?? "natural";
+  const requestedTab = search.get("tab") ?? "builder";
+  const activeTab =
+    requestedTab === "natural"
+      ? "builder"
+      : requestedTab === "mine"
+        ? "rules"
+        : requestedTab;
   const [preset, setPreset] = useState<NaturalLanguagePaneProps["preset"]>();
   const [editing, setEditing] = useState<UserScreening>();
   const [rerunScreeningId, setRerunScreeningId] = useState<string>();
@@ -1620,22 +1353,23 @@ export function ScannersPage() {
     savedScreeningId?: string,
     useLatestDate = false,
   ) => {
+    const normalizedSpec = { ...spec, top_n: spec.top_n ?? 50 };
     setPreset((previous) => ({
-      spec,
+      spec: normalizedSpec,
       sourceText,
       nonce: (previous?.nonce ?? 0) + 1,
       useLatestDate,
     }));
     setEditing(definition);
     setRerunScreeningId(savedScreeningId);
-    setSearch({ tab: "natural" });
+    setSearch({ tab: "builder" });
   };
 
   const cloneMutation = useMutation({
     mutationFn: cloneUserScreening,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
-      void message.success("已复制选股方案");
+      void message.success("已复制选股规则");
     },
     onError: (error: Error) => void message.error(error.message),
   });
@@ -1650,38 +1384,10 @@ export function ScannersPage() {
       restore ? restoreUserScreening(item.id) : archiveUserScreening(item.id),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["user-screenings"] });
-      void message.success("方案状态已更新");
+      void message.success("规则状态已更新");
     },
     onError: (error: Error) => void message.error(error.message),
   });
-
-  const templateCards = (
-    <Row gutter={[16, 16]}>
-      {(templates.data ?? []).map((template: ScreeningTemplate) => (
-        <Col xs={24} md={12} xl={8} key={template.template_key}>
-          <Card
-            title={template.display_name}
-            extra={<Tag>{template.timeframe}</Tag>}
-            actions={[
-              <Button
-                key="use"
-                type="link"
-                disabled={!template.enabled}
-                onClick={() => applySpec(template.spec)}
-              >
-                使用此模板
-              </Button>,
-            ]}
-          >
-            <Typography.Paragraph>{template.description}</Typography.Paragraph>
-            <Typography.Text type="secondary">
-              所需数据：{template.required_data}
-            </Typography.Text>
-          </Card>
-        </Col>
-      ))}
-    </Row>
-  );
 
   const savedTable = (
     <Table<UserScreening>
@@ -1689,15 +1395,17 @@ export function ScannersPage() {
       loading={saved.isLoading}
       dataSource={saved.data?.items ?? []}
       pagination={{ pageSize: 10 }}
-      locale={{ emptyText: <Empty description="还没有保存选股方案" /> }}
+      locale={{ emptyText: <Empty description="还没有保存自己的选股规则" /> }}
       columns={[
         {
-          title: "方案名称",
+          title: "规则名称",
           render: (_, item) => (
             <Space orientation="vertical" size={0}>
-              <Typography.Text strong>{item.name}</Typography.Text>
+              <Typography.Text strong>
+                {displayScreeningText(item.name)}
+              </Typography.Text>
               <Typography.Text type="secondary">
-                {item.description ?? item.summary}
+                {displayScreeningText(item.description ?? item.summary)}
               </Typography.Text>
             </Space>
           ),
@@ -1786,6 +1494,61 @@ export function ScannersPage() {
     />
   );
 
+  const templateCards = (
+    <Space orientation="vertical" size={24} style={{ width: "100%" }}>
+      <section>
+        <Typography.Title level={4}>常用模板</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          模板只是预先搭好的条件组合。载入后可以修改任意参数、删除条件或增加条件，原模板不会改变。
+        </Typography.Paragraph>
+        <Row gutter={[16, 16]}>
+          {(templates.data ?? []).map((template: ScreeningTemplate) => (
+            <Col xs={24} md={12} xl={8} key={template.template_key}>
+              <Card
+                title={template.display_name}
+                extra={<Tag>{template.timeframe}</Tag>}
+                actions={[
+                  <Button
+                    key="use"
+                    type="link"
+                    disabled={!template.enabled}
+                    onClick={() =>
+                      applySpec(
+                        template.spec,
+                        undefined,
+                        undefined,
+                        undefined,
+                        true,
+                      )
+                    }
+                  >
+                    使用此模板
+                  </Button>,
+                ]}
+              >
+                <Typography.Paragraph>
+                  {template.description}
+                </Typography.Paragraph>
+                <Typography.Text type="secondary">
+                  所需数据：{template.required_data}
+                </Typography.Text>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      </section>
+    </Space>
+  );
+
+  const savedRules = (
+    <Space orientation="vertical" size={16} style={{ width: "100%" }}>
+      <Typography.Paragraph type="secondary">
+        保存、编辑和重复使用自己的条件组合；再次运行前仍会先恢复到积木编辑器供确认。
+      </Typography.Paragraph>
+      {savedTable}
+    </Space>
+  );
+
   const historyTable = (
     <Space orientation="vertical" size={16} style={{ width: "100%" }}>
       <Card size="small">
@@ -1793,7 +1556,7 @@ export function ScannersPage() {
           <Col xs={24} md={6}>
             <Input
               allowClear
-              placeholder="按方案名称筛选"
+              placeholder="按选股名称筛选"
               value={historyName}
               onChange={(event) => setHistoryName(event.target.value)}
             />
@@ -1814,13 +1577,13 @@ export function ScannersPage() {
           <Col xs={12} md={4}>
             <Select
               allowClear
-              placeholder="方案来源"
+              placeholder="选股来源"
               style={{ width: "100%" }}
               value={historySource}
               onChange={setHistorySource}
               options={[
                 { value: "TEMPLATE", label: "系统模板" },
-                { value: "CUSTOM", label: "自定义方案" },
+                { value: "CUSTOM", label: "自定义条件" },
               ]}
             />
           </Col>
@@ -1849,7 +1612,10 @@ export function ScannersPage() {
         pagination={{ pageSize: 10 }}
         locale={{ emptyText: <Empty description="暂无历史选股结果" /> }}
         columns={[
-          { title: "方案名称", dataIndex: "name" },
+          {
+            title: "选股名称",
+            render: (_, item) => displayScreeningText(item.name),
+          },
           {
             title: "筛选日期",
             render: (_, item) => item.spec.as_of_date,
@@ -1917,15 +1683,15 @@ export function ScannersPage() {
     <section>
       <PageHeader
         title="智能选股"
-        description="从自然语言、标准模板或已保存方案开始，统一查看历史结果并继续加入自选或回测。"
+        description="像搭积木一样组合选股条件，也可以载入常用模板或自己的规则；系统会自动准备数据并解释结果。"
       />
       <Tabs
         activeKey={activeTab}
         onChange={(tab) => setSearch({ tab })}
         items={[
           {
-            key: "natural",
-            label: "自然语言选股",
+            key: "builder",
+            label: "条件选股",
             children: (
               <NaturalLanguageScreeningPane
                 key={`${preset?.nonce ?? 0}:${openRunId ?? ""}`}
@@ -1936,8 +1702,8 @@ export function ScannersPage() {
               />
             ),
           },
-          { key: "templates", label: "选股模板", children: templateCards },
-          { key: "mine", label: "我的选股方案", children: savedTable },
+          { key: "rules", label: "我的规则", children: savedRules },
+          { key: "templates", label: "常用模板", children: templateCards },
           { key: "history", label: "历史结果", children: historyTable },
         ]}
       />

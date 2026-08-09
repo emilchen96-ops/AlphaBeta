@@ -187,7 +187,7 @@ test("一句话策略可以确认并提交到完整快速回测入口", async ()
   expect(submitted).not.toHaveProperty("user_strategy_id");
 }, 90_000);
 
-test("自选组合会创建逐只独立回测的后台任务", async () => {
+test("自选组合默认创建共享资金组合回测后台任务", async () => {
   let submitted: Record<string, unknown> | null = null;
   vi.stubGlobal(
     "fetch",
@@ -247,8 +247,9 @@ test("自选组合会创建逐只独立回测的后台任务", async () => {
         ) as Record<string, unknown>;
         body = {
           id: "44444444-4444-4444-8444-444444444444",
-          name: "自选组合独立回测",
+          name: "自选组合共享资金组合回测",
           scope: "WATCHLIST",
+          execution_mode: "SHARED_PORTFOLIO",
           status: "CREATED",
           total_count: 3,
           pending_count: 3,
@@ -286,10 +287,15 @@ test("自选组合会创建逐只独立回测的后台任务", async () => {
   await waitFor(() => expect(submitted).not.toBeNull());
   expect(submitted).toMatchObject({
     scope: "WATCHLIST",
+    execution_mode: "SHARED_PORTFOLIO",
     watchlist_id: "33333333-3333-4333-8333-333333333333",
     exclude_st: true,
+    minimum_listing_trading_days: null,
     initial_cash: "100000",
-    position_size_ratio: "1",
+    position_size_ratio: "0.2",
+    maximum_holdings: 5,
+    maximum_total_exposure: "1",
+    maximum_instrument_weight: "0.2",
     minimum_commission: "5",
     spec,
   });
